@@ -162,6 +162,11 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
       return res.data.map(mapManga);
     },
 
+    async getSeries(sourceId: string): Promise<Series> {
+      const res = await mdGetManga(sourceId, { 'includes[]': ['cover_art', 'author', 'artist'] }, apiKey);
+      return mapManga(res.data);
+    },
+
     async listChapters(sourceId: string, opts: ListChaptersOpts = {}): Promise<Chapter[]> {
       // Need manga title for series_slug → fetch manga once.
       const manga = await mdGetManga(sourceId, { 'includes[]': 'author' }, apiKey);
@@ -183,16 +188,15 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
     },
 
     async getChapter(chapterSourceId: string): Promise<Chapter> {
-      // chapterSourceId = `${mangaUuid}@${lang}:${chapterId}` — parse out pieces.
-      const at = chapterSourceId.lastIndexOf(':');
-      if (at < 0) throw new Error(`bad chapterSourceId: ${chapterSourceId}`);
-      const chapterId = chapterSourceId.slice(at + 1);
-      const beforeLang = chapterSourceId.slice(0, at);
-      const atAt = beforeLang.indexOf('@');
-      const mangaUuid = atAt >= 0 ? beforeLang.slice(0, atAt) : beforeLang;
-      const res = await mdGetChapter(chapterId, { 'includes[]': 'scanlation_group' }, apiKey);
+      // chapterSourceId may be a raw MangaDex chapter UUID or composite `${mangaUuid}@${lang}:${chapterId}`.
+      const colonIdx = chapterSourceId.lastIndexOf(':');
+      const chapterId = colonIdx >= 0 && chapterSourceId.includes('@')
+        ? chapterSourceId.slice(colonIdx + 1)
+        : chapterSourceId;
+      const res = await mdGetChapter(chapterId, { 'includes[]': ['scanlation_group', 'manga'] }, apiKey);
+      const mangaRel = res.data.relationships.find((r) => r.type === 'manga');
+      const mangaUuid = mangaRel?.id ?? (colonIdx >= 0 ? chapterSourceId.slice(0, chapterSourceId.indexOf('@')) : chapterId);
       const c = mapChapter(res.data, mangaUuid);
-      // series_slug requires manga title; fetch lazily.
       const manga = await mdGetManga(mangaUuid, undefined, apiKey);
       c.series_slug = `${slugify(pickTitle(manga.data.attributes))}--${first8(mangaUuid)}`;
       return c;
@@ -217,6 +221,7 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
 export interface MangadexAdapter {
   sourceKey: 'mangadex';
   search(params: SearchParams): Promise<Series[]>;
+  getSeries(sourceId: string): Promise<Series>;
   listChapters(sourceId: string, opts?: ListChaptersOpts): Promise<Chapter[]>;
   getChapter(chapterSourceId: string): Promise<Chapter>;
   fetchPageUrls(chapterSourceId: string): Promise<PageUrl[]>;

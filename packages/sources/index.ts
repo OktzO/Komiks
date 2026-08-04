@@ -10,6 +10,7 @@ export type SourceKey = 'mangadex';
 export interface SourceAdapter {
   sourceKey: SourceKey;
   search(params: { q: string; limit?: number; offset?: number }): Promise<Series[]>;
+  getSeries(sourceId: string): Promise<Series>;
   listChapters(sourceId: string, opts?: { lang?: string; chapter?: string }): Promise<Chapter[]>;
   getChapter(chapterSourceId: string): Promise<Chapter>;
   fetchPageUrls(

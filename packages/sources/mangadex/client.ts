@@ -6,7 +6,7 @@ const BASE = 'https://api.mangadex.org';
 type QueryVal = string | number | boolean | undefined;
 type Query = Record<string, QueryVal | QueryVal[]>;
 
-const buildUrl = (path: string, query?: Query, apiKey?: string): string => {
+const buildUrl = (path: string, query?: Query): string => {
   const url = new URL(path, BASE + '/');
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -18,16 +18,16 @@ const buildUrl = (path: string, query?: Query, apiKey?: string): string => {
       }
     }
   }
-  // Optional API key (rate-limit / authenticated requests). Injected by adapter
-  // from the host runtime's env (CF Workers env param, Node process.env, etc.).
-  if (apiKey) url.searchParams.set('key', apiKey);
   return url.toString();
 };
 
 const getJson = async <T>(path: string, query?: Query, apiKey?: string): Promise<T> => {
-  const res = await fetch(buildUrl(path, query, apiKey), {
-    headers: { accept: 'application/json', 'User-Agent': 'manga-platform/1.0' }
-  });
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+    'User-Agent': 'manga-platform/1.0'
+  };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  const res = await fetch(buildUrl(path, query), { headers });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`MangaDex ${path} → ${res.status}: ${body.slice(0, 200)}`);
