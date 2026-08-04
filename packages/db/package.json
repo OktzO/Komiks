@@ -1,0 +1,14 @@
+{
+  "name": "@manga-platform/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240802.0",
+    "typescript": "^5.5.4"
+  }
+}
