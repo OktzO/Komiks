@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { Env, json, parseAllowedOrigins } from './lib/context';
+import { rateLimit } from './lib/rateLimit';
 import { router as healthRouter } from './routes/health';
 import { router as seriesRouter } from './routes/series';
 import { router as searchRouter } from './routes/search';
@@ -30,6 +31,7 @@ const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 export const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', corsMw);
+app.use('*', rateLimit);
 app.route('/api', healthRouter);
 app.route('/api', seriesRouter);
 app.route('/api', searchRouter);
