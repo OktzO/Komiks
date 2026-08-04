@@ -45,4 +45,35 @@ app.onError((err, c) => {
 
 app.notFound((c) => json(c, { error: 'Not Found' }, 404));
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runHealthChecks(env));
+  }
+};
+
+async function runHealthChecks(env: Env): Promise<void> {
+  try {
+    const { db } = await import('@manga-platform/db');
+    const d = db(env.DB);
+    const settings = await d.getLbSettings();
+    if (!settings || settings.mode !== 'on') return;
+    const origins = await d.listOrigins();
+    const now = Math.floor(Date.now() / 1000);
+    await Promise.all(origins.filter((o) => o.enabled === 1).map(async (o) => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), settings.health_check_timeout_ms || 3000);
+        const res = await fetch(o.origin_url + '/api/health', { signal: ctrl.signal });
+        clearTimeout(t);
+        const healthy = res.ok;
+        await d.recordOriginHealth(o.id, healthy, now);
+        await env.CACHE_KV.put(`lb:origin:${o.id}`, JSON.stringify({ healthy, last_checked_at: now, latency: Date.now() % 1000 }), { expirationTtl: 60 });
+      } catch {
+        await d.recordOriginHealth(o.id, false, now);
+      }
+    }));
+  } catch (e) {
+    console.error('[cron health]', e);
+  }
+}

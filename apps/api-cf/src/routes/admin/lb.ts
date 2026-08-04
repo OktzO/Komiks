@@ -116,3 +116,22 @@ router.put('/origins/:id', async (c) => {
   await getDb(c).addAuditLog({ originId: id, action: 'origin.update' });
   return json(c, { ok: true });
 });
+
+router.get('/status', async (c) => {
+  const origins = await getDb(c).listOrigins();
+  const settings = await getDb(c).getLbSettings();
+  return json(c, {
+    data: {
+      mode: settings?.mode ?? 'off',
+      implementation: settings?.implementation ?? 'custom',
+      origins: origins.map((o) => ({
+        id: o.id,
+        origin_url: o.origin_url,
+        enabled: o.enabled === 1,
+        priority: o.priority,
+        last_health_status: o.last_health_status ?? null,
+        last_checked_at: o.last_checked_at ?? null
+      }))
+    }
+  });
+});

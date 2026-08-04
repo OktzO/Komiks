@@ -20,4 +20,4 @@ bucket_name = "manga-assets"
 preview_bucket_name = "manga-assets-dev"
 
 [triggers]
-crons = []
+crons = ["* * * * *"]
