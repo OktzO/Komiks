@@ -7,6 +7,7 @@ import type {
   ReadingHistory,
   LbSettings,
   LbAccount,
+  LbAccountSafe,
   LbOrigin
 } from '@manga-platform/shared/types';
 
@@ -29,16 +30,16 @@ export interface Db {
   listBookmarks: (userId: number) => Promise<ListResult<Series>>;
   upsertHistory: (params: { userId: number; chapterId: string; lastPage: number }) => Promise<Result<ReadingHistory>>;
   listHistory: (userId: number, limit?: number) => Promise<ListResult<Chapter>>;
-  getLbSettings: () => Promise<ListResult<LbSettings>>;
-  setLbSettings: (key: string, value: string) => Promise<{ success: boolean }>;
-  listAccounts: () => Promise<ListResult<LbAccount>>;
-  addAccount: (params: Omit<LbAccount, 'id' | 'created_at'>) => Promise<Result<{ id: number }>>;
-  createOrigin: (params: Omit<LbOrigin, 'id' | 'created_at'>) => Promise<Result<{ id: number }>>;
+  getLbSettings: () => Promise<Result<LbSettings>>;
+  setLbSettings: (updates: Partial<Omit<LbSettings, 'id'>>, id?: number) => Promise<{ success: boolean }>;
+  listAccounts: () => Promise<ListResult<LbAccountSafe>>;
+  addAccount: (params: Pick<LbAccount, 'label' | 'provider' | 'account_ref' | 'encrypted_token' | 'token_last4' | 'created_by'>) => Promise<Result<{ id: string }>>;
+  createOrigin: (params: Pick<LbOrigin, 'account_id' | 'origin_url' | 'priority' | 'weight' | 'enabled'>) => Promise<Result<{ id: string }>>;
   listOrigins: () => Promise<ListResult<LbOrigin>>;
-  updateOrigin: (id: number, params: Partial<Omit<LbOrigin, 'id' | 'created_at'>>) => Promise<{ success: boolean }>;
-  recordOriginHealth: (originId: number, healthy: boolean) => Promise<{ success: boolean }>;
-  getOriginStatus: (originId: number) => Promise<Result<{ healthy: boolean }>>;
-  addAuditLog: (params: { accountId?: number; originId?: number; action: string; userId?: number }) => Promise<{ success: boolean }>;
+  updateOrigin: (id: string, params: Partial<Omit<LbOrigin, 'id' | 'created_at'>>) => Promise<{ success: boolean }>;
+  recordOriginHealth: (originId: string, healthy: boolean, checkedAt?: number) => Promise<{ success: boolean }>;
+  getOriginStatus: (originId: string) => Promise<Result<{ healthy: boolean; last_checked_at: number | null }>>;
+  addAuditLog: (params: { accountId?: string | null; originId?: string | null; action: string; userId?: number | null }) => Promise<{ success: boolean }>;
 }
 
 export const db = (client: D1Database): Db => {
@@ -146,39 +147,50 @@ export const db = (client: D1Database): Db => {
       return (results ?? []) as unknown as ListResult<Chapter>;
     },
 
-    getLbSettings: async () => {
-      const { results } = await prep('SELECT key, value FROM lb_settings').all<Row>();
-      return (results ?? []) as unknown as ListResult<LbSettings>;
-    },
+    getLbSettings: async () =>
+      fromRow<LbSettings>(
+        await prep('SELECT * FROM lb_settings WHERE id = ?1 LIMIT 1').bind(1).first<Row>()
+      ),
 
-    setLbSettings: async (key, value) => {
-      const res = await prep(
-        'INSERT INTO lb_settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2'
-      ).bind(key, value).run();
+    setLbSettings: async (updates, id = 1) => {
+      const sets: string[] = [];
+      const args: unknown[] = [];
+      for (const [k, v] of Object.entries(updates)) {
+        if (k === 'id') continue;
+        sets.push(`${k} = ?${args.length + 1}`);
+        args.push(v);
+      }
+      if (sets.length === 0) return { success: true };
+      const res = await prep(`UPDATE lb_settings SET ${sets.join(', ')} WHERE id = ?${args.length + 1}`)
+        .bind(...args, id).run();
       return { success: res.success };
     },
 
     listAccounts: async () => {
-      const { results } = await prep('SELECT * FROM lb_accounts ORDER BY id').all<Row>();
-      return (results ?? []) as unknown as ListResult<LbAccount>;
+      const { results } = await prep(
+        'SELECT id, provider, label, account_ref, token_last4, status, created_by, created_at FROM lb_accounts ORDER BY id'
+      ).all<Row>();
+      return (results ?? []) as unknown as ListResult<LbAccountSafe>;
     },
 
-    addAccount: async ({ name, provider, encrypted_token, token_last4, enabled = 1 }) =>
-      fromRow<{ id: number }>(
+    addAccount: async ({ label, provider, account_ref, encrypted_token, token_last4, created_by }) =>
+      fromRow<{ id: string }>(
         await prep(
-          'INSERT INTO lb_accounts (name, provider, encrypted_token, token_last4, enabled) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id'
-        ).bind(name, provider, encrypted_token, token_last4, enabled).first<Row>()
+          'INSERT INTO lb_accounts (id, provider, label, account_ref, encrypted_token, token_last4, status, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id'
+        ).bind(crypto.randomUUID(), provider, label, account_ref ?? null, encrypted_token, token_last4, 'unverified', created_by ?? null).first<Row>()
       ),
 
-    createOrigin: async ({ name, url, enabled = 1, priority = 0, weight = 1 }) =>
-      fromRow<{ id: number }>(
+    createOrigin: async ({ account_id, origin_url, priority = 0, weight = 1, enabled = 1 }) =>
+      fromRow<{ id: string }>(
         await prep(
-          'INSERT INTO lb_origins (name, url, enabled, priority, weight) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id'
-        ).bind(name, url, enabled, priority, weight).first<Row>()
+          'INSERT INTO lb_origins (id, account_id, origin_url, priority, weight, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id'
+        ).bind(crypto.randomUUID(), account_id ?? null, origin_url, priority, weight, enabled).first<Row>()
       ),
 
     listOrigins: async () => {
-      const { results } = await prep('SELECT * FROM lb_origins ORDER BY priority DESC, id').all<Row>();
+      const { results } = await prep(
+        'SELECT * FROM lb_origins ORDER BY priority DESC, id'
+      ).all<Row>();
       return (results ?? []) as unknown as ListResult<LbOrigin>;
     },
 
@@ -186,6 +198,7 @@ export const db = (client: D1Database): Db => {
       const sets: string[] = [];
       const args: unknown[] = [];
       for (const [k, v] of Object.entries(params)) {
+        if (k === 'id' || k === 'created_at') continue;
         sets.push(`${k} = ?${args.length + 1}`);
         args.push(v);
       }
@@ -195,25 +208,30 @@ export const db = (client: D1Database): Db => {
       return { success: res.success };
     },
 
-    // append-only health record (also written by cron)
-    recordOriginHealth: async (originId, healthy) => {
+    // updates lb_origins last_health_status + last_checked_at (append-only audit via addAuditLog separately)
+    recordOriginHealth: async (originId, healthy, checkedAt) => {
+      const status = healthy ? 'healthy' : 'unhealthy';
+      const ts = checkedAt ?? Math.floor(Date.now() / 1000);
       const res = await prep(
-        `INSERT INTO lb_audit_log (origin_id, action) VALUES (?1, ?2)`
-      ).bind(originId, healthy ? 'healthy' : 'unhealthy').run();
+        'UPDATE lb_origins SET last_health_status = ?1, last_checked_at = ?2 WHERE id = ?3'
+      ).bind(status, ts, originId).run();
       return { success: res.success };
     },
 
     getOriginStatus: async (originId) => {
       const row = await prep(
-        `SELECT action FROM lb_audit_log WHERE origin_id = ?1 ORDER BY created_at DESC LIMIT 1`
+        'SELECT last_health_status, last_checked_at FROM lb_origins WHERE id = ?1 LIMIT 1'
       ).bind(originId).first<Row>();
       if (!row) return null;
-      return { healthy: (row.action as string) === 'healthy' };
+      return {
+        healthy: (row.last_health_status as string) === 'healthy',
+        last_checked_at: row.last_checked_at as number | null
+      };
     },
 
     addAuditLog: async ({ accountId, originId, action, userId }) => {
       const res = await prep(
-        `INSERT INTO lb_audit_log (account_id, origin_id, action, user_id) VALUES (?1, ?2, ?3, ?4)`
+        'INSERT INTO lb_audit_log (account_id, origin_id, action, user_id) VALUES (?1, ?2, ?3, ?4)'
       ).bind(accountId ?? null, originId ?? null, action, userId ?? null).run();
       return { success: res.success };
     }

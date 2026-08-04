@@ -70,26 +70,53 @@ check('upsertHistory last_page',
   db.prepare('SELECT last_page FROM reading_history WHERE user_id=1 AND chapter_id=?1').get('9e4f0c2a-onepiece-ch1').last_page, 5);
 
 // lb helpers
-check('getLbSettings', db.prepare('SELECT key, value FROM lb_settings').all().length, 2);
-db.prepare('INSERT INTO lb_settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2')
-  .run('mode', 'custom');
-check('setLbSettings', db.prepare('SELECT value FROM lb_settings WHERE key=?1').get('mode').value, 'custom');
+// lb_settings (single row, id = 1 from seed)
+const settings = db.prepare('SELECT * FROM lb_settings WHERE id = ?1 LIMIT 1').get(1);
+check('getLbSettings single row', settings.mode, 'off');
+check('getLbSettings default impl', settings.implementation, 'custom');
 
-// addAccount / listAccounts / updateOrigin / createOrigin / recordOriginHealth / getOriginStatus / addAuditLog
+// setLbSettings (update specific columns on row id=1)
+db.prepare('UPDATE lb_settings SET mode = ?1, implementation = ?2 WHERE id = ?3').run('on', 'native_cf', 1);
+const updated = db.prepare('SELECT mode, implementation FROM lb_settings WHERE id = ?1 LIMIT 1').get(1);
+check('setLbSettings mode', updated.mode, 'on');
+check('setLbSettings implementation', updated.implementation, 'native_cf');
+
+// addAccount (returns TEXT id)
 const acc = db.prepare(
-  'INSERT INTO lb_accounts (name, provider, encrypted_token, token_last4, enabled) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id'
-).get('cf-acct', 'cloudflare', 'enc', '1234', 1);
-check('addAccount id', acc.id, 1);
+  'INSERT INTO lb_accounts (id, provider, label, account_ref, encrypted_token, token_last4, status, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id'
+).get('acct-1', 'cloudflare', 'cf-account', 'account-123', Buffer.from('encrypted-token'), '1234', 'verified', 1);
+check('addAccount id is TEXT', typeof acc.id, 'string');
 
+// listAccounts (omits encrypted_token)
+const accountsList = db.prepare(
+  'SELECT id, provider, label, account_ref, token_last4, status, created_by, created_at FROM lb_accounts ORDER BY id'
+).all();
+check('listAccounts omits token', accountsList[0] && !('encrypted_token' in accountsList[0]), true);
+check('listAccounts label', accountsList[0]?.label, 'cf-account');
+
+// createOrigin with account_id FK
+const origin = db.prepare(
+  'INSERT INTO lb_origins (id, account_id, origin_url, priority, weight, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id'
+).get('origin-1', 'acct-1', 'https://api.example.com', 0, 1, 1);
+check('createOrigin id is TEXT', typeof origin.id, 'string');
+
+// recordOriginHealth (UPDATE lb_origins last_health_status + last_checked_at)
+db.prepare('UPDATE lb_origins SET last_health_status = ?1, last_checked_at = ?2 WHERE id = ?3')
+  .run('healthy', 1700000000, 'origin-1');
+
+// getOriginStatus (reads from lb_origins)
+const originStatus = db.prepare(
+  'SELECT last_health_status, last_checked_at FROM lb_origins WHERE id = ?1 LIMIT 1'
+).get('origin-1');
+check('getOriginStatus healthy', originStatus.last_health_status, 'healthy');
+check('getOriginStatus last_checked_at', originStatus.last_checked_at, 1700000000);
+
+// addAuditLog
 db.prepare(
-  'INSERT INTO lb_origins (name, url, enabled, priority, weight) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id'
-).get('primary', 'https://api.example.com', 1, 0, 1);
-db.prepare('UPDATE lb_origins SET name = ?1 WHERE id = ?2').run('primary-renamed', 1);
-db.prepare('INSERT INTO lb_audit_log (origin_id, action) VALUES (?1, ?2)').run(1, 'healthy');
-check('getOriginStatus', db.prepare(
-  'SELECT action FROM lb_audit_log WHERE origin_id = ?1 ORDER BY created_at DESC LIMIT 1').get(1).action, 'healthy');
-db.prepare('INSERT INTO lb_audit_log (account_id, origin_id, action, user_id) VALUES (?1, ?2, ?3, ?4)')
-  .run(1, 1, 'account_created', 1);
+  'INSERT INTO lb_audit_log (account_id, origin_id, action, user_id) VALUES (?1, ?2, ?3, ?4)'
+).run('acct-1', 'origin-1', 'origin_created', 1);
+check('addAuditLog', db.prepare(
+  'SELECT action FROM lb_audit_log WHERE origin_id = ?1 ORDER BY created_at DESC LIMIT 1').get('origin-1').action, 'origin_created');
 
 console.log(`\n${ok ? 'ALL PASS' : 'SOME FAILED'}`);
 db.close();

@@ -7,7 +7,7 @@ import { z } from 'zod';
 export const SeriesType = z.enum(['manga', 'manhwa', 'manhua']);
 export const SeriesStatus = z.enum(['ongoing', 'completed', 'hiatus', 'cancelled']);
 export const UserRole = z.enum(['user', 'admin']);
-export const LbProvider = z.enum(['cloudflare', 'vercel', 'custom']);
+export const LbProvider = z.enum(['cloudflare', 'vercel']);
 
 export type SeriesType = z.infer<typeof SeriesType>;
 export type SeriesStatus = z.infer<typeof SeriesStatus>;
@@ -82,36 +82,60 @@ export const ReadingHistorySchema = z.object({
 });
 export type ReadingHistory = z.infer<typeof ReadingHistorySchema>;
 
-// ---- Load balancing settings ---------------------------------------------
+// ---- Load balancing settings (single row, id = 1) --------------------------
 export const LbSettingsSchema = z.object({
-  key: z.string().min(1),
-  value: z.string().min(1)
+  id: z.number().int().optional(),
+  mode: z.enum(['off', 'on']).default('off'),
+  implementation: z.enum(['native_cf', 'custom']).default('custom'),
+  steering_policy: z.string().default('failover'),
+  health_check_interval_sec: z.number().int().default(30),
+  health_check_timeout_ms: z.number().int().default(3000),
+  failure_threshold: z.number().int().default(2)
 });
 export type LbSettings = z.infer<typeof LbSettingsSchema>;
 
-// ---- Load balancing accounts ----------------------------------------------
+// ---- Load balancing accounts (internal; contains the token BLOB) -----------
 export const LbAccountSchema = z.object({
-  id: z.number().int().positive().optional(),
-  name: z.string().min(1),
+  id: z.string().min(1),
   provider: LbProvider,
-  encrypted_token: z.string().min(1),
+  label: z.string().min(1),
+  account_ref: z.string().nullable().optional(),
+  encrypted_token: z.instanceof(ArrayBuffer).or(z.instanceof(Uint8Array)),
   token_last4: z.string().length(4),
-  enabled: z.number().int().min(0).max(1).default(1),
+  status: z.enum(['verified', 'unverified', 'failed']).default('unverified'),
+  created_by: z.number().int().positive().nullable().optional(),
   created_at: z.number().int().optional()
 });
 export type LbAccount = z.infer<typeof LbAccountSchema>;
 
-// ---- Load balancing origins -----------------------------------------------
+// Public account view returned to the frontend (token omitted).
+export const LbAccountSafeSchema = LbAccountSchema.omit({ encrypted_token: true });
+export type LbAccountSafe = z.infer<typeof LbAccountSafeSchema>;
+
+// ---- Load balancing origins ------------------------------------------------
 export const LbOriginSchema = z.object({
-  id: z.number().int().positive().optional(),
-  name: z.string().min(1),
-  url: z.string().url(),
-  enabled: z.number().int().min(0).max(1).default(1),
+  id: z.string().min(1),
+  account_id: z.string().nullable().optional(),
+  origin_url: z.string().url(),
   priority: z.number().int().default(0),
   weight: z.number().int().positive().default(1),
+  enabled: z.number().int().min(0).max(1).default(1),
+  last_health_status: z.string().nullable().optional(),
+  last_checked_at: z.number().int().nullable().optional(),
   created_at: z.number().int().optional()
 });
 export type LbOrigin = z.infer<typeof LbOriginSchema>;
+
+// ---- Load balancing audit log ----------------------------------------------
+export const LbAuditLogSchema = z.object({
+  id: z.number().int().positive().optional(),
+  account_id: z.string().nullable().optional(),
+  origin_id: z.string().nullable().optional(),
+  action: z.string().min(1),
+  user_id: z.number().int().positive().nullable().optional(),
+  created_at: z.number().int().optional()
+});
+export type LbAuditLog = z.infer<typeof LbAuditLogSchema>;
 
 // ---- Convenience: JSON-array parsing for genres/tags -----------------------
 export const JsonStringArraySchema = z

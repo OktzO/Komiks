@@ -26,5 +26,5 @@ VALUES
   ('9e4f0c2a-onepiece-ch1090', 1, 'https://mangadex.org/image1/1090-1.jpg'),
   ('9e4f0c2a-onepiece-ch1090', 2, 'https://mangadex.org/image1/1090-2.jpg');
 
-INSERT OR IGNORE INTO lb_settings (key, value)
-VALUES ('mode', 'native'), ('admin_password_hash', '0000');
+INSERT OR IGNORE INTO lb_settings (id, mode, implementation, steering_policy, health_check_interval_sec, health_check_timeout_ms, failure_threshold)
+VALUES (1, 'off', 'custom', 'failover', 30, 3000, 2);

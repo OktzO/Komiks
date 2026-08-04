@@ -84,46 +84,55 @@ CREATE TABLE reading_history (
 );
 
 ---------------------------------------------------------------------
--- load balancing settings (key/value, single tenant)
+-- load balancing settings (single row, id = 1)
 ---------------------------------------------------------------------
 CREATE TABLE lb_settings (
-  key           TEXT    PRIMARY KEY,
-  value         TEXT    NOT NULL
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  mode          TEXT    NOT NULL CHECK (mode IN ('off','on')) DEFAULT 'off',
+  implementation TEXT   NOT NULL CHECK (implementation IN ('native_cf','custom')) DEFAULT 'custom',
+  steering_policy TEXT  DEFAULT 'failover',
+  health_check_interval_sec INTEGER DEFAULT 30,
+  health_check_timeout_ms INTEGER DEFAULT 3000,
+  failure_threshold INTEGER DEFAULT 2
 );
 
 ---------------------------------------------------------------------
--- load balancing accounts (tokens AES-GCM encrypted at rest)
+-- load balancing accounts (tokens AES-GCM encrypted at rest, stored as BLOB)
 ---------------------------------------------------------------------
 CREATE TABLE lb_accounts (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  name          TEXT    NOT NULL,
-  provider      TEXT    NOT NULL CHECK (provider IN ('cloudflare', 'vercel', 'custom')),
-  encrypted_token TEXT   NOT NULL,
-  token_last4   TEXT    NOT NULL,
-  enabled       INTEGER NOT NULL DEFAULT 1,
-  created_at    INTEGER NOT NULL DEFAULT (unixepoch())
+  id              TEXT PRIMARY KEY,
+  provider        TEXT    NOT NULL CHECK (provider IN ('cloudflare','vercel')),
+  label           TEXT    NOT NULL,
+  account_ref     TEXT,
+  encrypted_token BLOB    NOT NULL,
+  token_last4     TEXT    NOT NULL,
+  status          TEXT    NOT NULL CHECK (status IN ('verified','unverified','failed')) DEFAULT 'unverified',
+  created_by      INTEGER REFERENCES users (id),
+  created_at      INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 ---------------------------------------------------------------------
 -- load balancing origins
 ---------------------------------------------------------------------
 CREATE TABLE lb_origins (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  name          TEXT    NOT NULL,
-  url           TEXT    NOT NULL,
-  enabled       INTEGER NOT NULL DEFAULT 1,
-  priority      INTEGER NOT NULL DEFAULT 0,
-  weight        INTEGER NOT NULL DEFAULT 1,
-  created_at    INTEGER NOT NULL DEFAULT (unixepoch())
+  id                TEXT PRIMARY KEY,
+  account_id        TEXT REFERENCES lb_accounts (id) ON DELETE SET NULL,
+  origin_url        TEXT    NOT NULL,
+  priority          INTEGER NOT NULL DEFAULT 0,
+  weight            INTEGER NOT NULL DEFAULT 1,
+  enabled           INTEGER NOT NULL DEFAULT 1,
+  last_health_status TEXT,
+  last_checked_at   INTEGER,
+  created_at        INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 ---------------------------------------------------------------------
--- load balancing audit log
+-- load balancing audit log (account_id / origin_id are TEXT FK to lb_* )
 ---------------------------------------------------------------------
 CREATE TABLE lb_audit_log (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  account_id    INTEGER REFERENCES lb_accounts (id),
-  origin_id     INTEGER REFERENCES lb_origins (id),
+  account_id    TEXT REFERENCES lb_accounts (id),
+  origin_id     TEXT REFERENCES lb_origins (id),
   action        TEXT    NOT NULL,
   user_id       INTEGER REFERENCES users (id),
   created_at    INTEGER NOT NULL DEFAULT (unixepoch())
