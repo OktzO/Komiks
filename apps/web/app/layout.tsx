@@ -15,6 +15,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="max-w-6xl mx-auto px-4 h-12 flex items-center gap-6">
             <Link href="/" className="font-semibold text-primary hover:text-accent">Manga Reader</Link>
             <Link href="/search" className="text-sm text-secondary hover:text-accent">Cari</Link>
+            <Link href="/bookmark" className="text-sm text-secondary hover:text-accent">Bookmark</Link>
+            <Link href="/history" className="text-sm text-secondary hover:text-accent">Riwayat</Link>
+            <Link href="/login" className="text-sm text-secondary hover:text-accent ml-auto">Masuk</Link>
           </div>
         </nav>
         {children}

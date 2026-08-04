@@ -7,6 +7,7 @@ import { router as searchRouter } from './routes/search';
 import { router as lbAdminRouter } from './routes/admin/lb';
 import { router as readerRouter } from './routes/reader';
 import { router as authRouter } from './routes/auth';
+import { router as userRouter } from './routes/user';
 
 const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const allowed = parseAllowedOrigins(c.env);
@@ -35,6 +36,7 @@ app.route('/api', searchRouter);
 app.route('/api/admin/lb', lbAdminRouter);
 app.route('/api/reader', readerRouter);
 app.route('/api/auth', authRouter);
+app.route('/api/user', userRouter);
 
 app.onError((err, c) => {
   console.error('[api]', err);
