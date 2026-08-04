@@ -6,7 +6,7 @@ const BASE = 'https://api.mangadex.org';
 type QueryVal = string | number | boolean | undefined;
 type Query = Record<string, QueryVal | QueryVal[]>;
 
-const buildUrl = (path: string, query?: Query): string => {
+const buildUrl = (path: string, query?: Query, apiKey?: string): string => {
   const url = new URL(path, BASE + '/');
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -18,14 +18,14 @@ const buildUrl = (path: string, query?: Query): string => {
       }
     }
   }
-  // Optional API key (rate-limit / authenticated requests). Append as ?key=
-  const key = (typeof process !== 'undefined' && process.env?.MANGADEX_API_KEY) || undefined;
-  if (key) url.searchParams.set('key', key);
+  // Optional API key (rate-limit / authenticated requests). Injected by adapter
+  // from the host runtime's env (CF Workers env param, Node process.env, etc.).
+  if (apiKey) url.searchParams.set('key', apiKey);
   return url.toString();
 };
 
-const getJson = async <T>(path: string, query?: Query): Promise<T> => {
-  const res = await fetch(buildUrl(path, query), {
+const getJson = async <T>(path: string, query?: Query, apiKey?: string): Promise<T> => {
+  const res = await fetch(buildUrl(path, query, apiKey), {
     headers: { accept: 'application/json' }
   });
   if (!res.ok) {
@@ -117,19 +117,19 @@ export interface AtHomeResponse {
 
 // ---- Endpoint wrappers -----------------------------------------------------
 
-export const mdGetMangaList = (query: Query): Promise<MangaListResponse> =>
-  getJson<MangaListResponse>('/manga', query);
+export const mdGetMangaList = (query: Query, apiKey?: string): Promise<MangaListResponse> =>
+  getJson<MangaListResponse>('/manga', query, apiKey);
 
-export const mdGetManga = (id: string, query?: Query): Promise<MangaEntityResponse> =>
-  getJson<MangaEntityResponse>(`/manga/${id}`, query);
+export const mdGetManga = (id: string, query?: Query, apiKey?: string): Promise<MangaEntityResponse> =>
+  getJson<MangaEntityResponse>(`/manga/${id}`, query, apiKey);
 
-export const mdGetChapterList = (query: Query): Promise<ChapterListResponse> =>
-  getJson<ChapterListResponse>('/chapter', query);
+export const mdGetChapterList = (query: Query, apiKey?: string): Promise<ChapterListResponse> =>
+  getJson<ChapterListResponse>('/chapter', query, apiKey);
 
-export const mdGetChapter = (id: string, query?: Query): Promise<ChapterEntityResponse> =>
-  getJson<ChapterEntityResponse>(`/chapter/${id}`, query);
+export const mdGetChapter = (id: string, query?: Query, apiKey?: string): Promise<ChapterEntityResponse> =>
+  getJson<ChapterEntityResponse>(`/chapter/${id}`, query, apiKey);
 
-export const mdGetAtHome = (chapterId: string): Promise<AtHomeResponse> =>
-  getJson<AtHomeResponse>(`/at-home/server/${chapterId}`);
+export const mdGetAtHome = (chapterId: string, apiKey?: string): Promise<AtHomeResponse> =>
+  getJson<AtHomeResponse>(`/at-home/server/${chapterId}`, undefined, apiKey);
 
 export const MANGADEX_BASE = BASE;

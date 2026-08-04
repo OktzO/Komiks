@@ -1,6 +1,8 @@
-// Source adapter registry. `getAdapter(sourceKey)` returns the adapter or null.
+// Source adapter registry. `getAdapter(sourceKey, env?)` returns the adapter or null.
+// `env` is forwarded to adapters that read runtime config (e.g. MANGADEX_API_KEY);
+// omitting it yields keyless behavior (backwards-compatible).
 import { mangadexAdapter } from './mangadex/index.js';
-import type { MangadexAdapter } from './mangadex/index.js';
+import type { MangadexAdapter, AdapterEnv } from './mangadex/index.js';
 import type { Series, Chapter } from '@manga-platform/shared';
 
 export type SourceKey = 'mangadex';
@@ -15,11 +17,11 @@ export interface SourceAdapter {
   ): Promise<{ url: string; proxyHeaders?: Record<string, string> }[]>;
 }
 
-const adapters: Record<SourceKey, SourceAdapter> = {
-  mangadex: mangadexAdapter as unknown as SourceAdapter
+const adapterFactories: Record<SourceKey, (env?: AdapterEnv) => SourceAdapter> = {
+  mangadex: (env) => mangadexAdapter(env) as unknown as SourceAdapter
 };
 
-export const getAdapter = (sourceKey: string): SourceAdapter | null =>
-  (sourceKey in adapters) ? adapters[sourceKey as SourceKey] : null;
+export const getAdapter = (sourceKey: string, env?: AdapterEnv): SourceAdapter | null =>
+  (sourceKey in adapterFactories) ? adapterFactories[sourceKey as SourceKey](env) : null;
 
-export { mangadexAdapter, type MangadexAdapter };
+export { mangadexAdapter, type MangadexAdapter, type AdapterEnv };

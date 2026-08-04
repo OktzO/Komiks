@@ -142,69 +142,82 @@ export interface PageUrl {
   proxyHeaders?: Record<string, string>;
 }
 
-export const mangadexAdapter = {
-  sourceKey: 'mangadex' as const,
+export interface AdapterEnv {
+  MANGADEX_API_KEY?: string;
+}
 
-  async search({ q, limit = 20, offset = 0 }: SearchParams): Promise<Series[]> {
-    const res = await mdGetMangaList({
-      title: q,
-      limit,
-      offset,
-      'includes[]': ['cover_art', 'author', 'artist'],
-      'order[relevance]': 'desc'
-    });
-    return res.data.map(mapManga);
-  },
+export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
+  const apiKey = env?.MANGADEX_API_KEY || undefined;
+  return {
+    sourceKey: 'mangadex' as const,
 
-  async listChapters(sourceId: string, opts: ListChaptersOpts = {}): Promise<Chapter[]> {
-    // Need manga title for series_slug → fetch manga once.
-    const manga = await mdGetManga(sourceId, { 'includes[]': 'author' });
-    const seriesSlug = `${slugify(pickTitle(manga.data.attributes))}--${first8(sourceId)}`;
-    const res = await mdGetChapterList({
-      manga: sourceId,
-      'translatedLanguage[]': opts.lang,
-      chapter: opts.chapter,
-      limit: 100,
-      offset: 0,
-      'order[chapter]': 'asc',
-      'includes[]': 'scanlation_group'
-    });
-    return res.data.map((e) => {
-      const c = mapChapter(e, sourceId);
-      c.series_slug = seriesSlug;
+    async search({ q, limit = 20, offset = 0 }: SearchParams): Promise<Series[]> {
+      const res = await mdGetMangaList({
+        title: q,
+        limit,
+        offset,
+        'includes[]': ['cover_art', 'author', 'artist'],
+        'order[relevance]': 'desc'
+      }, apiKey);
+      return res.data.map(mapManga);
+    },
+
+    async listChapters(sourceId: string, opts: ListChaptersOpts = {}): Promise<Chapter[]> {
+      // Need manga title for series_slug → fetch manga once.
+      const manga = await mdGetManga(sourceId, { 'includes[]': 'author' }, apiKey);
+      const seriesSlug = `${slugify(pickTitle(manga.data.attributes))}--${first8(sourceId)}`;
+      const res = await mdGetChapterList({
+        manga: sourceId,
+        'translatedLanguage[]': opts.lang,
+        chapter: opts.chapter,
+        limit: 100,
+        offset: 0,
+        'order[chapter]': 'asc',
+        'includes[]': 'scanlation_group'
+      }, apiKey);
+      return res.data.map((e) => {
+        const c = mapChapter(e, sourceId);
+        c.series_slug = seriesSlug;
+        return c;
+      });
+    },
+
+    async getChapter(chapterSourceId: string): Promise<Chapter> {
+      // chapterSourceId = `${mangaUuid}@${lang}:${chapterId}` — parse out pieces.
+      const at = chapterSourceId.lastIndexOf(':');
+      if (at < 0) throw new Error(`bad chapterSourceId: ${chapterSourceId}`);
+      const chapterId = chapterSourceId.slice(at + 1);
+      const beforeLang = chapterSourceId.slice(0, at);
+      const atAt = beforeLang.indexOf('@');
+      const mangaUuid = atAt >= 0 ? beforeLang.slice(0, atAt) : beforeLang;
+      const res = await mdGetChapter(chapterId, { 'includes[]': 'scanlation_group' }, apiKey);
+      const c = mapChapter(res.data, mangaUuid);
+      // series_slug requires manga title; fetch lazily.
+      const manga = await mdGetManga(mangaUuid, undefined, apiKey);
+      c.series_slug = `${slugify(pickTitle(manga.data.attributes))}--${first8(mangaUuid)}`;
       return c;
-    });
-  },
+    },
 
-  async getChapter(chapterSourceId: string): Promise<Chapter> {
-    // chapterSourceId = `${mangaUuid}@${lang}:${chapterId}` — parse out pieces.
-    const at = chapterSourceId.lastIndexOf(':');
-    if (at < 0) throw new Error(`bad chapterSourceId: ${chapterSourceId}`);
-    const chapterId = chapterSourceId.slice(at + 1);
-    const beforeLang = chapterSourceId.slice(0, at);
-    const atAt = beforeLang.indexOf('@');
-    const mangaUuid = atAt >= 0 ? beforeLang.slice(0, atAt) : beforeLang;
-    const res = await mdGetChapter(chapterId, { 'includes[]': 'scanlation_group' });
-    const c = mapChapter(res.data, mangaUuid);
-    // series_slug requires manga title; fetch lazily.
-    const manga = await mdGetManga(mangaUuid);
-    c.series_slug = `${slugify(pickTitle(manga.data.attributes))}--${first8(mangaUuid)}`;
-    return c;
-  },
-
-  async fetchPageUrls(chapterSourceId: string): Promise<PageUrl[]> {
-    // chapterSourceId may be either a bare chapter UUID or the composite
-    // `${mangaUuid}@${lang}:${chapterId}`. Extract the chapterId tail.
-    const colonIdx = chapterSourceId.lastIndexOf(':');
-    const chapterId = colonIdx >= 0 && chapterSourceId.includes('@')
-      ? chapterSourceId.slice(colonIdx + 1)
-      : chapterSourceId;
-    const at = await mdGetAtHome(chapterId);
-    const { baseUrl, chapter } = at;
-    return chapter.data.map((filename) => ({
-      url: `${baseUrl}/data/${chapter.hash}/${filename}`
-    }));
-  }
+    async fetchPageUrls(chapterSourceId: string): Promise<PageUrl[]> {
+      // chapterSourceId may be either a bare chapter UUID or the composite
+      // `${mangaUuid}@${lang}:${chapterId}`. Extract the chapterId tail.
+      const colonIdx = chapterSourceId.lastIndexOf(':');
+      const chapterId = colonIdx >= 0 && chapterSourceId.includes('@')
+        ? chapterSourceId.slice(colonIdx + 1)
+        : chapterSourceId;
+      const at = await mdGetAtHome(chapterId, apiKey);
+      const { baseUrl, chapter } = at;
+      return chapter.data.map((filename) => ({
+        url: `${baseUrl}/data/${chapter.hash}/${filename}`
+      }));
+    }
+  };
 };
 
-export type MangadexAdapter = typeof mangadexAdapter;
+export interface MangadexAdapter {
+  sourceKey: 'mangadex';
+  search(params: SearchParams): Promise<Series[]>;
+  listChapters(sourceId: string, opts?: ListChaptersOpts): Promise<Chapter[]>;
+  getChapter(chapterSourceId: string): Promise<Chapter>;
+  fetchPageUrls(chapterSourceId: string): Promise<PageUrl[]>;
+}
