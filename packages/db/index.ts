@@ -33,7 +33,8 @@ export interface Db {
   getLbSettings: () => Promise<Result<LbSettings>>;
   setLbSettings: (updates: Partial<Omit<LbSettings, 'id'>>, id?: number) => Promise<{ success: boolean }>;
   listAccounts: () => Promise<ListResult<LbAccountSafe>>;
-  addAccount: (params: Pick<LbAccount, 'label' | 'provider' | 'account_ref' | 'encrypted_token' | 'token_last4' | 'created_by'>) => Promise<Result<{ id: string }>>;
+  addAccount: (params: Pick<LbAccount, 'label' | 'provider' | 'account_ref' | 'encrypted_token' | 'token_last4' | 'status' | 'created_by'>) => Promise<Result<{ id: string }>>;
+  deleteAccount: (id: string) => Promise<{ success: boolean }>;
   createOrigin: (params: Pick<LbOrigin, 'account_id' | 'origin_url' | 'priority' | 'weight' | 'enabled'>) => Promise<Result<{ id: string }>>;
   listOrigins: () => Promise<ListResult<LbOrigin>>;
   updateOrigin: (id: string, params: Partial<Omit<LbOrigin, 'id' | 'created_at'>>) => Promise<{ success: boolean }>;
@@ -173,12 +174,17 @@ export const db = (client: D1Database): Db => {
       return (results ?? []) as unknown as ListResult<LbAccountSafe>;
     },
 
-    addAccount: async ({ label, provider, account_ref, encrypted_token, token_last4, created_by }) =>
+    addAccount: async ({ label, provider, account_ref, encrypted_token, token_last4, status = 'unverified', created_by }) =>
       fromRow<{ id: string }>(
         await prep(
           'INSERT INTO lb_accounts (id, provider, label, account_ref, encrypted_token, token_last4, status, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id'
-        ).bind(crypto.randomUUID(), provider, label, account_ref ?? null, encrypted_token, token_last4, 'unverified', created_by ?? null).first<Row>()
+        ).bind(crypto.randomUUID(), provider, label, account_ref ?? null, encrypted_token, token_last4, status, created_by ?? null).first<Row>()
       ),
+
+    deleteAccount: async (id) => {
+      const res = await prep('DELETE FROM lb_accounts WHERE id = ?1').bind(id).run();
+      return { success: res.success };
+    },
 
     createOrigin: async ({ account_id, origin_url, priority = 0, weight = 1, enabled = 1 }) =>
       fromRow<{ id: string }>(

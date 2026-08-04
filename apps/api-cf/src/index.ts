@@ -14,7 +14,7 @@ const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     c.res.headers.set('Vary', 'Origin');
   }
   c.res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
-  c.res.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  c.res.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-stepup');
 
   if (c.req.method === 'OPTIONS') {
     c.res.headers.set('Access-Control-Max-Age', '600');

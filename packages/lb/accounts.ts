@@ -74,6 +74,7 @@ export const createAccount = async (
     account_ref: input.account_ref ?? null,
     encrypted_token: blob,
     token_last4: input.token_last4,
+    status,
     created_by: input.created_by ?? null
   });
   if (!stored) throw new Error('lb/accounts: addAccount returned no id');

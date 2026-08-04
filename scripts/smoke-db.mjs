@@ -81,11 +81,12 @@ const updated = db.prepare('SELECT mode, implementation FROM lb_settings WHERE i
 check('setLbSettings mode', updated.mode, 'on');
 check('setLbSettings implementation', updated.implementation, 'native_cf');
 
-// addAccount (returns TEXT id)
+// addAccount (returns TEXT id, status persisted)
 const acc = db.prepare(
   'INSERT INTO lb_accounts (id, provider, label, account_ref, encrypted_token, token_last4, status, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING id'
 ).get('acct-1', 'cloudflare', 'cf-account', 'account-123', Buffer.from('encrypted-token'), '1234', 'verified', 1);
 check('addAccount id is TEXT', typeof acc.id, 'string');
+check('addAccount status persisted', db.prepare('SELECT status FROM lb_accounts WHERE id = ?1').get('acct-1').status, 'verified');
 
 // listAccounts (omits encrypted_token)
 const accountsList = db.prepare(
@@ -117,6 +118,13 @@ db.prepare(
 ).run('acct-1', 'origin-1', 'origin_created', 1);
 check('addAuditLog', db.prepare(
   'SELECT action FROM lb_audit_log WHERE origin_id = ?1 ORDER BY created_at DESC LIMIT 1').get('origin-1').action, 'origin_created');
+
+// deleteAccount (row removed; audit_log FK is RESTRICT so clear references first,
+// mirroring production where the audit row is written AFTER the delete)
+db.prepare('DELETE FROM lb_audit_log WHERE account_id = ?1').run('acct-1');
+db.prepare('DELETE FROM lb_accounts WHERE id = ?1').run('acct-1');
+check('deleteAccount removed row', db.prepare('SELECT id FROM lb_accounts WHERE id = ?1').get('acct-1'), undefined);
+check('deleteAccount cascaded to origin', db.prepare('SELECT account_id FROM lb_origins WHERE id = ?1').get('origin-1').account_id, null);
 
 console.log(`\n${ok ? 'ALL PASS' : 'SOME FAILED'}`);
 db.close();

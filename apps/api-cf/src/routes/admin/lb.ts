@@ -68,6 +68,7 @@ router.post('/accounts', async (c) => {
 
 router.delete('/accounts/:id', async (c) => {
   const id = c.req.param('id');
+  await getDb(c).deleteAccount(id);
   await getDb(c).addAuditLog({ accountId: id, action: 'account.delete' });
   return json(c, { ok: true });
 });
@@ -103,7 +104,15 @@ router.put('/origins/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   if (!body) return json(c, { error: 'invalid body' }, 400);
-  await getDb(c).updateOrigin(id, body as never);
+  const updates: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (v === undefined) continue;
+    if (k === 'priority' || k === 'weight' || k === 'enabled' || k === 'account_id' || k === 'origin_url') {
+      updates[k] = v;
+    }
+  }
+  if (Object.keys(updates).length === 0) return json(c, { error: 'no updatable fields' }, 400);
+  await getDb(c).updateOrigin(id, updates);
   await getDb(c).addAuditLog({ originId: id, action: 'origin.update' });
   return json(c, { ok: true });
 });
