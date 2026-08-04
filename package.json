@@ -7,6 +7,9 @@
     "apps/*",
     "packages/*"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev:api": "turbo run dev:api",
     "dev:web": "turbo run dev:web"
