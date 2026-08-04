@@ -4,6 +4,7 @@ import { Env, json, parseAllowedOrigins } from './lib/context';
 import { router as healthRouter } from './routes/health';
 import { router as seriesRouter } from './routes/series';
 import { router as searchRouter } from './routes/search';
+import { router as lbAdminRouter } from './routes/admin/lb';
 
 const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const allowed = parseAllowedOrigins(c.env);
@@ -29,6 +30,7 @@ app.use('*', corsMw);
 app.route('/api', healthRouter);
 app.route('/api', seriesRouter);
 app.route('/api', searchRouter);
+app.route('/api/admin/lb', lbAdminRouter);
 
 app.onError((err, c) => {
   console.error('[api]', err);
