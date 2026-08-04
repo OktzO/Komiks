@@ -25,6 +25,7 @@ export interface Db {
   searchSeries: (query: string) => Promise<ListResult<Series>>;
   createUser: (params: { email: string; name?: string | null; passwordHash: string; role?: string }) => Promise<Result<{ id: number }>>;
   getUserById: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string }>>;
+  getUserByEmail: (email: string) => Promise<Result<{ id: number; email: string; password_hash: string | null; role: string }>>;
   addBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
   removeBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
   listBookmarks: (userId: number) => Promise<ListResult<Series>>;
@@ -107,6 +108,11 @@ export const db = (client: D1Database): Db => {
     getUserById: async (id) =>
       fromRow<{ id: number; email: string; name: string | null; role: string }>(
         await prep('SELECT id, email, name, role FROM users WHERE id = ?1 LIMIT 1').bind(id).first<Row>()
+      ),
+
+    getUserByEmail: async (email) =>
+      fromRow<{ id: number; email: string; password_hash: string | null; role: string }>(
+        await prep('SELECT id, email, password_hash, role FROM users WHERE email = ?1 LIMIT 1').bind(email).first<Row>()
       ),
 
     addBookmark: async ({ userId, seriesSlug }) => {
