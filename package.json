@@ -1,0 +1,18 @@
+{
+  "name": "manga-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "turbo run dev:api",
+    "dev:web": "turbo run dev:web"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.6",
+    "typescript": "^5.5.4"
+  }
+}
