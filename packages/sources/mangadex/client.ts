@@ -26,7 +26,7 @@ const buildUrl = (path: string, query?: Query, apiKey?: string): string => {
 
 const getJson = async <T>(path: string, query?: Query, apiKey?: string): Promise<T> => {
   const res = await fetch(buildUrl(path, query, apiKey), {
-    headers: { accept: 'application/json' }
+    headers: { accept: 'application/json', 'User-Agent': 'manga-platform/1.0' }
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
