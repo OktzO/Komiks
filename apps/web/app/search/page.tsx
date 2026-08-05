@@ -1,3 +1,4 @@
+export const runtime = 'edge';
 import { MangaCard } from '@/components/MangaCard';
 import { API_URL, type Series } from '@/lib/api';
 

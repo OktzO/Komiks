@@ -6,7 +6,7 @@
     "dev:web": "next dev",
     "dev": "next dev",
     "build": "next build",
-    "postbuild": "next-on-pages",
+    "pages:build": "npx next-on-pages --skip-build",
     "lint": "next lint"
   },
   "dependencies": {

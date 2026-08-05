@@ -1,0 +1,28 @@
+{
+  "type": "Prerender",
+  "expiration": false,
+  "group": 1,
+  "bypassToken": "98d320b6f189f9be22825ec2bd2c8800",
+  "experimentalBypassFor": [
+    {
+      "type": "header",
+      "key": "Next-Action"
+    },
+    {
+      "type": "header",
+      "key": "content-type",
+      "value": "multipart/form-data;.*"
+    }
+  ],
+  "fallback": {
+    "type": "FileFsRef",
+    "mode": 33188,
+    "fsPath": "load-balancing.rsc.prerender-fallback.rsc"
+  },
+  "initialHeaders": {
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/admin/layout,_N_T_/admin/settings/layout,_N_T_/admin/settings/load-balancing/layout,_N_T_/admin/settings/load-balancing/page,_N_T_/admin/settings/load-balancing",
+    "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch",
+    "content-type": "text/x-component"
+  },
+  "allowQuery": []
+}

@@ -1,3 +1,4 @@
+export const runtime = 'edge';
 import { API_URL } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';

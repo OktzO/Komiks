@@ -1,3 +1,4 @@
+export const runtime = 'edge';
 import { getSeries, getChapters } from '@/lib/api';
 import { ChapterList } from '@/components/ChapterList';
 import Link from 'next/link';

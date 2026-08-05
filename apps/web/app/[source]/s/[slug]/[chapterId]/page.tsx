@@ -1,3 +1,4 @@
+export const runtime = 'edge';
 import { getChapter, API_URL } from '@/lib/api';
 import { Reader } from '@/components/Reader';
 import Link from 'next/link';
