@@ -115,6 +115,9 @@ export interface AtHomeResponse {
   };
 }
 
+// Manga feed response uses the same shape as chapter list (a collection).
+export type MangaFeedResponse = ChapterListResponse;
+
 // ---- Endpoint wrappers -----------------------------------------------------
 
 export const mdGetMangaList = (query: Query, apiKey?: string): Promise<MangaListResponse> =>
@@ -125,6 +128,9 @@ export const mdGetManga = (id: string, query?: Query, apiKey?: string): Promise<
 
 export const mdGetChapterList = (query: Query, apiKey?: string): Promise<ChapterListResponse> =>
   getJson<ChapterListResponse>('/chapter', query, apiKey);
+
+export const mdGetMangaFeed = (id: string, query: Query, apiKey?: string): Promise<MangaFeedResponse> =>
+  getJson<MangaFeedResponse>(`/manga/${id}/feed`, query, apiKey);
 
 export const mdGetChapter = (id: string, query?: Query, apiKey?: string): Promise<ChapterEntityResponse> =>
   getJson<ChapterEntityResponse>(`/chapter/${id}`, query, apiKey);

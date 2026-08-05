@@ -4,6 +4,7 @@ import {
   mdGetMangaList,
   mdGetManga,
   mdGetChapterList,
+  mdGetMangaFeed,
   mdGetChapter,
   mdGetAtHome,
   type Entity,
@@ -63,8 +64,13 @@ const relsByType = (e: Entity<'manga', MangaAttributes>, type: string): Relation
   e.relationships.filter((r) => r.type === type);
 
 const coverFilename = (e: Entity<'manga', MangaAttributes>): string | null => {
-  const cover = relsByType(e, 'cover_art')[0];
-  const fn = cover?.attributes?.['fileName'];
+  // pick latest cover (highest volume or first if none)
+  const covers = relsByType(e, 'cover_art').sort((a, b) => {
+    const va = (a.attributes?.volume as number) || 0;
+    const vb = (b.attributes?.volume as number) || 0;
+    return vb - va;
+  });
+  const fn = covers[0]?.attributes?.['fileName'];
   return typeof fn === 'string' ? fn : null;
 };
 
@@ -119,7 +125,7 @@ export const mapChapter = (
     volume: a.volume ?? null,
     title: a.title ?? null,
     language: a.translatedLanguage,
-    pages_count: 0,
+    pages_count: a.pages ?? 0,
     published_at: a.publishAt ? Date.parse(a.publishAt) / 1000 | 0 : null
   };
 };
@@ -171,16 +177,42 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
       // Need manga title for series_slug → fetch manga once.
       const manga = await mdGetManga(sourceId, { 'includes[]': 'author' }, apiKey);
       const seriesSlug = `${slugify(pickTitle(manga.data.attributes))}--${first8(sourceId)}`;
-      const res = await mdGetChapterList({
-        manga: sourceId,
-        'translatedLanguage[]': opts.lang,
-        chapter: opts.chapter,
-        limit: 100,
-        offset: 0,
-        'order[chapter]': 'asc',
-        'includes[]': 'scanlation_group'
-      }, apiKey);
-      return res.data.map((e) => {
+      // Use the manga feed endpoint (returns chapters scoped to this manga).
+      // Fetch in both the requested language and, as a fallback for titles with
+      // no translation in that language, English + original — then filter to
+      // chapters that are actually readable on MangaDex (no externalUrl and
+      // with pages > 0). The /chapter search endpoint returns entries that 404
+      // on detail fetch when they are externally hosted; the feed is the
+      // documented way to list a manga's chapters.
+      const langs = [opts.lang, 'en', manga.data.attributes.originalLanguage].filter((l): l is string => !!l);
+      const seen = new Set<string>();
+      const out: Entity<'chapter', ChapterAttributes>[] = [];
+      for (const lang of langs) {
+        const res = await mdGetMangaFeed(
+          sourceId,
+          {
+            'translatedLanguage[]': lang,
+            limit: 100,
+            offset: 0,
+            'order[chapter]': 'asc',
+            'includes[]': 'scanlation_group'
+          },
+          apiKey
+        );
+        for (const e of res.data) {
+          const a = e.attributes;
+          // Skip externally-hosted or empty chapters — they 404 on /chapter/{id}
+          // and have no pages to render.
+          if (a.externalUrl) continue;
+          if ((a.pages ?? 0) === 0) continue;
+          if (seen.has(e.id)) continue;
+          seen.add(e.id);
+          out.push(e);
+        }
+        if (out.length > 0) break; // found chapters in this lang, no need to fallback
+      }
+      // If no readable chapters found in any fallback language, return empty.
+      return out.map((e) => {
         const c = mapChapter(e, sourceId);
         c.series_slug = seriesSlug;
         return c;
@@ -194,9 +226,14 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
         ? chapterSourceId.slice(colonIdx + 1)
         : chapterSourceId;
       const res = await mdGetChapter(chapterId, { 'includes[]': ['scanlation_group', 'manga'] }, apiKey);
+      const a = res.data.attributes;
+      // Externally hosted or empty chapters cannot be read on MangaDex.
+      if (a.externalUrl) throw new Error('Chapter is externally hosted and cannot be read here');
+      if ((a.pages ?? 0) === 0) throw new Error('Chapter has no pages available');
       const mangaRel = res.data.relationships.find((r) => r.type === 'manga');
       const mangaUuid = mangaRel?.id ?? (colonIdx >= 0 ? chapterSourceId.slice(0, chapterSourceId.indexOf('@')) : chapterId);
       const c = mapChapter(res.data, mangaUuid);
+      c.pages_count = a.pages ?? 0;
       const manga = await mdGetManga(mangaUuid, undefined, apiKey);
       c.series_slug = `${slugify(pickTitle(manga.data.attributes))}--${first8(mangaUuid)}`;
       return c;
@@ -209,6 +246,12 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
       const chapterId = colonIdx >= 0 && chapterSourceId.includes('@')
         ? chapterSourceId.slice(colonIdx + 1)
         : chapterSourceId;
+      // Probe the chapter first to reject externally-hosted / empty chapters
+      // with a clear error instead of an opaque at-home 502.
+      const probe = await mdGetChapter(chapterId, undefined, apiKey);
+      const pa = probe.data.attributes;
+      if (pa.externalUrl) throw new Error('Chapter is externally hosted and cannot be read here');
+      if ((pa.pages ?? 0) === 0) throw new Error('Chapter has no pages available');
       const at = await mdGetAtHome(chapterId, apiKey);
       const { baseUrl, chapter } = at;
       return chapter.data.map((filename) => ({

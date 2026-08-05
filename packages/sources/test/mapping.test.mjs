@@ -60,7 +60,7 @@ route('/manga/00000000-0000-0000-0000-000000000001', {
   }
 });
 
-route('/chapter?manga=00000000', {
+route('/manga/00000000-0000-0000-0000-000000000001/feed?translatedLanguage[]=en', {
   result: 'ok',
   response: 'collection',
   data: [
@@ -96,6 +96,31 @@ route('/chapter?manga=00000000', {
   limit: 100,
   offset: 0,
   total: 2
+});
+
+// External/empty chapters fixture (should be filtered out by listChapters)
+route('/manga/00000000-0000-0000-0000-000000000001/feed?translatedLanguage[]=ko', {
+  result: 'ok',
+  response: 'collection',
+  data: [
+    {
+      id: 'eeeeeeee-0000-0000-0000-000000000020',
+      type: 'chapter',
+      attributes: {
+        volume: '1',
+        chapter: '1',
+        title: 'External host',
+        translatedLanguage: 'ko',
+        pages: 0,
+        publishAt: '2020-01-01T00:00:00+00:00',
+        externalUrl: 'https://external.example/ch/1'
+      },
+      relationships: []
+    }
+  ],
+  limit: 100,
+  offset: 0,
+  total: 1
 });
 
 route('/chapter/cccccccc-0000-0000-0000-000000000010', {
@@ -178,14 +203,17 @@ route('/manga?title=cn', {
 });
 
 const fetchStub = async (url, _init) => {
-  const u = String(url);
-  for (const [key, json] of fixtures) {
+  const u = decodeURIComponent(String(url));
+  // Match longest fixture key first so /manga/{id} does not shadow
+  // /manga/{id}/feed?translatedLanguage[]=en.
+  const keys = [...fixtures.keys()].sort((a, b) => b.length - a.length);
+  for (const key of keys) {
     if (u.includes(key)) {
       return {
         ok: true,
         status: 200,
-        json: async () => json,
-        text: async () => JSON.stringify(json)
+        json: async () => fixtures.get(key),
+        text: async () => JSON.stringify(fixtures.get(key))
       };
     }
   }
@@ -257,27 +285,44 @@ try {
       series_slug: '',
       chapter_number: Number.isFinite(num) ? num : 0,
       volume: a.volume ?? null, title: a.title ?? null,
-      language: a.translatedLanguage, pages_count: 0,
+      language: a.translatedLanguage, pages_count: a.pages ?? 0,
       published_at: a.publishAt ? (Date.parse(a.publishAt) / 1000) | 0 : null
     };
   };
   // Adapter mirrors
-  const { mdGetMangaList, mdGetManga, mdGetChapterList, mdGetChapter, mdGetAtHome } =
+  const { mdGetMangaList, mdGetManga, mdGetMangaFeed, mdGetChapter, mdGetAtHome } =
     await import('../mangadex/client.ts').catch(() => ({
       mdGetMangaList: async (q) => fixtures.get('/manga?title=one'),
       mdGetManga: async (id) => fixtures.get('/manga/00000000-0000-0000-0000-000000000001'),
-      mdGetChapterList: async () => fixtures.get('/chapter?manga=00000000'),
+      mdGetMangaFeed: async (id, q) => {
+        const lang = q['translatedLanguage[]'];
+        return fixtures.get(`/manga/${id}/feed?translatedLanguage[]=${lang}`);
+      },
       mdGetChapter: async () => fixtures.get('/chapter/cccccccc-0000-0000-0000-000000000010'),
       mdGetAtHome: async () => fixtures.get('/at-home/server/cccccccc-0000-0000-0000-000000000010')
     }));
   adapter = {
     sourceKey: 'mangadex',
     search: async ({ q }) => (await mdGetMangaList({ title: q })).data.map(mapManga),
-    listChapters: async (sourceId) => {
+    listChapters: async (sourceId, opts = {}) => {
       const m = await mdGetManga(sourceId);
       const seriesSlug = `${slugify(pickTitle(m.data.attributes))}--${first8(sourceId)}`;
-      const res = await mdGetChapterList({ manga: sourceId });
-      return res.data.map((e) => { const c = mapChapter(e, sourceId); c.series_slug = seriesSlug; return c; });
+      const langs = [opts.lang, 'en', m.data.attributes.originalLanguage].filter((l) => !!l);
+      const seen = new Set();
+      const out = [];
+      for (const lang of langs) {
+        const res = await mdGetMangaFeed(sourceId, { 'translatedLanguage[]': lang });
+        for (const e of res.data) {
+          const a = e.attributes;
+          if (a.externalUrl) continue;
+          if ((a.pages ?? 0) === 0) continue;
+          if (seen.has(e.id)) continue;
+          seen.add(e.id);
+          out.push(e);
+        }
+        if (out.length > 0) break;
+      }
+      return out.map((e) => { const c = mapChapter(e, sourceId); c.series_slug = seriesSlug; return c; });
     },
     getChapter: async (chapterSourceId) => {
       const at = chapterSourceId.lastIndexOf(':');
@@ -287,6 +332,7 @@ try {
       const mangaUuid = atAt >= 0 ? beforeLang.slice(0, atAt) : beforeLang;
       const res = await mdGetChapter(chapterId);
       const c = mapChapter(res.data, mangaUuid);
+      c.pages_count = res.data.attributes.pages ?? 0;
       const m = await mdGetManga(mangaUuid);
       c.series_slug = `${slugify(pickTitle(m.data.attributes))}--${first8(mangaUuid)}`;
       return c;
@@ -295,6 +341,9 @@ try {
       const colonIdx = chapterSourceId.lastIndexOf(':');
       const chapterId = colonIdx >= 0 && chapterSourceId.includes('@')
         ? chapterSourceId.slice(colonIdx + 1) : chapterSourceId;
+      const probe = await mdGetChapter(chapterId);
+      if (probe.data.attributes.externalUrl) throw new Error('externally hosted');
+      if ((probe.data.attributes.pages ?? 0) === 0) throw new Error('no pages');
       const at = await mdGetAtHome(chapterId);
       return at.chapter.data.map((f) => ({ url: `${at.baseUrl}/data/${at.chapter.hash}/${f}` }));
     }
@@ -359,9 +408,16 @@ await test('listChapters maps chapter list with series_slug', async () => {
   assert.equal(c1.volume, '1');
   assert.equal(c1.title, 'Romance Dawn');
   assert.equal(c1.language, 'en');
-  assert.equal(c1.pages_count, 0, 'pages_count 0 until fetchPageUrls');
+  assert.equal(c1.pages_count, 5, 'pages_count now populated from feed');
   assert.equal(typeof c1.published_at, 'number');
   assert.equal(chs[1].chapter_number, 2);
+});
+
+await test('listChapters filters out externally-hosted / empty chapters', async () => {
+  // ko fixture has one external chapter → listChapters should fall back to en.
+  const chs = await adapter.listChapters(MANGA_UUID, { lang: 'ko' });
+  assert.equal(chs.length, 2, 'falls back to en, skipping external ko chapter');
+  assert.equal(chs[0].language, 'en');
 });
 
 await test('getChapter by composite id returns single chapter', async () => {

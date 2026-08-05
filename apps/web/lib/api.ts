@@ -58,7 +58,7 @@ export async function fetchPopularIndonesian(): Promise<MangaDexManga[]> {
     const title = m.attributes.title.en || m.attributes.title['ja-ro'] || Object.values(m.attributes.title)[0] || 'Untitled';
     const coverRel = m.relationships.find((r: any) => r.type === 'cover_art');
     const cover = coverRel?.attributes?.fileName
-      ? `https://uploads.mangadex.org/covers/${m.id}/${coverRel.attributes.fileName}.256px.jpg`
+      ? `https://uploads.mangadex.org/covers/${m.id}/${coverRel.attributes.fileName}`
       : null;
     return { id: m.id, title, cover, slug: title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) };
   });
