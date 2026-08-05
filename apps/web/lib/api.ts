@@ -34,8 +34,13 @@ export interface MangaDexManga {
   slug: string;
 }
 
+// 12s timeout prevents Cloudflare Pages Function timeout (30s) from
+// triggering a 502 when the Worker API is slow on cold KV cache.
 async function api<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, { next: { revalidate: 300 } });
+  const res = await fetch(`${API_URL}${path}`, {
+    next: { revalidate: 300 },
+    signal: AbortSignal.timeout(12000),
+  });
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }

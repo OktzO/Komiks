@@ -166,7 +166,12 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   }
 
   if (!upstream) {
-    return c.json({ error: 'upstream image fetch failed after retries', detail: page.url }, 502);
+    const h = new Headers();
+    h.set('Content-Type', 'application/json');
+    h.set('Cache-Control', 'no-store');
+    h.set('Access-Control-Allow-Origin', corsOrigin(c.env));
+    h.set('Vary', 'Origin');
+    return new Response(JSON.stringify({ error: 'upstream image fetch failed after retries', detail: page.url }), { status: 502, headers: h });
   }
 
   const headers = new Headers();
