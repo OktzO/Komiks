@@ -1,0 +1,23 @@
+name = "manga-data-api"
+main = "./src/index.ts"
+compatibility_date = "2024-08-01"
+account_id = "4ce21aec2dd478bf380b7b59990a9165"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "manga-db"
+database_id = "76606365-0fa5-4c1e-9b55-18a8366ef92a"
+
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "6205fceab7b64f9d80f6f67e4189316b"
+preview_id = "6205fceab7b64f9d80f6f67e4189316b"
+
+[[r2_buckets]]
+binding = "ASSETS_R2"
+bucket_name = "manga-assets"
+preview_bucket_name = "manga-assets-dev"
+
+[browser]
+binding = "MY_BROWSER"
+remote = true

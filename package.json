@@ -12,7 +12,8 @@
   },
   "scripts": {
     "dev:api": "turbo run dev:api",
-    "dev:web": "turbo run dev:web"
+    "dev:web": "turbo run dev:web",
+    "dev:data": "turbo run dev:data"
   },
   "devDependencies": {
     "turbo": "^2.0.6",
