@@ -68,3 +68,40 @@ export async function fetchPopularIndonesian(): Promise<MangaDexManga[]> {
     return { id: m.id, title, cover, slug: title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) };
   });
 }
+
+// ---- Data API (manga-data-api Worker) --------------------------------------
+export const DATA_API_URL = process.env.NEXT_PUBLIC_DATA_API_URL || 'http://localhost:8788';
+
+export interface MergedManga {
+  slug: string;
+  title: string;
+  cover_image?: string | null;
+  source: string;
+  sources: string[];
+  type?: string;
+  status?: string;
+}
+
+export interface SourceStatus {
+  source: string;
+  healthy: boolean;
+  latency_ms: number;
+  last_checked_at: number;
+  error?: string;
+}
+
+async function dataApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${DATA_API_URL}${path}`, {
+    ...init,
+    next: { revalidate: 60 },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`Data API ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export const searchMerged = (q: string): Promise<{ data: MergedManga[]; sources_queried: string[] }> =>
+  dataApi(`/api/search?q=${encodeURIComponent(q)}`);
+
+export const getSourceStatus = (): Promise<{ data: SourceStatus[] }> =>
+  dataApi('/api/source-status');
