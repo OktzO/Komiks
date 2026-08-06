@@ -17,6 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/search" className="text-sm text-secondary hover:text-accent">Cari</Link>
             <Link href="/bookmark" className="text-sm text-secondary hover:text-accent">Bookmark</Link>
             <Link href="/history" className="text-sm text-secondary hover:text-accent">Riwayat</Link>
+            <Link href="/status" className="text-sm text-secondary hover:text-accent">Status</Link>
             <Link href="/login" className="text-sm text-secondary hover:text-accent ml-auto">Masuk</Link>
           </div>
         </nav>

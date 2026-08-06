@@ -1,24 +1,41 @@
-import { fetchPopularIndonesian } from '@/lib/api';
+import { searchMerged } from '@/lib/api';
 import { MangaCard } from '@/components/MangaCard';
+import Link from 'next/link';
 
 export const revalidate = 600;
 
 export default async function Home() {
-  let manga: Awaited<ReturnType<typeof fetchPopularIndonesian>> = [];
+  let manga: any[] = [];
+  let sourcesQueried: string[] = [];
   let error: string | null = null;
   try {
-    manga = await fetchPopularIndonesian();
-  } catch (e) {
-    error = String(e);
+    const res = await searchMerged('');
+    manga = res.data;
+    sourcesQueried = res.sources_queried;
+  } catch (e: any) {
+    error = String(e.message || e);
   }
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-semibold mb-1">Manga Indonesia</h1>
-      <p className="text-secondary text-sm mb-6">Baca manga/manhwa/manhua terjemahan Indonesia</p>
+      <div className="flex items-baseline justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold mb-1">Manga Indonesia</h1>
+          <p className="text-secondary text-sm">Baca manga/manhwa/manhua terjemahan Indonesia</p>
+        </div>
+        <Link href="/status" className="text-sm text-secondary hover:text-accent">Status Sumber</Link>
+      </div>
       {error && <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>}
+      <p className="text-xs text-muted mb-4">Sumber: {sourcesQueried.join(', ') || 'tidak ada'}</p>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        {manga.map((m) => <MangaCard key={m.id} manga={m} />)}
+        {manga.map((m: any) => (
+          <MangaCard
+            key={`${m.source}-${m.slug}`}
+            manga={{ id: m.slug, title: m.title, cover: m.cover_image, slug: m.slug }}
+            source={m.source}
+            sources={(m.sources as string[]) || [m.source]}
+          />
+        ))}
       </div>
     </main>
   );
