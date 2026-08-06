@@ -1,4 +1,6 @@
+/// <reference lib="dom" />
 // Komiku adapter: PRIMARY source. Uses @cloudflare/puppeteer for JS-rendered pages.
+// page.evaluate() callbacks run in browser DOM context — needs DOM lib for type-checking.
 import puppeteer from '@cloudflare/puppeteer';
 import type { Series, Chapter } from '@manga-platform/shared';
 import { KOMIKU_SELECTORS } from './selectors.js';
