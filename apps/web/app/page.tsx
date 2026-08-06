@@ -28,14 +28,17 @@ export default async function Home() {
       {error && <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>}
       <p className="text-xs text-muted mb-4">Sumber: {sourcesQueried.join(', ') || 'tidak ada'}</p>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        {manga.map((m: any) => (
-          <MangaCard
-            key={`${m.source}-${m.slug}`}
-            manga={{ id: m.slug, title: m.title, cover: m.cover_image, slug: m.slug }}
-            source={m.source}
-            sources={(m.sources as string[]) || [m.source]}
-          />
-        ))}
+        {manga.map((m: any) => {
+          const item = m.data || m;
+          return (
+            <MangaCard
+              key={`${item.source}-${item.slug}`}
+              manga={{ id: item.slug, title: item.title, cover: item.cover_image, slug: item.slug }}
+              source={item.source}
+              sources={(item.sources as string[]) || [item.source]}
+            />
+          );
+        })}
       </div>
     </main>
   );

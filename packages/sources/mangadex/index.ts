@@ -262,8 +262,11 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
     async healthCheck(): Promise<{ healthy: boolean; latency_ms: number; error?: string }> {
       const start = Date.now();
       try {
-        const res = await fetch('https://api.mangadex.org/health', { signal: AbortSignal.timeout(5000) });
-        return { healthy: res.ok, latency_ms: Date.now() - start };
+        const res = await fetch('https://api.mangadex.org/manga?limit=1', {
+          headers: { 'User-Agent': 'manga-data-api/1.0', 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(5000)
+        });
+        return { healthy: res.ok, latency_ms: Date.now() - start, ...(res.ok ? {} : { error: `HTTP ${res.status}` }) };
       } catch (e) {
         return { healthy: false, latency_ms: Date.now() - start, error: String(e) };
       }
