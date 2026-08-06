@@ -8,7 +8,8 @@ import type {
   LbSettings,
   LbAccount,
   LbAccountSafe,
-  LbOrigin
+  LbOrigin,
+  ScrapeJob
 } from '@manga-platform/shared/types';
 
 export { D1Database as Database };
@@ -42,6 +43,16 @@ export interface Db {
   recordOriginHealth: (originId: string, healthy: boolean, checkedAt?: number) => Promise<{ success: boolean }>;
   getOriginStatus: (originId: string) => Promise<Result<{ healthy: boolean; last_checked_at: number | null }>>;
   addAuditLog: (params: { accountId?: string | null; originId?: string | null; action: string; userId?: number | null }) => Promise<{ success: boolean }>;
+  upsertSeries: (params: { slug: string; title: string; external_id?: string | null; source: string; synopsis?: string | null; type: string; status?: string; author?: string | null; artist?: string | null; cover_image?: string | null; genres?: string[]; tags?: string[]; alt_titles?: string | null; source_url?: string | null; cover_r2_key?: string | null; language?: string | null }) => Promise<{ slug: string }>;
+  addImageHash: (params: { seriesSlug: string; hash: string; r2Key?: string | null; imageType: 'cover' | 'page' }) => Promise<{ id: number }>;
+  getImageHashesByPrefix: (prefix: string) => Promise<Array<{ series_slug: string; hash: string; r2_key: string | null }>>;
+  getAllImageHashes: () => Promise<Array<{ series_slug: string; hash: string; r2_key: string | null }>>;
+  createScrapeJob: (params: { id: string; source: string; sourceUrl?: string | null; query?: string | null; createdBy?: number | null }) => Promise<{ id: string }>;
+  updateScrapeJob: (id: string, params: { status: string; seriesSlug?: string | null; error?: string | null; completedAt?: number | null }) => Promise<{ success: boolean }>;
+  getScrapeJob: (id: string) => Promise<Result<ScrapeJob>>;
+  listScrapeJobs: (limit?: number) => Promise<ListResult<ScrapeJob>>;
+  recordSourceHealth: (params: { source: string; healthy: boolean; latencyMs?: number | null; error?: string | null }) => Promise<{ id: number }>;
+  getLatestSourceHealth: (source: string) => Promise<Result<{ source: string; healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>>;
 }
 
 export const db = (client: D1Database): Db => {
@@ -246,6 +257,70 @@ export const db = (client: D1Database): Db => {
         'INSERT INTO lb_audit_log (account_id, origin_id, action, user_id) VALUES (?1, ?2, ?3, ?4)'
       ).bind(accountId ?? null, originId ?? null, action, userId ?? null).run();
       return { success: res.success };
+    },
+
+    upsertSeries: async (p) => {
+      const genres = p.genres ? JSON.stringify(p.genres) : null;
+      const tags = p.tags ? JSON.stringify(p.tags) : null;
+      await prep(
+        `INSERT INTO series (slug, external_id, source, title, synopsis, type, status, author, artist, cover_image, genres, tags, alt_titles, source_url, cover_r2_key, language, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, unixepoch())
+         ON CONFLICT(slug) DO UPDATE SET
+           title=excluded.title, synopsis=excluded.synopsis, status=excluded.status,
+           author=excluded.author, artist=excluded.artist, cover_image=excluded.cover_image,
+           genres=excluded.genres, tags=excluded.tags, alt_titles=excluded.alt_titles,
+           source_url=excluded.source_url, cover_r2_key=excluded.cover_r2_key,
+           language=excluded.language, updated_at=unixepoch()`
+      ).bind(p.slug, p.external_id ?? null, p.source, p.title, p.synopsis ?? null, p.type, p.status ?? 'ongoing', p.author ?? null, p.artist ?? null, p.cover_image ?? null, genres, tags, p.alt_titles ?? null, p.source_url ?? null, p.cover_r2_key ?? null, p.language ?? null).run();
+      return { slug: p.slug };
+    },
+
+    addImageHash: async (p) =>
+      (await prep('INSERT INTO image_hashes (series_slug, hash, r2_key, image_type) VALUES (?1, ?2, ?3, ?4) RETURNING id')
+        .bind(p.seriesSlug, p.hash, p.r2Key ?? null, p.imageType).first<Row>()) as { id: number },
+
+    getImageHashesByPrefix: async (prefix) => {
+      const { results } = await prep('SELECT series_slug, hash, r2_key FROM image_hashes WHERE hash LIKE ?1').bind(`${prefix}%`).all<Row>();
+      return (results ?? []) as unknown as Array<{ series_slug: string; hash: string; r2_key: string | null }>;
+    },
+
+    getAllImageHashes: async () => {
+      const { results } = await prep('SELECT series_slug, hash, r2_key FROM image_hashes').all<Row>();
+      return (results ?? []) as unknown as Array<{ series_slug: string; hash: string; r2_key: string | null }>;
+    },
+
+    createScrapeJob: async (p) =>
+      (await prep('INSERT INTO scrape_jobs (id, source, source_url, query, status, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING id')
+        .bind(p.id, p.source, p.sourceUrl ?? null, p.query ?? null, 'pending', p.createdBy ?? null).first<Row>()) as { id: string },
+
+    updateScrapeJob: async (id, p) => {
+      const res = await prep('UPDATE scrape_jobs SET status = ?1, series_slug = ?2, error = ?3, completed_at = ?4 WHERE id = ?5')
+        .bind(p.status, p.seriesSlug ?? null, p.error ?? null, p.completedAt ?? null, id).run();
+      return { success: res.success };
+    },
+
+    getScrapeJob: async (id) =>
+      fromRow<ScrapeJob>(await prep('SELECT * FROM scrape_jobs WHERE id = ?1 LIMIT 1').bind(id).first<Row>()),
+
+    listScrapeJobs: async (limit = 50) => {
+      const { results } = await prep('SELECT * FROM scrape_jobs ORDER BY created_at DESC LIMIT ?1').bind(limit).all<Row>();
+      return (results ?? []) as unknown as ListResult<ScrapeJob>;
+    },
+
+    recordSourceHealth: async (p) =>
+      (await prep('INSERT INTO source_health (source, healthy, latency_ms, error) VALUES (?1, ?2, ?3, ?4) RETURNING id')
+        .bind(p.source, p.healthy ? 1 : 0, p.latencyMs ?? null, p.error ?? null).first<Row>()) as { id: number },
+
+    getLatestSourceHealth: async (source) => {
+      const row = await prep('SELECT source, healthy, latency_ms, error, checked_at FROM source_health WHERE source = ?1 ORDER BY checked_at DESC LIMIT 1').bind(source).first<Row>();
+      if (!row) return null;
+      return {
+        source: row.source as string,
+        healthy: (row.healthy as number) === 1,
+        latency_ms: (row.latency_ms as number) ?? null,
+        error: (row.error as string) ?? null,
+        checked_at: row.checked_at as number
+      };
     }
   };
 };

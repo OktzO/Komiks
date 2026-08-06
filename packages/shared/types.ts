@@ -143,3 +143,52 @@ export const JsonStringArraySchema = z
   .optional()
   .transform((s) => (s ? JSON.parse(s) as string[] : undefined))
   .pipe(z.array(z.string()).optional());
+
+// ---- Manga Data API types --------------------------------------------------
+
+export const ScrapeResultSchema = z.object({
+  series: SeriesSchema,
+  chapters: z.array(ChapterSchema),
+  coverImageUrl: z.string().nullable()
+});
+export type ScrapeResult = z.infer<typeof ScrapeResultSchema>;
+
+export const RobotsResultSchema = z.object({
+  allowed: z.boolean(),
+  disallowedPaths: z.array(z.string()),
+  crawlDelay: z.number().nullable().optional()
+});
+export type RobotsResult = z.infer<typeof RobotsResultSchema>;
+
+export const SourceHealthSchema = z.object({
+  source: z.string(),
+  healthy: z.boolean(),
+  latency_ms: z.number().nullable().optional(),
+  error: z.string().nullable().optional(),
+  last_checked_at: z.number().optional()
+});
+export type SourceHealth = z.infer<typeof SourceHealthSchema>;
+
+export const ScrapeJobSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  source_url: z.string().nullable().optional(),
+  query: z.string().nullable().optional(),
+  status: z.enum(['pending', 'running', 'completed', 'failed', 'skipped_robots']),
+  series_slug: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+  created_by: z.number().int().nullable().optional(),
+  created_at: z.number().int().optional(),
+  completed_at: z.number().int().nullable().optional()
+});
+export type ScrapeJob = z.infer<typeof ScrapeJobSchema>;
+
+export const ImageHashRowSchema = z.object({
+  id: z.number().int().optional(),
+  series_slug: z.string(),
+  hash: z.string(),
+  r2_key: z.string().nullable().optional(),
+  image_type: z.enum(['cover', 'page']),
+  created_at: z.number().int().optional()
+});
+export type ImageHashRow = z.infer<typeof ImageHashRowSchema>;
