@@ -6,10 +6,12 @@
   "main": "index.ts",
   "exports": {
     ".": "./index.ts",
-    "./mangadex": "./mangadex/index.ts"
+    "./mangadex": "./mangadex/index.ts",
+    "./komiku": "./komiku/index.ts"
   },
   "dependencies": {
     "@manga-platform/shared": "0.1.0",
+    "@cloudflare/puppeteer": "^0.0.14",
     "zod": "3.22.3"
   },
   "devDependencies": {

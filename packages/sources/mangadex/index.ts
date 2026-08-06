@@ -257,6 +257,16 @@ export const mangadexAdapter = (env?: AdapterEnv): MangadexAdapter => {
       return chapter.data.map((filename) => ({
         url: `${baseUrl}/data/${chapter.hash}/${filename}`
       }));
+    },
+
+    async healthCheck(): Promise<{ healthy: boolean; latency_ms: number; error?: string }> {
+      const start = Date.now();
+      try {
+        const res = await fetch('https://api.mangadex.org/health', { signal: AbortSignal.timeout(5000) });
+        return { healthy: res.ok, latency_ms: Date.now() - start };
+      } catch (e) {
+        return { healthy: false, latency_ms: Date.now() - start, error: String(e) };
+      }
     }
   };
 };
@@ -268,4 +278,5 @@ export interface MangadexAdapter {
   listChapters(sourceId: string, opts?: ListChaptersOpts): Promise<Chapter[]>;
   getChapter(chapterSourceId: string): Promise<Chapter>;
   fetchPageUrls(chapterSourceId: string): Promise<PageUrl[]>;
+  healthCheck(): Promise<{ healthy: boolean; latency_ms: number; error?: string }>;
 }
