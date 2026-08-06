@@ -9,7 +9,11 @@
   },
   "dependencies": {
     "hono": "^3.12.0",
-    "@cloudflare/puppeteer": "^0.0.14"
+    "@cloudflare/puppeteer": "^0.0.14",
+    "@manga-platform/shared": "0.1.0",
+    "@manga-platform/db": "0.1.0",
+    "@manga-platform/sources": "0.1.0",
+    "@manga-platform/vision": "0.1.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240802.0",

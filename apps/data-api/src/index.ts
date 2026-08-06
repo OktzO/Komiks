@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { Env, parseAllowedOrigins } from './lib/context';
-import { rateLimitPublic } from './lib/rateLimit';
+import { rateLimitPublic, rateLimitIdentify, rateLimitAdmin } from './lib/rateLimit';
 import { router as healthRouter } from './routes/health';
 import { router as searchRouter } from './routes/search';
 import { router as mangaRouter } from './routes/manga';
 import { router as sourceStatusRouter } from './routes/sourceStatus';
+import { router as identifyRouter } from './routes/identify';
+import { router as scrapeRouter } from './routes/scrape';
 
 const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const allowed = parseAllowedOrigins(c.env);
@@ -31,6 +33,14 @@ app.route('/api', healthRouter);
 app.route('/api', searchRouter);
 app.route('/api', mangaRouter);
 app.route('/api', sourceStatusRouter);
+
+// Identify route has its own rate limit (10/min)
+app.use('/api/identify', rateLimitIdentify);
+app.route('/api', identifyRouter);
+
+// Scrape routes have admin rate limit (600/min)
+app.use('/api/scrape', rateLimitAdmin);
+app.route('/api', scrapeRouter);
 
 app.onError((err, c) => {
   console.error('[data-api]', err);
