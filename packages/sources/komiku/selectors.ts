@@ -11,9 +11,12 @@ export const KOMIKU_SELECTORS = {
     title: 'h1.entry-title',
     synopsis: '.entry-content[itemprop="description"], .sinopsis p',
     cover: '.thumb img, .series-thumb img',
-    author: '.fmed li:contains("Author") b, .mcs a:first',
-    status: '.imptdt:contains("Status") i',
-    type: '.imptdt:contains("Type") i',
+    // `:contains()` is jQuery-only and throws DOMException in native
+    // querySelector. Base selectors here; text-based filtering happens
+    // inside page.evaluate() callbacks (see komiku/index.ts).
+    author: '.fmed li',
+    status: '.imptdt',
+    type: '.imptdt',
     genreList: '.mgen a',
     chapterList: '#chapter_list li, .lch a',
     chapterLink: 'a',

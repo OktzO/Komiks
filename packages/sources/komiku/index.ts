@@ -73,9 +73,13 @@ export const komikuAdapter = (env?: AdapterEnv) => {
           const title = document.querySelector(sel.title)?.textContent?.trim() ?? '';
           const synopsis = document.querySelector(sel.synopsis)?.textContent?.trim() ?? null;
           const cover = (document.querySelector(sel.cover) as HTMLImageElement)?.src ?? null;
-          const author = document.querySelector(sel.author)?.textContent?.trim() ?? null;
-          const status = document.querySelector(sel.status)?.textContent?.trim()?.toLowerCase() ?? 'ongoing';
-          const type = document.querySelector(sel.type)?.textContent?.trim()?.toLowerCase() ?? 'manga';
+          // `:contains()` is not native CSS — filter by text in JS.
+          const author = Array.from(document.querySelectorAll(sel.author))
+            .find((li) => /Author/i.test(li.textContent ?? ''))?.querySelector('b')?.textContent?.trim() ?? null;
+          const status = Array.from(document.querySelectorAll(sel.status))
+            .find((el) => /Status/i.test(el.textContent ?? ''))?.querySelector('i')?.textContent?.trim()?.toLowerCase() ?? 'ongoing';
+          const type = Array.from(document.querySelectorAll(sel.type))
+            .find((el) => /Type/i.test(el.textContent ?? ''))?.querySelector('i')?.textContent?.trim()?.toLowerCase() ?? 'manga';
           const genres = Array.from(document.querySelectorAll(sel.genreList)).map((a) => (a as HTMLAnchorElement).textContent?.trim() ?? '').filter(Boolean);
           return { title, synopsis, cover_image: cover, author, status, type, genres };
         }, KOMIKU_SELECTORS.detail);
@@ -171,9 +175,13 @@ export const komikuAdapter = (env?: AdapterEnv) => {
           const title = document.querySelector(sel.title)?.textContent?.trim() ?? '';
           const synopsis = document.querySelector(sel.synopsis)?.textContent?.trim() ?? null;
           const cover = (document.querySelector(sel.cover) as HTMLImageElement)?.src ?? null;
-          const author = document.querySelector(sel.author)?.textContent?.trim() ?? null;
-          const status = document.querySelector(sel.status)?.textContent?.trim()?.toLowerCase() ?? 'ongoing';
-          const type = document.querySelector(sel.type)?.textContent?.trim()?.toLowerCase() ?? 'manga';
+          // `:contains()` is not native CSS — filter by text in JS.
+          const author = Array.from(document.querySelectorAll(sel.author))
+            .find((li) => /Author/i.test(li.textContent ?? ''))?.querySelector('b')?.textContent?.trim() ?? null;
+          const status = Array.from(document.querySelectorAll(sel.status))
+            .find((el) => /Status/i.test(el.textContent ?? ''))?.querySelector('i')?.textContent?.trim()?.toLowerCase() ?? 'ongoing';
+          const type = Array.from(document.querySelectorAll(sel.type))
+            .find((el) => /Type/i.test(el.textContent ?? ''))?.querySelector('i')?.textContent?.trim()?.toLowerCase() ?? 'manga';
           const genres = Array.from(document.querySelectorAll(sel.genreList)).map((a) => (a as HTMLAnchorElement).textContent?.trim() ?? '').filter(Boolean);
           const chapterLinks = Array.from(document.querySelectorAll(sel.chapterList)).map((a) => {
             const link = (a.tagName === 'A' ? a : a.querySelector(sel.chapterLink)) as HTMLAnchorElement;
