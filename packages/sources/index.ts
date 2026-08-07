@@ -2,6 +2,8 @@
 // `env` is forwarded to adapters that read runtime config; omitting it yields
 // keyless behavior (backwards-compatible).
 import { komikuAdapter } from './komiku/index.js';
+import { bacakomikAdapter } from './bacakomik/index.js';
+import { thriveAdapter } from './thrive/index.js';
 import type { AdapterEnv } from './komiku/index.js';
 import type { Series, Chapter } from '@manga-platform/shared';
 import type { RobotsResult } from './komiku/client.js';
@@ -30,6 +32,8 @@ export interface SourceAdapter {
 
 const adapterFactories: Partial<Record<SourceKey, (env?: AdapterEnv) => SourceAdapter>> = {
   komiku: (env) => komikuAdapter(env),
+  bacakomik: (env) => bacakomikAdapter(env) as unknown as SourceAdapter,
+  thrive: (env) => thriveAdapter(env) as unknown as SourceAdapter,
 };
 
 export const getAdapter = (sourceKey: string, env?: AdapterEnv): SourceAdapter | null => {
@@ -37,4 +41,4 @@ export const getAdapter = (sourceKey: string, env?: AdapterEnv): SourceAdapter |
   return factory ? factory(env) : null;
 };
 
-export { komikuAdapter, type AdapterEnv };
+export { komikuAdapter, bacakomikAdapter, thriveAdapter, type AdapterEnv };

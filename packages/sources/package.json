@@ -6,7 +6,12 @@
   "main": "index.ts",
   "exports": {
     ".": "./index.ts",
-    "./komiku": "./komiku/index.ts"
+    "./komiku": "./komiku/index.ts",
+    "./bacakomik": "./bacakomik/index.ts",
+    "./thrive": "./thrive/index.ts"
+  },
+  "scripts": {
+    "test": "tsx test/thrive.test.mjs && tsx test/bacakomik.test.mjs"
   },
   "dependencies": {
     "@manga-platform/shared": "0.1.0",
@@ -15,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   }
 }

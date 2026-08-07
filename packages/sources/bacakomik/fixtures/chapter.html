@@ -1,0 +1,644 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="https://www.w3.org/1999/xhtml" lang="id-ID">
+<head profile="http://gmpg.org/xfn/11"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><script>if(navigator.userAgent.match(/MSIE|Internet Explorer/i)||navigator.userAgent.match(/Trident\/7\..*?rv:11/i)){var href=document.location.href;if(!href.match(/[?&]nowprocket/)){if(href.indexOf("?")==-1){if(href.indexOf("#")==-1){document.location.href=href+"?nowprocket=1"}else{document.location.href=href.replace("#","?nowprocket=1#")}}else{if(href.indexOf("#")==-1){document.location.href=href+"&nowprocket=1"}else{document.location.href=href.replace("#","&nowprocket=1#")}}}}</script><script>class RocketLazyLoadScripts{constructor(){this.triggerEvents=["keydown","mousedown","mousemove","touchmove","touchstart","touchend","wheel"],this.userEventHandler=this._triggerListener.bind(this),this.touchStartHandler=this._onTouchStart.bind(this),this.touchMoveHandler=this._onTouchMove.bind(this),this.touchEndHandler=this._onTouchEnd.bind(this),this.clickHandler=this._onClick.bind(this),this.interceptedClicks=[],window.addEventListener("pageshow",(e=>{this.persisted=e.persisted})),window.addEventListener("DOMContentLoaded",(()=>{this._preconnect3rdParties()})),this.delayedScripts={normal:[],async:[],defer:[]},this.allJQueries=[]}_addUserInteractionListener(e){document.hidden?e._triggerListener():(this.triggerEvents.forEach((t=>window.addEventListener(t,e.userEventHandler,{passive:!0}))),window.addEventListener("touchstart",e.touchStartHandler,{passive:!0}),window.addEventListener("mousedown",e.touchStartHandler),document.addEventListener("visibilitychange",e.userEventHandler))}_removeUserInteractionListener(){this.triggerEvents.forEach((e=>window.removeEventListener(e,this.userEventHandler,{passive:!0}))),document.removeEventListener("visibilitychange",this.userEventHandler)}_onTouchStart(e){"HTML"!==e.target.tagName&&(window.addEventListener("touchend",this.touchEndHandler),window.addEventListener("mouseup",this.touchEndHandler),window.addEventListener("touchmove",this.touchMoveHandler,{passive:!0}),window.addEventListener("mousemove",this.touchMoveHandler),e.target.addEventListener("click",this.clickHandler),this._renameDOMAttribute(e.target,"onclick","rocket-onclick"))}_onTouchMove(e){window.removeEventListener("touchend",this.touchEndHandler),window.removeEventListener("mouseup",this.touchEndHandler),window.removeEventListener("touchmove",this.touchMoveHandler,{passive:!0}),window.removeEventListener("mousemove",this.touchMoveHandler),e.target.removeEventListener("click",this.clickHandler),this._renameDOMAttribute(e.target,"rocket-onclick","onclick")}_onTouchEnd(e){window.removeEventListener("touchend",this.touchEndHandler),window.removeEventListener("mouseup",this.touchEndHandler),window.removeEventListener("touchmove",this.touchMoveHandler,{passive:!0}),window.removeEventListener("mousemove",this.touchMoveHandler)}_onClick(e){e.target.removeEventListener("click",this.clickHandler),this._renameDOMAttribute(e.target,"rocket-onclick","onclick"),this.interceptedClicks.push(e),e.preventDefault(),e.stopPropagation(),e.stopImmediatePropagation()}_replayClicks(){window.removeEventListener("touchstart",this.touchStartHandler,{passive:!0}),window.removeEventListener("mousedown",this.touchStartHandler),this.interceptedClicks.forEach((e=>{e.target.dispatchEvent(new MouseEvent("click",{view:e.view,bubbles:!0,cancelable:!0}))}))}_renameDOMAttribute(e,t,n){e.hasAttribute&&e.hasAttribute(t)&&(event.target.setAttribute(n,event.target.getAttribute(t)),event.target.removeAttribute(t))}_triggerListener(){this._removeUserInteractionListener(this),"loading"===document.readyState?document.addEventListener("DOMContentLoaded",this._loadEverythingNow.bind(this)):this._loadEverythingNow()}_preconnect3rdParties(){let e=[];document.querySelectorAll("script[type=rocketlazyloadscript]").forEach((t=>{if(t.hasAttribute("src")){const n=new URL(t.src).origin;n!==location.origin&&e.push({src:n,crossOrigin:t.crossOrigin||"module"===t.getAttribute("data-rocket-type")})}})),e=[...new Map(e.map((e=>[JSON.stringify(e),e]))).values()],this._batchInjectResourceHints(e,"preconnect")}async _loadEverythingNow(){this.lastBreath=Date.now(),this._delayEventListeners(),this._delayJQueryReady(this),this._handleDocumentWrite(),this._registerAllDelayedScripts(),this._preloadAllScripts(),await this._loadScriptsFromList(this.delayedScripts.normal),await this._loadScriptsFromList(this.delayedScripts.defer),await this._loadScriptsFromList(this.delayedScripts.async);try{await this._triggerDOMContentLoaded(),await this._triggerWindowLoad()}catch(e){}window.dispatchEvent(new Event("rocket-allScriptsLoaded")),this._replayClicks()}_registerAllDelayedScripts(){document.querySelectorAll("script[type=rocketlazyloadscript]").forEach((e=>{e.hasAttribute("src")?e.hasAttribute("async")&&!1!==e.async?this.delayedScripts.async.push(e):e.hasAttribute("defer")&&!1!==e.defer||"module"===e.getAttribute("data-rocket-type")?this.delayedScripts.defer.push(e):this.delayedScripts.normal.push(e):this.delayedScripts.normal.push(e)}))}async _transformScript(e){return await this._littleBreath(),new Promise((t=>{const n=document.createElement("script");[...e.attributes].forEach((e=>{let t=e.nodeName;"type"!==t&&("data-rocket-type"===t&&(t="type"),n.setAttribute(t,e.nodeValue))})),e.hasAttribute("src")?(n.addEventListener("load",t),n.addEventListener("error",t)):(n.text=e.text,t());try{e.parentNode.replaceChild(n,e)}catch(e){t()}}))}async _loadScriptsFromList(e){const t=e.shift();return t?(await this._transformScript(t),this._loadScriptsFromList(e)):Promise.resolve()}_preloadAllScripts(){this._batchInjectResourceHints([...this.delayedScripts.normal,...this.delayedScripts.defer,...this.delayedScripts.async],"preload")}_batchInjectResourceHints(e,t){var n=document.createDocumentFragment();e.forEach((e=>{if(e.src){const i=document.createElement("link");i.href=e.src,i.rel=t,"preconnect"!==t&&(i.as="script"),e.getAttribute&&"module"===e.getAttribute("data-rocket-type")&&(i.crossOrigin=!0),e.crossOrigin&&(i.crossOrigin=e.crossOrigin),n.appendChild(i)}})),document.head.appendChild(n)}_delayEventListeners(){let e={};function t(t,n){!function(t){function n(n){return e[t].eventsToRewrite.indexOf(n)>=0?"rocket-"+n:n}e[t]||(e[t]={originalFunctions:{add:t.addEventListener,remove:t.removeEventListener},eventsToRewrite:[]},t.addEventListener=function(){arguments[0]=n(arguments[0]),e[t].originalFunctions.add.apply(t,arguments)},t.removeEventListener=function(){arguments[0]=n(arguments[0]),e[t].originalFunctions.remove.apply(t,arguments)})}(t),e[t].eventsToRewrite.push(n)}function n(e,t){let n=e[t];Object.defineProperty(e,t,{get:()=>n||function(){},set(i){e["rocket"+t]=n=i}})}t(document,"DOMContentLoaded"),t(window,"DOMContentLoaded"),t(window,"load"),t(window,"pageshow"),t(document,"readystatechange"),n(document,"onreadystatechange"),n(window,"onload"),n(window,"onpageshow")}_delayJQueryReady(e){let t=window.jQuery;Object.defineProperty(window,"jQuery",{get:()=>t,set(n){if(n&&n.fn&&!e.allJQueries.includes(n)){n.fn.ready=n.fn.init.prototype.ready=function(t){e.domReadyFired?t.bind(document)(n):document.addEventListener("rocket-DOMContentLoaded",(()=>t.bind(document)(n)))};const t=n.fn.on;n.fn.on=n.fn.init.prototype.on=function(){if(this[0]===window){function e(e){return e.split(" ").map((e=>"load"===e||0===e.indexOf("load.")?"rocket-jquery-load":e)).join(" ")}"string"==typeof arguments[0]||arguments[0]instanceof String?arguments[0]=e(arguments[0]):"object"==typeof arguments[0]&&Object.keys(arguments[0]).forEach((t=>{delete Object.assign(arguments[0],{[e(t)]:arguments[0][t]})[t]}))}return t.apply(this,arguments),this},e.allJQueries.push(n)}t=n}})}async _triggerDOMContentLoaded(){this.domReadyFired=!0,await this._littleBreath(),document.dispatchEvent(new Event("rocket-DOMContentLoaded")),await this._littleBreath(),window.dispatchEvent(new Event("rocket-DOMContentLoaded")),await this._littleBreath(),document.dispatchEvent(new Event("rocket-readystatechange")),await this._littleBreath(),document.rocketonreadystatechange&&document.rocketonreadystatechange()}async _triggerWindowLoad(){await this._littleBreath(),window.dispatchEvent(new Event("rocket-load")),await this._littleBreath(),window.rocketonload&&window.rocketonload(),await this._littleBreath(),this.allJQueries.forEach((e=>e(window).trigger("rocket-jquery-load"))),await this._littleBreath();const e=new Event("rocket-pageshow");e.persisted=this.persisted,window.dispatchEvent(e),await this._littleBreath(),window.rocketonpageshow&&window.rocketonpageshow({persisted:this.persisted})}_handleDocumentWrite(){const e=new Map;document.write=document.writeln=function(t){const n=document.currentScript,i=document.createRange(),r=n.parentElement;let o=e.get(n);void 0===o&&(o=n.nextSibling,e.set(n,o));const s=document.createDocumentFragment();i.setStart(s,0),s.appendChild(i.createContextualFragment(t)),r.insertBefore(s,o)}}async _littleBreath(){Date.now()-this.lastBreath>45&&(await this._requestAnimFrame(),this.lastBreath=Date.now())}async _requestAnimFrame(){return document.hidden?new Promise((e=>setTimeout(e))):new Promise((e=>requestAnimationFrame(e)))}static run(){const e=new RocketLazyLoadScripts;e._addUserInteractionListener(e)}}RocketLazyLoadScripts.run();</script>
+  
+	
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noodp">
+  <meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />
+
+	<!-- This site is optimized with the Yoast SEO plugin v26.2 - https://yoast.com/wordpress/plugins/seo/ -->
+	<title>Komik Nano Machine Chapter 1 - BacaKomik</title><style id="rocket-critical-css">ul{box-sizing:border-box}:root{--wp--preset--font-size--normal:16px;--wp--preset--font-size--huge:42px}.fa,.fas{-moz-osx-font-smoothing:grayscale;-webkit-font-smoothing:antialiased;display:inline-block;font-style:normal;font-variant:normal;text-rendering:auto;line-height:1}.fa-book-open:before{content:"\f518"}.fa-chevron-up:before{content:"\f077"}.fa-home:before{content:"\f015"}.fa-list-alt:before{content:"\f022"}.fa-search:before{content:"\f002"}.fa-th:before{content:"\f00a"}.fa-times:before{content:"\f00d"}.fa-user:before{content:"\f007"}@font-face{font-family:"Font Awesome 5 Free";font-style:normal;font-weight:400;font-display:swap;src:url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-regular-400.eot);src:url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-regular-400.eot?#iefix) format("embedded-opentype"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-regular-400.woff2) format("woff2"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-regular-400.woff) format("woff"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-regular-400.ttf) format("truetype"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-regular-400.svg#fontawesome) format("svg")}@font-face{font-family:"Font Awesome 5 Free";font-style:normal;font-weight:900;font-display:swap;src:url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-solid-900.eot);src:url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-solid-900.eot?#iefix) format("embedded-opentype"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-solid-900.woff2) format("woff2"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-solid-900.woff) format("woff"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-solid-900.ttf) format("truetype"),url(https://use.fontawesome.com/releases/v5.9.0/webfonts/fa-solid-900.svg#fontawesome) format("svg")}.fa,.fas{font-family:"Font Awesome 5 Free"}.fa,.fas{font-weight:900}html,body,div,span,iframe,h1,h3,a,img,b,i,ul,li,fieldset,form,label,article,header,nav{margin:0;padding:0;border:0;font-size:100%;vertical-align:baseline;direction:ltr}.nva{display:block!important}.nva{position:fixed;color:#fff;background:#0000007d;z-index:10}.nva{top:0;padding:12px 0;left:0;right:0;box-shadow:0 1px 1px rgba(0,0,0,.2);-moz-box-shadow:0 1px 1px rgba(0,0,0,.2);-webkit-box-shadow:0 1px 1px rgba(0,0,0,.2)}.nva{display:none}.nva{background-color:#444}.click .nva{top:-47px}.nva ul{margin:0 auto;padding:0;list-style:none;max-width:calc(100% - 30px)}.perapih{width:1000px;margin:0 auto;max-width:100%}.nva ul li{float:left;font-size:15px}.nva ul .ls1{float:right}.ls1 a{color:#fff;background:#000;padding:5px 10px;border-radius:3px;font-size:13px;font-weight:700}.ch-progress-bar .bar{width:100%;margin-bottom:0}.bar{width:970px;margin:0 auto;height:5px;background:#252525;margin-bottom:15px;max-width:calc(100% - 0px)}.bar-long{height:5px;background:#d13030}.lgsg_form{background:#1e1e1e;-webkit-box-shadow:0 0 50px rgba(0,0,0,.05);-moz-box-shadow:0 0 50px rgba(0,0,0,.05);box-shadow:0 0 50px rgba(0,0,0,.05);width:100%;margin:50px 0;margin-top:30px;display:block;float:left;border-radius:5px;-webkit-border-radius:5px;-moz-border-radius:5px;color:#ccc}.lgsg_form fieldset{width:100%;display:block;margin-bottom:25px}.lgsg_form fieldset.remembr{margin-bottom:12px}.lgsg_form fieldset.last{margin-bottom:5px}.lgsg_form fieldset label{width:100%;display:block;font-weight:400;color:#ccc;font-size:14px;margin-bottom:10px}.lgsg_form fieldset label[for=rememberme]{line-height:16px;font-size:13px}.lgsg_form fieldset input[type=text],.lgsg_form fieldset input[type=password]{border:0;background:#171717!important;border:1px solid #1e1e1e;border-radius:3px;width:100%;height:42px;display:block;padding:0 10px;font-size:14px;color:#ccc;font-weight:500}.lgsg_form fieldset input[type=submit]{display:block;background:#d13030;border:0;color:#fff;padding:10px 31px;width:100%;font-size:15px;border-radius:3px;float:left}.lgsg_form fieldset span{float:left;font-size:13px;margin-top:15px;width:100%;text-align:center}.lgsg_form fieldset input::-webkit-input-placeholder{color:#cdd4d9;font-weight:400}.lgsg_form fieldset input:-moz-placeholder{color:#cdd4d9;font-weight:400}.lgsg_form fieldset input::-moz-placeholder{color:#cdd4d9;font-weight:400}.lgsg_form fieldset input:-ms-input-placeholder{color:#cdd4d9;font-weight:400}@media only screen and (max-width:500px){.lgsg_form{-webkit-box-shadow:none;-moz-box-shadow:none;box-shadow:none}.lgsg_form{border-radius:0;-webkit-border-radius:0;-moz-border-radius:0}}nav.floating-nav{position:fixed;bottom:0;z-index:999;margin-bottom:0!important;overflow:inherit!important}nav.floating-nav ul{display:flex;justify-content:center}nav.floating-nav ul li{margin:0 8px!important;width:19%}nav.floating-nav ul li a{text-align:center;overflow:hidden;display:block;font-size:14px;padding:7px 5px!important;background:0 0!important}nav.floating-nav ul li i{display:block;font-size:27px;margin-bottom:8px}.scrolltopcont{position:absolute;margin-left:auto;margin-right:auto;left:0;right:0;text-align:center;top:-11px}nav.second-nav{background:#1e1e1e;width:100%;overflow:hidden;margin-bottom:20px}nav.second-nav .centernav.navs{margin:0 auto;max-width:1185px;padding:0 20px;text-align:center}nav.second-nav ul li{position:relative;margin:13px;margin-right:5px;margin-left:5px;display:inline-block;font-size:12px}nav.second-nav ul li a{color:#ccc;background:#1a1920;padding:7px 19px}.chapter-area{padding-top:15px}.oi_ada_class_skrng{max-width:100%;margin:0 auto;display:block}.icol.daftarch{background:#d13030;padding:10px;border-radius:30px;margin-left:5px;color:#fff}.chapter-desc{font-size:14px;color:#ccc;line-height:26px}html{scroll-behavior:smooth}.yahahah_class_utama_cuy{position:relative;margin-bottom:30px}.chapter-content img{max-width:100%;margin:0 auto;display:block}.chapter-content{text-align:center}form.ajax-auth label{font-size:12px}form.ajax-auth{display:none;z-index:1000000;position:fixed;top:150px;left:50%;width:400px;margin-left:-200px;padding:40px 25px 25px;background-color:#fff;color:#878787;font-size:11px;font-family:arial;-webkit-box-shadow:0 1px 5px rgba(0,0,0,.3);-moz-box-shadow:0 1px 150px rgba(0,0,0,.52);box-shadow:0 1px 150px rgba(0,0,0,.52)}.ajax-auth h3{font-family:arial;font-weight:100;color:#333;line-height:1}.ajax-auth h3{font-size:27px;margin:0 0 20px;overflow:hidden;text-align:center}.ajax-auth a{text-decoration:none}.ajax-auth a.close{color:#000;position:absolute;right:15px;top:15px;font-size:16px}.navig{overflow:hidden;margin-top:27px;margin-bottom:12px;text-align:center}.nextprev{overflow:hidden}.nextprev a[rel=prev]{padding:9px;color:#fff;border:1px solid #1e1e1e!important;display:inline-block;background:#191919!important;font-size:14px;margin-left:4px}.scrollToTop{text-align:center;font-weight:700;color:#fff;text-decoration:none;text-transform:uppercase;font-size:17px;padding:6px 9px;border-radius:50px}.dtlx{border-bottom:1px solid #222;margin-bottom:10px;padding-bottom:10px}.dtlx h1{margin:0;font-size:23px;margin-bottom:7px;font-weight:700}.logo_mobile{display:none}.logo_mobile img{border-radius:10px;width:172px}article,header,nav{display:block}header{float:left;margin-top:7px;z-index:9999999;position:relative}ul{list-style:none}a{color:#000;text-decoration:none}.clear{clear:both}body{background-size:20px 100%;font-family:Roboto;font-size:14px;background:#111}#wrap{max-width:1075px;border-radius:5px;margin:0 auto;position:relative;z-index:99!important}#content{margin-bottom:15px;position:relative;padding:14px;overflow:inherit}:focus{outline:none}.logos img{background:0 0!important;border-radius:5px;width:48px;padding:3px}.logos{margin:0;min-height:1px;width:57px}span.logos{margin-right:9px}.logos span.hdl{display:none;width:1px;height:1px;margin:-1px;overflow:hidden;padding:0;position:absolute}.th{height:60px;background:#fff;position:relative;display:none}.th .centernav{margin:0 auto;max-width:1180px;padding:0 20px}.shme{display:none}.logo-mobile img{width:auto;height:100%}#main-menu{margin:0;z-index:99999;position:relative;background:#fff;border-bottom:0}.sorceres{border:none!important}#main-menu .centernav{margin:0 auto;max-width:1105px;padding:0 20px}.bound{display:flex;justify-content:space-between}#main-menu .fa{width:auto;height:auto;font-size:16px}#main-menu ul{position:relative;float:left;list-style:none;padding:0;margin:0}#main-menu ul li{float:left;position:relative;margin:12px;margin-right:8px;margin-left:8px;margin-top:17px}#main-menu ul li a{display:block;text-align:center;line-height:33px;padding:0 10px;color:#fff!important;border-left:0;position:relative;font-size:15px;font-weight:500}.searchbux{float:right;margin:14px 0 13px 0;position:relative}.show-search-button{float:right;background:0 0;color:#ccc;box-shadow:none;padding:5px 6px;border:0;margin-top:5px;padding-right:15px}.search-popup a.close{color:#888;position:absolute;right:-17px;top:-25px;font-size:18px}.search-popup{display:none;z-index:1000000;position:fixed;top:44%;left:50%;width:450px;margin-left:-207px;font-size:11px}.search-popup .searchx{width:100%;margin:0;float:none}.searchx{float:left;width:278px;margin:18px 16px 13px 0;position:relative}.searchx #form{padding:0;position:relative}.searchx #form #s{font-weight:300;box-shadow:none!important;display:block;width:100%;height:36px;padding:6px 12px;border:none;padding-right:30px;font-size:14px;line-height:1.42857143;border-radius:3px;-webkit-box-shadow:inset 0 1px 1px rgba(0,0,0,.075);box-shadow:inset 0 1px 1px rgba(0,0,0,.075);background:#f1f1f1}.searchx #form #submit{position:absolute;background:0 0;color:#ddd;font-family:inherit;border:0;padding:0 7px;top:8px;font-size:medium;right:2px;line-height:36px}.searchx #form #submit .fa{display:block;font-size:17px;padding-top:1px}.searchx2{float:right;width:268px;margin:22px 16px 13px 0;position:relative}.searchx2 #form2{padding:0;position:relative}.searchx2 #form2 #s2{font-weight:300;box-shadow:none!important;display:block;width:100%;height:34px;padding:6px 12px;border:none;padding-right:30px;font-family:inherit;font-size:14px;line-height:1.42857143;border-radius:3px;-webkit-box-shadow:inset 0 1px 1px rgba(0,0,0,.075);box-shadow:inset 0 1px 1px rgba(0,0,0,.075)}.searchx2 #form2 #submit2{position:absolute;background:0 0;color:#ddd;font-family:inherit;border:0;padding:0 7px;top:6px;font-size:medium;right:2px;line-height:36px}.searchx2 #form2 #submit2 .fa{display:block;font-size:19px;padding-top:1px}.postbody{float:left;width:74%}.chapter.postbody{width:100%;float:none;margin-bottom:20px}#shadow{display:none;position:fixed;left:0;top:0;bottom:0;background:#111;width:100%;height:100%;z-index:100}.nextprev{overflow:hidden}.nextprev a{display:inline-block;color:#000;border-radius:30px}*,::before,::after{box-sizing:border-box}@media only screen and (max-width:1024px){.postbody{width:69%}}@media only screen and (max-width:769px){nav.floating-nav .centernav.navs{width:100%!important;padding:0}nav.floating-nav ul li{width:23%}nav.floating-nav ul li a{font-size:11px}.searchbux{display:none}nav.second-nav{overflow-x:scroll}nav.second-nav .centernav.navs{width:1260px;text-align:left}img{max-width:100%;height:auto}#content{padding:11px;margin-top:0}.logos{display:none}#main-menu{padding:0;margin:0}#main-menu ul{float:none;width:100%}#main-menu{background:#fff;height:100%;z-index:99999;width:100%;margin:0;display:flex;padding-bottom:6px;padding-top:3px;align-items:center;justify-content:center;flex-direction:row-reverse}.sorceres{position:relative!important;top:0!important}#main-menu ul li{position:relative;margin:0;color:#fff}#main-menu ul li a{text-align:left;color:#fff;font-size:13px;padding:0 8px}header{display:none}.th{overflow:hidden;background:#171717!important;height:50px;display:block}.th .centernav{padding:0}.shme{display:block;float:left;padding:9px 0;width:14%;text-align:center;color:#fff;height:50px}.searchx2{margin:0;float:none;width:86%;display:inline-block;margin-top:8px}.searchx2 #form2 #s2{border:none;background:#fff}.nextprev a{width:49%;margin-bottom:10px}.nextprev{float:none;margin-bottom:12px;text-align:center}.searchx2 #form2 #submit2{right:3px;top:7px!important}form.ajax-auth{width:100%;margin-left:0;top:16px;left:0}.logo_mobile{display:none;text-align:center;border-radius:5px;position:relative;z-index:9999999999999;overflow:hidden}}@media only screen and (max-width:655px){.postbody{float:none;width:100%;padding:0;border:none}}@media only screen and (max-width:850px){.postbody{width:100%}}body.dark{background:#111}.dark h1.entry-title{color:#ccc}.dark #main-menu{background:#171717}.dark .searchx #form #s{background:#1e1e1e;color:#ccc}.dark .searchx2 #form2 #s2{background:#222;color:#ccc}.dark form.ajax-auth{background:#1e1e1e;color:#ccc}.dark .ajax-auth h3{color:#ccc}.dark .ajax-auth a.close{color:#ccc}</style><link rel="preload" as="style" href="https://fonts.googleapis.com/css?family=Roboto%3A300%2C400%2C500%2C700&#038;display=swap" /><link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto%3A300%2C400%2C500%2C700&#038;display=swap" media="print" onload="this.media='all'" /><noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto%3A300%2C400%2C500%2C700&#038;display=swap" /></noscript><link rel="preload" href="https://bacakomik.my/wp-content/cache/min/1/919b6a1e76a9f4aea0593adfd6be0363.css" data-rocket-async="style" as="style" onload="this.onload=null;this.rel='stylesheet'" onerror="this.removeAttribute('data-rocket-async')"  media="all" data-minify="1" />
+	<meta name="description" content="Baca dan download gratis Manhwa Nano Machine Chapter 1 bahasa Indonesia! Baca komik online Nano Machine Ch.1 di BacaKomik." />
+	<link rel="canonical" href="https://bacakomik.my/nano-machine-chapter-1/" />
+	<meta property="og:locale" content="id_ID" />
+	<meta property="og:type" content="article" />
+	<meta property="og:title" content="Komik Nano Machine Chapter 1 - BacaKomik" />
+	<meta property="og:description" content="Baca dan download gratis Manhwa Nano Machine Chapter 1 bahasa Indonesia! Baca komik online Nano Machine Ch.1 di BacaKomik." />
+	<meta property="og:url" content="https://bacakomik.my/nano-machine-chapter-1/" />
+	<meta property="og:site_name" content="BacaKomik" />
+	<meta property="article:published_time" content="2023-12-04T22:06:04+00:00" />
+	<meta property="og:image" content="https://komikcdn.me/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg" />
+	<meta name="author" content="bacakomik" />
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:label1" content="Ditulis oleh" />
+	<meta name="twitter:data1" content="bacakomik" />
+	<script type="application/ld+json" class="yoast-schema-graph">{"@context":"https://schema.org","@graph":[{"@type":"WebPage","@id":"https://bacakomik.my/nano-machine-chapter-1/","url":"https://bacakomik.my/nano-machine-chapter-1/","name":"Komik Nano Machine Chapter 1 - BacaKomik","isPartOf":{"@id":"https://bacakomik.my/#website"},"primaryImageOfPage":{"@id":"https://bacakomik.my/nano-machine-chapter-1/#primaryimage"},"image":{"@id":"https://bacakomik.my/nano-machine-chapter-1/#primaryimage"},"thumbnailUrl":"https://komikcdn.me/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg","datePublished":"2023-12-04T22:06:04+00:00","author":{"@id":"https://bacakomik.my/#/schema/person/8487bceb82d94bf07db8ea75be076b99"},"description":"Baca dan download gratis Manhwa Nano Machine Chapter 1 bahasa Indonesia! Baca komik online Nano Machine Ch.1 di BacaKomik.","breadcrumb":{"@id":"https://bacakomik.my/nano-machine-chapter-1/#breadcrumb"},"inLanguage":"id","potentialAction":[{"@type":"ReadAction","target":["https://bacakomik.my/nano-machine-chapter-1/"]}]},{"@type":"ImageObject","inLanguage":"id","@id":"https://bacakomik.my/nano-machine-chapter-1/#primaryimage","url":"https://komikcdn.me/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg","contentUrl":"https://komikcdn.me/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg"},{"@type":"BreadcrumbList","@id":"https://bacakomik.my/nano-machine-chapter-1/#breadcrumb","itemListElement":[{"@type":"ListItem","position":1,"name":"Beranda","item":"https://bacakomik.my/"},{"@type":"ListItem","position":2,"name":"Nano Machine Chapter 1"}]},{"@type":"WebSite","@id":"https://bacakomik.my/#website","url":"https://bacakomik.my/","name":"BacaKomik","description":"Baca Komik Manga Terbaru Hari Ini","potentialAction":[{"@type":"SearchAction","target":{"@type":"EntryPoint","urlTemplate":"https://bacakomik.my/?s={search_term_string}"},"query-input":{"@type":"PropertyValueSpecification","valueRequired":true,"valueName":"search_term_string"}}],"inLanguage":"id"},{"@type":"Person","@id":"https://bacakomik.my/#/schema/person/8487bceb82d94bf07db8ea75be076b99","name":"bacakomik","sameAs":["http://bacakomik.my"]}]}</script>
+	<!-- / Yoast SEO plugin. -->
+
+
+<link rel='dns-prefetch' href='//use.fontawesome.com' />
+<link rel='dns-prefetch' href='//fonts.googleapis.com' />
+<link rel='dns-prefetch' href='//i0.wp.com' />
+<link rel='dns-prefetch' href='//i1.wp.com' />
+<link rel='dns-prefetch' href='//i2.wp.com' />
+<link rel='dns-prefetch' href='//i3.wp.com' />
+<link rel='dns-prefetch' href='//www.w3.org' />
+<link rel='dns-prefetch' href='//gmpg.org' />
+<link rel='dns-prefetch' href='//www.google-analytics.com' />
+<link rel='dns-prefetch' href='//www.googletagmanager.com' />
+<link rel='dns-prefetch' href='//cdn.statically.io' />
+<link rel='dns-prefetch' href='//potskolu.net' />
+<link rel='dns-prefetch' href='//offshuppetchan.com' />
+<link href='https://fonts.gstatic.com' crossorigin rel='preconnect' />
+<link rel="alternate" type="application/rss+xml" title="BacaKomik &raquo; Feed" href="https://bacakomik.my/feed/" />
+<link rel="alternate" title="oEmbed (JSON)" type="application/json+oembed" href="https://bacakomik.my/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fbacakomik.my%2Fnano-machine-chapter-1%2F" />
+<link rel="alternate" title="oEmbed (XML)" type="text/xml+oembed" href="https://bacakomik.my/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fbacakomik.my%2Fnano-machine-chapter-1%2F&#038;format=xml" />
+<style id="wp-img-auto-sizes-contain-inline-css">
+img:is([sizes=auto i],[sizes^="auto," i]){contain-intrinsic-size:3000px 1500px}
+/*# sourceURL=wp-img-auto-sizes-contain-inline-css */
+</style>
+<style id="wp-emoji-styles-inline-css">
+
+	img.wp-smiley, img.emoji {
+		display: inline !important;
+		border: none !important;
+		box-shadow: none !important;
+		height: 1em !important;
+		width: 1em !important;
+		margin: 0 0.07em !important;
+		vertical-align: -0.1em !important;
+		background: none !important;
+		padding: 0 !important;
+	}
+/*# sourceURL=wp-emoji-styles-inline-css */
+</style>
+<style id="wp-block-library-inline-css">
+:root{--wp-block-synced-color:#7a00df;--wp-block-synced-color--rgb:122,0,223;--wp-bound-block-color:var(--wp-block-synced-color);--wp-editor-canvas-background:#ddd;--wp-admin-theme-color:#007cba;--wp-admin-theme-color--rgb:0,124,186;--wp-admin-theme-color-darker-10:#006ba1;--wp-admin-theme-color-darker-10--rgb:0,107,160.5;--wp-admin-theme-color-darker-20:#005a87;--wp-admin-theme-color-darker-20--rgb:0,90,135;--wp-admin-border-width-focus:2px}@media (min-resolution:192dpi){:root{--wp-admin-border-width-focus:1.5px}}.wp-element-button{cursor:pointer}:root .has-very-light-gray-background-color{background-color:#eee}:root .has-very-dark-gray-background-color{background-color:#313131}:root .has-very-light-gray-color{color:#eee}:root .has-very-dark-gray-color{color:#313131}:root .has-vivid-green-cyan-to-vivid-cyan-blue-gradient-background{background:linear-gradient(135deg,#00d084,#0693e3)}:root .has-purple-crush-gradient-background{background:linear-gradient(135deg,#34e2e4,#4721fb 50%,#ab1dfe)}:root .has-hazy-dawn-gradient-background{background:linear-gradient(135deg,#faaca8,#dad0ec)}:root .has-subdued-olive-gradient-background{background:linear-gradient(135deg,#fafae1,#67a671)}:root .has-atomic-cream-gradient-background{background:linear-gradient(135deg,#fdd79a,#004a59)}:root .has-nightshade-gradient-background{background:linear-gradient(135deg,#330968,#31cdcf)}:root .has-midnight-gradient-background{background:linear-gradient(135deg,#020381,#2874fc)}:root{--wp--preset--font-size--normal:16px;--wp--preset--font-size--huge:42px}.has-regular-font-size{font-size:1em}.has-larger-font-size{font-size:2.625em}.has-normal-font-size{font-size:var(--wp--preset--font-size--normal)}.has-huge-font-size{font-size:var(--wp--preset--font-size--huge)}:root .has-text-align-center{text-align:center}:root .has-text-align-left{text-align:left}:root .has-text-align-right{text-align:right}.has-fit-text{white-space:nowrap!important}#end-resizable-editor-section{display:none}.aligncenter{clear:both}.items-justified-left{justify-content:flex-start}.items-justified-center{justify-content:center}.items-justified-right{justify-content:flex-end}.items-justified-space-between{justify-content:space-between}.screen-reader-text{word-wrap:normal!important;border:0;clip-path:inset(50%);height:1px;margin:-1px;overflow:hidden;padding:0;position:absolute;width:1px}.screen-reader-text:focus{background-color:#ddd;clip-path:none;color:#444;display:block;font-size:1em;height:auto;left:5px;line-height:normal;padding:15px 23px 14px;text-decoration:none;top:5px;width:auto;z-index:100000}html :where(.has-border-color){border-style:solid}html :where([style*=border-color]){border-style:solid}html :where([style*=border-top-color]){border-top-style:solid}html :where([style*=border-right-color]){border-right-style:solid}html :where([style*=border-bottom-color]){border-bottom-style:solid}html :where([style*=border-left-color]){border-left-style:solid}html :where([style*=border-width]){border-style:solid}html :where([style*=border-top-width]){border-top-style:solid}html :where([style*=border-right-width]){border-right-style:solid}html :where([style*=border-bottom-width]){border-bottom-style:solid}html :where([style*=border-left-width]){border-left-style:solid}html :where(img[class*=wp-image-]){height:auto;max-width:100%}:where(figure){margin:0 0 1em}html :where(.is-position-sticky){--wp-admin--admin-bar--position-offset:var(--wp-admin--admin-bar--height,0px)}@media screen and (max-width:600px){html :where(.is-position-sticky){--wp-admin--admin-bar--position-offset:0px}}
+
+/*# sourceURL=/wp-includes/css/dist/block-library/common.min.css */
+</style>
+<style id="classic-theme-styles-inline-css">
+/*! This file is auto-generated */
+.wp-block-button__link{color:#fff;background-color:#32373c;border-radius:9999px;box-shadow:none;text-decoration:none;padding:calc(.667em + 2px) calc(1.333em + 2px);font-size:1.125em}.wp-block-file__button{background:#32373c;color:#fff;text-decoration:none}
+/*# sourceURL=/wp-includes/css/classic-themes.min.css */
+</style>
+
+<style id="global-styles-inline-css">
+:root{--wp--preset--aspect-ratio--square: 1;--wp--preset--aspect-ratio--4-3: 4/3;--wp--preset--aspect-ratio--3-4: 3/4;--wp--preset--aspect-ratio--3-2: 3/2;--wp--preset--aspect-ratio--2-3: 2/3;--wp--preset--aspect-ratio--16-9: 16/9;--wp--preset--aspect-ratio--9-16: 9/16;--wp--preset--color--black: #000000;--wp--preset--color--cyan-bluish-gray: #abb8c3;--wp--preset--color--white: #ffffff;--wp--preset--color--pale-pink: #f78da7;--wp--preset--color--vivid-red: #cf2e2e;--wp--preset--color--luminous-vivid-orange: #ff6900;--wp--preset--color--luminous-vivid-amber: #fcb900;--wp--preset--color--light-green-cyan: #7bdcb5;--wp--preset--color--vivid-green-cyan: #00d084;--wp--preset--color--pale-cyan-blue: #8ed1fc;--wp--preset--color--vivid-cyan-blue: #0693e3;--wp--preset--color--vivid-purple: #9b51e0;--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple: linear-gradient(135deg,rgb(6,147,227) 0%,rgb(155,81,224) 100%);--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan: linear-gradient(135deg,rgb(122,220,180) 0%,rgb(0,208,130) 100%);--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange: linear-gradient(135deg,rgb(252,185,0) 0%,rgb(255,105,0) 100%);--wp--preset--gradient--luminous-vivid-orange-to-vivid-red: linear-gradient(135deg,rgb(255,105,0) 0%,rgb(207,46,46) 100%);--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray: linear-gradient(135deg,rgb(238,238,238) 0%,rgb(169,184,195) 100%);--wp--preset--gradient--cool-to-warm-spectrum: linear-gradient(135deg,rgb(74,234,220) 0%,rgb(151,120,209) 20%,rgb(207,42,186) 40%,rgb(238,44,130) 60%,rgb(251,105,98) 80%,rgb(254,248,76) 100%);--wp--preset--gradient--blush-light-purple: linear-gradient(135deg,rgb(255,206,236) 0%,rgb(152,150,240) 100%);--wp--preset--gradient--blush-bordeaux: linear-gradient(135deg,rgb(254,205,165) 0%,rgb(254,45,45) 50%,rgb(107,0,62) 100%);--wp--preset--gradient--luminous-dusk: linear-gradient(135deg,rgb(255,203,112) 0%,rgb(199,81,192) 50%,rgb(65,88,208) 100%);--wp--preset--gradient--pale-ocean: linear-gradient(135deg,rgb(255,245,203) 0%,rgb(182,227,212) 50%,rgb(51,167,181) 100%);--wp--preset--gradient--electric-grass: linear-gradient(135deg,rgb(202,248,128) 0%,rgb(113,206,126) 100%);--wp--preset--gradient--midnight: linear-gradient(135deg,rgb(2,3,129) 0%,rgb(40,116,252) 100%);--wp--preset--font-size--small: 13px;--wp--preset--font-size--medium: 20px;--wp--preset--font-size--large: 36px;--wp--preset--font-size--x-large: 42px;--wp--preset--spacing--20: 0.44rem;--wp--preset--spacing--30: 0.67rem;--wp--preset--spacing--40: 1rem;--wp--preset--spacing--50: 1.5rem;--wp--preset--spacing--60: 2.25rem;--wp--preset--spacing--70: 3.38rem;--wp--preset--spacing--80: 5.06rem;--wp--preset--shadow--natural: 6px 6px 9px rgba(0, 0, 0, 0.2);--wp--preset--shadow--deep: 12px 12px 50px rgba(0, 0, 0, 0.4);--wp--preset--shadow--sharp: 6px 6px 0px rgba(0, 0, 0, 0.2);--wp--preset--shadow--outlined: 6px 6px 0px -3px rgb(255, 255, 255), 6px 6px rgb(0, 0, 0);--wp--preset--shadow--crisp: 6px 6px 0px rgb(0, 0, 0);}:where(body) { margin: 0; }:where(.is-layout-flex){gap: 0.5em;}:where(.is-layout-grid){gap: 0.5em;}body .is-layout-flex{display: flex;}.is-layout-flex{flex-wrap: wrap;align-items: center;}.is-layout-flex > :is(*, div){margin: 0;}body .is-layout-grid{display: grid;}.is-layout-grid > :is(*, div){margin: 0;}body{padding-top: 0px;padding-right: 0px;padding-bottom: 0px;padding-left: 0px;}:root :where(.wp-element-button, .wp-block-button__link){background-color: #32373c;border-width: 0;color: #fff;font-family: inherit;font-size: inherit;font-style: inherit;font-weight: inherit;letter-spacing: inherit;line-height: inherit;padding-top: calc(0.667em + 2px);padding-right: calc(1.333em + 2px);padding-bottom: calc(0.667em + 2px);padding-left: calc(1.333em + 2px);text-decoration: none;text-transform: inherit;}.has-black-color{color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-color{color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-color{color: var(--wp--preset--color--white) !important;}.has-pale-pink-color{color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-color{color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-color{color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-color{color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-color{color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-color{color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-color{color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-color{color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-color{color: var(--wp--preset--color--vivid-purple) !important;}.has-black-background-color{background-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-background-color{background-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-background-color{background-color: var(--wp--preset--color--white) !important;}.has-pale-pink-background-color{background-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-background-color{background-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-background-color{background-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-background-color{background-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-background-color{background-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-background-color{background-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-background-color{background-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-background-color{background-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-background-color{background-color: var(--wp--preset--color--vivid-purple) !important;}.has-black-border-color{border-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-border-color{border-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-border-color{border-color: var(--wp--preset--color--white) !important;}.has-pale-pink-border-color{border-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-border-color{border-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-border-color{border-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-border-color{border-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-border-color{border-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-border-color{border-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-border-color{border-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-border-color{border-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-border-color{border-color: var(--wp--preset--color--vivid-purple) !important;}.has-vivid-cyan-blue-to-vivid-purple-gradient-background{background: var(--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple) !important;}.has-light-green-cyan-to-vivid-green-cyan-gradient-background{background: var(--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan) !important;}.has-luminous-vivid-amber-to-luminous-vivid-orange-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange) !important;}.has-luminous-vivid-orange-to-vivid-red-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-orange-to-vivid-red) !important;}.has-very-light-gray-to-cyan-bluish-gray-gradient-background{background: var(--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray) !important;}.has-cool-to-warm-spectrum-gradient-background{background: var(--wp--preset--gradient--cool-to-warm-spectrum) !important;}.has-blush-light-purple-gradient-background{background: var(--wp--preset--gradient--blush-light-purple) !important;}.has-blush-bordeaux-gradient-background{background: var(--wp--preset--gradient--blush-bordeaux) !important;}.has-luminous-dusk-gradient-background{background: var(--wp--preset--gradient--luminous-dusk) !important;}.has-pale-ocean-gradient-background{background: var(--wp--preset--gradient--pale-ocean) !important;}.has-electric-grass-gradient-background{background: var(--wp--preset--gradient--electric-grass) !important;}.has-midnight-gradient-background{background: var(--wp--preset--gradient--midnight) !important;}.has-small-font-size{font-size: var(--wp--preset--font-size--small) !important;}.has-medium-font-size{font-size: var(--wp--preset--font-size--medium) !important;}.has-large-font-size{font-size: var(--wp--preset--font-size--large) !important;}.has-x-large-font-size{font-size: var(--wp--preset--font-size--x-large) !important;}
+/*# sourceURL=global-styles-inline-css */
+</style>
+
+
+
+
+
+
+<script type="rocketlazyloadscript" data-minify="1" id="jquery-js" src="https://bacakomik.my/wp-content/cache/min/1/wp-content/themes/komikcast6/assets/js/jquery.js?ver=1786105143"></script>
+<script id="ajax-auth-js-extra">
+var auth = {"url":"/wp-admin/admin-ajax.php","wait":"please wait...","error":"Unknown error","loading":"Loading..."};
+//# sourceURL=ajax-auth-js-extra
+</script>
+<script type="rocketlazyloadscript" data-minify="1" id="ajax-auth-js" src="https://bacakomik.my/wp-content/cache/min/1/wp-content/themes/komikcast6/assets/js/front.auth.js?ver=1786105143" defer></script>
+<script id="east_loadmore-js-extra">
+var east_loadmore_params = {"ajaxurl":"https://bacakomik.my/wp-admin/admin-ajax.php","posts":"{\"page\":0,\"name\":\"nano-machine-chapter-1\",\"error\":\"\",\"m\":\"\",\"p\":0,\"post_parent\":\"\",\"subpost\":\"\",\"subpost_id\":\"\",\"attachment\":\"\",\"attachment_id\":0,\"pagename\":\"\",\"page_id\":0,\"second\":\"\",\"minute\":\"\",\"hour\":\"\",\"day\":0,\"monthnum\":0,\"year\":0,\"w\":0,\"category_name\":\"\",\"tag\":\"\",\"cat\":\"\",\"tag_id\":\"\",\"author\":\"\",\"author_name\":\"\",\"feed\":\"\",\"tb\":\"\",\"paged\":0,\"meta_key\":\"\",\"meta_value\":\"\",\"preview\":\"\",\"s\":\"\",\"sentence\":\"\",\"title\":\"\",\"fields\":\"all\",\"menu_order\":\"\",\"embed\":\"\",\"category__in\":[],\"category__not_in\":[],\"category__and\":[],\"post__in\":[],\"post__not_in\":[],\"post_name__in\":[],\"tag__in\":[],\"tag__not_in\":[],\"tag__and\":[],\"tag_slug__in\":[],\"tag_slug__and\":[],\"post_parent__in\":[],\"post_parent__not_in\":[],\"author__in\":[],\"author__not_in\":[],\"search_columns\":[],\"ignore_sticky_posts\":false,\"suppress_filters\":false,\"cache_results\":true,\"update_post_term_cache\":true,\"update_menu_item_cache\":false,\"lazy_load_term_meta\":true,\"update_post_meta_cache\":true,\"post_type\":\"\",\"posts_per_page\":30,\"nopaging\":false,\"comments_per_page\":\"50\",\"no_found_rows\":false,\"order\":\"DESC\"}","current_page":"2","max_page":"0"};
+//# sourceURL=east_loadmore-js-extra
+</script>
+<script type="rocketlazyloadscript" data-minify="1" id="east_loadmore-js" src="https://bacakomik.my/wp-content/cache/min/1/wp-content/themes/komikcast6/assets/js/ajax.loadmore.js?ver=1786105143" defer></script>
+<script type="rocketlazyloadscript" id="idTabs-js" src="https://bacakomik.my/wp-content/themes/komikcast6/assets/js/jquery.idTabs.min.js?ver=2.3.4" defer></script>
+<script type="rocketlazyloadscript" id="reading-js" src="https://bacakomik.my/wp-content/themes/komikcast6/assets/js//read.min.js?ver=7.0.3" defer></script>
+<script type="rocketlazyloadscript" data-minify="1" id="crypto-currency-js" src="https://bacakomik.my/wp-content/cache/min/1/wp-content/themes/komikcast6/assets/js/crypto-currency.js?ver=1786105143" defer></script>
+<link rel="https://api.w.org/" href="https://bacakomik.my/wp-json/" /><link rel="alternate" title="JSON" type="application/json" href="https://bacakomik.my/wp-json/wp/v2/posts/65093" /><link rel="EditURI" type="application/rsd+xml" title="RSD" href="https://bacakomik.my/xmlrpc.php?rsd" />
+<meta name="generator" content="WordPress 7.0.3" />
+<link rel='shortlink' href='https://bacakomik.my/?p=65093' />
+    <script type="rocketlazyloadscript" data-rocket-type='text/javascript'>
+
+    var baseurl = "https://bacakomik.my/";
+    var ajaxurl = "https://bacakomik.my/wp-admin/admin-ajax.php";
+    var max_bookmark = 30;
+
+ $(window).scroll(function(){
+
+    if ($(this).scrollTop() > 100) {
+      $('.scrollToTop').fadeIn();
+    } else {
+      $('.scrollToTop').fadeOut();
+    }
+  });
+   $(document).ready(function(){
+
+        $(".shme").click(function(){
+          $(".mm").toggleClass("shwx");
+        });
+
+
+        $(".filterss").click(function(){
+          $(".advancedsearch").fadeToggle("advs");
+        });
+
+      });
+
+
+    </script>
+
+    <link rel="icon" href="https://bacakomik.my/wp-content/uploads/2023/11/Ikon-Hd-Fix-214x214.jpg" sizes="32x32" />
+<link rel="icon" href="https://bacakomik.my/wp-content/uploads/2023/11/Ikon-Hd-Fix-214x214.jpg" sizes="192x192" />
+<link rel="apple-touch-icon" href="https://bacakomik.my/wp-content/uploads/2023/11/Ikon-Hd-Fix-214x214.jpg" />
+<meta name="msapplication-TileImage" content="https://bacakomik.my/wp-content/uploads/2023/11/Ikon-Hd-Fix.jpg" />
+<noscript><style id="rocket-lazyload-nojs-css">.rll-youtube-player, [data-lazy-src]{display:none !important;}</style></noscript><script type="rocketlazyloadscript">
+/*! loadCSS rel=preload polyfill. [c]2017 Filament Group, Inc. MIT License */
+(function(w){"use strict";if(!w.loadCSS){w.loadCSS=function(){}}
+var rp=loadCSS.relpreload={};rp.support=(function(){var ret;try{ret=w.document.createElement("link").relList.supports("preload")}catch(e){ret=!1}
+return function(){return ret}})();rp.bindMediaToggle=function(link){var finalMedia=link.media||"all";function enableStylesheet(){link.media=finalMedia}
+if(link.addEventListener){link.addEventListener("load",enableStylesheet)}else if(link.attachEvent){link.attachEvent("onload",enableStylesheet)}
+setTimeout(function(){link.rel="stylesheet";link.media="only x"});setTimeout(enableStylesheet,3000)};rp.poly=function(){if(rp.support()){return}
+var links=w.document.getElementsByTagName("link");for(var i=0;i<links.length;i++){var link=links[i];if(link.rel==="preload"&&link.getAttribute("as")==="style"&&!link.getAttribute("data-loadcss")){link.setAttribute("data-loadcss",!0);rp.bindMediaToggle(link)}}};if(!rp.support()){rp.poly();var run=w.setInterval(rp.poly,500);if(w.addEventListener){w.addEventListener("load",function(){rp.poly();w.clearInterval(run)})}else if(w.attachEvent){w.attachEvent("onload",function(){rp.poly();w.clearInterval(run)})}}
+if(typeof exports!=="undefined"){exports.loadCSS=loadCSS}
+else{w.loadCSS=loadCSS}}(typeof global!=="undefined"?global:this))
+</script>  <script type="rocketlazyloadscript">var defaultTheme = "light";</script>
+</head>
+	<script type="rocketlazyloadscript">
+	var ajaxurl = "https://bacakomik.my/wp-admin/admin-ajax.php";</script>
+
+<style>
+.advancedsearch button.searchz,.hpage a,.lista a,.boxurl strong,.pagination span.page-numbers.current,#footer-menu,.infoanime .infox .spe span:before,.boxdl .boxtitle,#footer-widget .boxbar .genre li a:hover,#slider .slide-caption .btn,.seriestitle,.owl-dot.active span,.tag a, .owl-dot.active:hover span,.bookmark,#sidebar .senc .sencs h3 .linkwidget,.filter.submit .btn,.quickswitcher .slider.round:before,.scrollToTop,.filterss:hover,.ctss,.postbody p.index,.ajax-auth input.submit_button
+,.serieslist.pop ul li.topone .ctr,.page_inf .infs .inf_gen a:hover,.naveps .nvsc a,a.selected .item.swiper-slide,.widget.schedule .widget-body .slider .items .item:hover,#epl::-webkit-scrollbar,span.e,.epl .mirrorifram.active,.epl ul li a.active,.epl ul li:hover a,.autocomplete-suggestion:nth-child(odd):hover, .autocomplete-suggestion:hover,.taxlist li a:hover,.tooltip-loading div,#sidebar .senc .sencs .ongoingwgt li .r, .footerwgt .widfoot .sct .ongoingwgt li .r,#sidebar .senc .sencs ul.genre li:before,#sidebar .senc .sencs ul.season li:before,.login,.recommended h3,.widget-title .reset,.mCSB_scrollTools .mCSB_dragger:hover .mCSB_dragger_bar,.live-search ul li a.more,.glimit a:hover,.nextprev a[rel="next"],.nextprev a[rel="prev"],.footer-az .az-list li a:hover,.counter_outside,.allproject,.alert-warning,.dlch,.logos img,#headhome,#main-menu ul li a:hover,.owl-prev, .owl-next, form.update_profile fieldset input[type=submit]{background: #d13030}
+.radiox input:checked ~ .checkmarkx,.mCSB_scrollTools .mCSB_dragger .mCSB_dragger_bar,.mCSB_scrollTools .mCSB_dragger:active .mCSB_dragger_bar,.mCSB_scrollTools .mCSB_dragger.mCSB_dragger_onDrag .mCSB_dragger_bar,.tooltip .towatch a,#overlay,.go-home-container .go-home-btn{background-color:#d13030 }
+.widget-title h3,.widget-title h2,.widget-title h1,.jdlbar ul li,.postbody .dev ul li .dtl h2 a:hover, .postbody .boxed .right .lts ul li .dtl span a:hover,.letter-cell a,.white .bottom a:hover,#sidebar .senc .sencs h3.widget-title,a,.filterss,.searchx #form #s:focus+button,.searchx2 #form2 #s2:focus+button,a#pop_signup, a#pop_login,.headpost h1,#sidebar .side a:hover,.filters .filter li label:hover, .filters .filter li:hover,.filters .filter li input:checked+label:before,.widget.az-list .items .item .info .name:hover, .page_inf .infs .inf_gen a,
+ul.smenu li a.selected,h1.titless,a:hover,.widget.info .info .head .title a,.widget.info .info dl.meta dd a
+,.widget.schedule .widget-body .timeline .item .info .name:hover,.widget.schedule .widget-body .timeline .item .watch:hover,.barispenz a,.jdlbar a:hover,.tooltip .totitle h4,.dtlx h1,.bs .bsx .limit .ply .dashicons,.iconx .icol .fa,.slide-content .title a:hover,.centernav,.footer-az .az-list li a,.pagination a,#sidebar .senc .sencs ul.genre li i,.centernavig,#main-menu ul li a{color: #d13030}
+.epl ul li:hover a, .page_inf .infs .inf_gen a,.lista a,.serieslist ul li .ctr,.filter.submit .btn,.filterss,.filterss:hover,.searchx #form #s:focus,.searchx2 #form2 #s2:focus,.pagination span.page-numbers.current,.ajax-auth input.submit_button,a#pop_signup, a#pop_login,.epl .mirrorifram.active,.taxlist li a:hover,.advancedsearch button.searchz,.widget.schedule .widget-body .timeline .item .watch:hover,.tooltip .towatch a,.form-control:focus,blockquote, q,.nextprev a[rel="next"],.nextprev a[rel="prev"],.footer-az .az-list li a:hover,.pagination span.page-numbers.current,#footer,#main-menu,.lgsg_form fieldset input[type=text]:focus, .lgsg_form fieldset input[type=password]:focus{border-color: #d13030}
+.genx .checkmark:after{border: solid #d13030;    left: 0px;
+    top: -6px;
+    width: 9px;
+    height: 14px;
+    border-width: 0 3px 4px 0;
+    -webkit-transform: rotate(45deg);
+    -ms-transform: rotate(45deg);
+    transform: rotate(45deg);}
+    .simplefavorite-button.preset,.towatch .simplefavorite-button.preset, .simplefavorite-button{border-color:#d13030!important}
+    .towatch .simplefavorite-button.preset, .simplefavorite-button{color:#d13030!important}
+    a.more.live_search_click:hover,.simplefavorite-button.preset,.Manga{background: #d13030!important}
+@media only screen and (max-width: 769px){
+.th {
+
+background: #d13030
+} }
+@media only screen and (max-width: 769px){
+.darkmode .th {
+
+background: #d13030
+}
+.darkmode .searchx #form #s{background:transparent}
+.darkmode .searchx #form #s{border: 1px solid #fff;}
+.darkmode .searchx #form #s::placeholder{color:#fff}
+.darkmode .searchx #form #s:focus {
+    border-color: #fff;
+}
+.darkmode .searchx #form #s:focus+button{color: #fff;}
+.darkmode .searchx #form #submit{color:#fff}
+}
+</style><script type="rocketlazyloadscript" data-minify="1" data-rocket-type='text/javascript' src='https://bacakomik.my/wp-content/cache/min/1/wp-content/themes/komikcast6/assets/js/owl.carousel.js?ver=1786105143' defer></script>
+	
+<body class="dark click" itemscope="itemscope" itemtype="http://schema.org/WebPage">
+
+  	<form id="sunset_login_user" class="ajax-auth lgsg_form" action="login" method="post">
+		<h3>
+			Masuk ke Bacakomik		</h3>
+		<div id="lgsgrespon"></div>
+		<fieldset>
+			<input type="text" name="log" placeholder="Nama Pengguna atau Alamat Email" id="user_login"
+				value="" required />
+		</fieldset>
+		<fieldset>
+			<input type="password" name="passwrd" placeholder="Kata Sandi" id="user_pass"
+				value="" required />
+		</fieldset>
+		<fieldset class="remembr">
+			<label for="rememberme"><input name="rmb" type="checkbox" id="rememberme" value="forever" checked="checked" />
+				Ingat Saya			</label>
+		</fieldset>
+		<fieldset class="last">
+			<input type="submit" id="sunset_login_btn" data-btntext="Log in" class="submit button"
+				value="Masuk" />
+			<span>Masih belum memiliki akun? <a href="https://bacakomik.my/akun?action=sign-up">Daftar
+					Disini </a></span>
+			<span><a href="https://bacakomik.my/akun/lostpassword" target="_blank">Lupa Kata
+					Sandi</a></span>
+		</fieldset>
+		<input type="hidden" name="action" value="sunset_login">
+		<a class="close" href=""><i class="fa fa-times" aria-hidden="true"></i></a>
+	</form>
+
+  <div id='shadow'></div>
+
+  
+<div class="search-popup">
+   <a class="close" href="javascript:void(0)"><i class="fa fa-times" aria-hidden="true"></i></a>
+   <div class="searchx">
+      <form action="https://bacakomik.my/" id="form" method="get"> <input id="s" type="text" placeholder="Pencarian..." name="s" autocomplete="off"> <button type="submit" id="submit"><span class="fa fa-search"></span></button></form>
+   </div>
+</div>
+
+<div class="th">
+	<div class="centernav bound">
+		<div class="shme logo-mobile">
+		    <a title="BacaKomik" itemprop="url" href="https://bacakomik.my/">
+<img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="BacaKomik" data-lazy-src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png?w=140"><noscript><img src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png?w=140" alt="BacaKomik"></noscript> </a>
+		</div>
+ 		<header id="masthead" class="site-header" role="banner" itemscope="itemscope" itemtype="http://schema.org/WPHeader">
+			<div class="site-branding logox">
+									<span class="logos">
+						<a title="BacaKomik" itemprop="url" href="https://bacakomik.my/">
+																					<img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="BacaKomik" data-lazy-src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png?w=140"><noscript><img src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png?w=140" alt="BacaKomik"></noscript>
+														
+							<span class="hdl">BacaKomik</span></a>
+					</span>
+								<meta itemprop="name" content="BacaKomik" />
+			</div>
+		</header>
+		<div class="searchx2">
+			<form action="https://bacakomik.my/" id="form2" method="get" class="search-live" itemprop="potentialAction" itemscope itemtype="http://schema.org/SearchAction">
+				<meta itemprop="target" content="https://bacakomik.my/?s={query}"/>
+				<input id="s2" itemprop="query-input" type="text" placeholder="Search..." name="s" autocomplete="off" />
+				<button type="submit" id="submit2"><span class="fa fa-search"></span></button>
+			</form>
+		</div>
+		</div>
+	</div>
+	<div id="main-menu" class="mm">
+		<div class="centernav navs">
+			<div class="bound">
+							<div class="logo_mobile">
+						<a title="BacaKomik" itemprop="url" href="https://bacakomik.my/">
+														<img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="BacaKomik" data-lazy-src="https://i0.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png"><noscript><img src="https://i0.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png" alt="BacaKomik"></noscript>				</a>
+					</div>
+						<header id="masthead" class="site-header" role="banner" itemscope="itemscope" itemtype="http://schema.org/WPHeader">
+			<div class="site-branding logox">
+									<span class="logos">
+						<a title="BacaKomik" itemprop="url" href="https://bacakomik.my/">
+																					<img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="BacaKomik" data-lazy-src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png?w=140"><noscript><img src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/11/Ikon-HD-Bacakomik-e1700846109308.png?w=140" alt="BacaKomik"></noscript>
+														
+							<span class="hdl">BacaKomik</span></a>
+					</span>
+								<meta itemprop="name" content="BacaKomik" />
+			</div>
+		</header>
+<nav id="main-menu" class="sorceres" role="navigation" itemscope="itemscope" itemtype="http://schema.org/SiteNavigationElement">
+
+	
+
+				<ul id="menu-menu" class="menu"><li id="menu-item-31" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-31"><a href="https://bacakomik.my/baca-manga/"><span itemprop="name">Baca Manga</span></a></li>
+<li id="menu-item-32" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-32"><a href="https://bacakomik.my/baca-manhua/"><span itemprop="name">Baca Manhua</span></a></li>
+<li id="menu-item-33" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-33"><a href="https://bacakomik.my/baca-manhwa/"><span itemprop="name">Baca Manhwa</span></a></li>
+</ul>
+				<div class="clear"></div>
+					</nav>
+
+<div class="searchbux geter"> <button type="submit" id="submit" class="show-search-button"><span class="fa fa-search"></span></button></div>
+			</div>
+
+		</div>
+
+	</div>
+
+
+	<nav class="second-nav" itemscope="" itemtype="http://www.schema.org/SiteNavigationElement">
+				<div class="centernav navs">
+						<ul id="menu-menu2" class="menu"><li id="menu-item-34" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-34"><a href="https://bacakomik.my/komik-terbaru/"><span itemprop="name">Komik Terbaru</span></a></li>
+<li id="menu-item-35" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-35"><a href="https://bacakomik.my/komik-berwarna/"><span itemprop="name">Komik Berwarna</span></a></li>
+<li id="menu-item-36" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-36"><a href="https://bacakomik.my/daftar-komik/"><span itemprop="name">Daftar Komik</span></a></li>
+<li id="menu-item-37" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-37"><a href="https://bacakomik.my/daftar-genre/"><span itemprop="name">Daftar Genre</span></a></li>
+<li id="menu-item-38" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-38"><a href="https://bacakomik.my/komik-populer/" title="Komik Populer"><span itemprop="name">Top Komik</span></a></li>
+</ul>					</div>
+					</nav>
+
+  
+
+
+<div class="clear"></div>
+<main >
+  <div id="wrap">
+      
+      	  
+	            <script type="rocketlazyloadscript" data-rocket-type="text/javascript">
+        $(document).ready(function() {
+        $(".show-search-button").on("click", function (b) {
+          $("body").prepend('<div class="search_shadow"></div>');
+          $(".search-popup").fadeIn(300);
+          b.preventDefault()
+        });
+        $(document).on("click", ".search_shadow, .close", function () {
+          $(".search-popup").fadeOut(300, function () {
+            $(".search_shadow").remove()
+          });
+          return false
+        });
+      });
+        </script>
+		
+			
+			
+			
+			
+			  <div class="nva" style="background: #000;">
+    <ul class="perapih">
+      <li> Chapter
+        1 dari
+        324      </li>
+      <li class="ls1"><a href="https://bacakomik.my/komik/nano-machine/"
+          title="Komik Nano Machine">Daftar Chapter »</a></li>
+    </ul>
+  </div>
+
+<div id="content">
+  <div class="chapter postbody">
+
+    <article id="post-65093" class="post-65093 post type-post status-publish format-standard hentry category-nano-machine" itemscope="itemscope"
+      itemtype="http://schema.org/CreativeWork">
+      <div class="chapter-area">
+        <div class="chapter-content">
+          <div class="dtlx">
+            <h1 class="entry-title" itemprop="name">Komik
+              Nano Machine Chapter 1            </h1>
+          </div>
+                    <div class="chapter-desc">Kamu sedang berada di halaman baca komik <b>
+              Nano Machine Chapter
+              1                                        </b> bahasa Indonesia. Jika kamu ingin membaca manga <b>
+              Nano Machine            </b>, pastikan Javascript kalian aktif . Untuk koleksi komik seru lainnya di <b>
+              BacaKomik            </b> ada di menu Daftar Komik.
+          </div>
+
+          
+               <div class="navig" >
+  <div class="nextprev">
+    	  
+
+
+        <a href="https://bacakomik.my/komik/nano-machine/"><div class="icol daftarch"><i class="fa fa-th"></i> Daftar Chapter</div></a>
+	 
+    	  <a href="https://bacakomik.my/nano-machine-chapter-2/" rel="next">Chapter Selanjutnya »</a></div>
+
+</div>
+
+		 <div id="readernotif" style="text-align: center;color: #ddd;font-weight: bold;background-color: #d13030;padding: 10px;border-radius: 4px;line-height: normal;margin-bottom: 15px;">JIKA GAMBAR TIDAK MUNCUL COBA GUNAKAN BROWSER CHROME ATAU OPERA! MASIH TIDAK MUNCUL, SILAKAN LAPOR DI KOMENTAR ATAU FP KAMI!.</div>
+        <div class="yahahah_class_utama_cuy buat_bar_keknya" id="Anjay_Ini_utama">
+			           <div id="chimg-auh">
+<!-- <div style="padding-bottom: 56.25%; max-width: 100%; position: relative;"><iframe src="https://www.youtube.com/embed/hiFfhx_VefE?autoplay=0&modestbranding=1&rel=0&iv_load_policy=3" width="800" height="450" style="position: absolute; top: 0px; left: 0px; width: 100%; height: 100%;" frameborder="0"></iframe></div> -->
+	
+<div class="oi_ada_class_skrng">
+	<div id="anjay_ini_id_kh">
+<img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/5ggycih1Na7P3QF01.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/mnNDk9CUGzgq1Rj02.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/mnNDk9CUGzgq1Rj02.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/mnNDk9CUGzgq1Rj02.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/mnNDk9CUGzgq1Rj02.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/X2F1XdugGOqjfSU03.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/X2F1XdugGOqjfSU03.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/X2F1XdugGOqjfSU03.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/X2F1XdugGOqjfSU03.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/zmhOsJ2CcD4sARs04.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/zmhOsJ2CcD4sARs04.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/zmhOsJ2CcD4sARs04.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/zmhOsJ2CcD4sARs04.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/jfllstkiFDiCs6R05.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/jfllstkiFDiCs6R05.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/jfllstkiFDiCs6R05.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/jfllstkiFDiCs6R05.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/IuflbAmyFtZijpr06.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/IuflbAmyFtZijpr06.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/IuflbAmyFtZijpr06.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/IuflbAmyFtZijpr06.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/3Kw7NuyGeKO3In707.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/3Kw7NuyGeKO3In707.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/3Kw7NuyGeKO3In707.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/3Kw7NuyGeKO3In707.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/15TwF33INvTTglH08.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/15TwF33INvTTglH08.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/15TwF33INvTTglH08.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/15TwF33INvTTglH08.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/ziMIrgKtwPheZkI09.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/ziMIrgKtwPheZkI09.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/ziMIrgKtwPheZkI09.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/ziMIrgKtwPheZkI09.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/L6IhcKwvLwJPcfp10.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/L6IhcKwvLwJPcfp10.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/L6IhcKwvLwJPcfp10.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/L6IhcKwvLwJPcfp10.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/QB6BwCnfCYwo7Cw11.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/QB6BwCnfCYwo7Cw11.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/QB6BwCnfCYwo7Cw11.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/QB6BwCnfCYwo7Cw11.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/fVMxjtYXl2pfJF212.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/fVMxjtYXl2pfJF212.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/fVMxjtYXl2pfJF212.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/fVMxjtYXl2pfJF212.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/GxB7S8kiHvLGa3613.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/GxB7S8kiHvLGa3613.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/GxB7S8kiHvLGa3613.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/GxB7S8kiHvLGa3613.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/K60CJrm2Kaet07W14.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/K60CJrm2Kaet07W14.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/K60CJrm2Kaet07W14.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/K60CJrm2Kaet07W14.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/WGqUBy7Q8ASG6eG15.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/WGqUBy7Q8ASG6eG15.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/WGqUBy7Q8ASG6eG15.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/WGqUBy7Q8ASG6eG15.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/0geM0KoKFAqlDTn16.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/0geM0KoKFAqlDTn16.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/0geM0KoKFAqlDTn16.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/0geM0KoKFAqlDTn16.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/yiZD2PoLDhtDU9t17.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/yiZD2PoLDhtDU9t17.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/yiZD2PoLDhtDU9t17.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/yiZD2PoLDhtDU9t17.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2GvWPKlpawbfnRj18.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2GvWPKlpawbfnRj18.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2GvWPKlpawbfnRj18.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2GvWPKlpawbfnRj18.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/TGelEX1bMZR4Mkr19.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/TGelEX1bMZR4Mkr19.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/TGelEX1bMZR4Mkr19.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/TGelEX1bMZR4Mkr19.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/wJjhI1J61q75DEq20.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/wJjhI1J61q75DEq20.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/wJjhI1J61q75DEq20.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/wJjhI1J61q75DEq20.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/A0mTLaTFLNJ1JFp21.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/A0mTLaTFLNJ1JFp21.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/A0mTLaTFLNJ1JFp21.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/A0mTLaTFLNJ1JFp21.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/SJxgaTnSKp1yUL322.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/SJxgaTnSKp1yUL322.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/SJxgaTnSKp1yUL322.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/SJxgaTnSKp1yUL322.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/uXkMApwlhcgSkt123.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/uXkMApwlhcgSkt123.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/uXkMApwlhcgSkt123.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/uXkMApwlhcgSkt123.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2QG3j0Ngkma8l6l24.jpg';" data-lazy-src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2QG3j0Ngkma8l6l24.jpg"/><noscript><img src="https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2QG3j0Ngkma8l6l24.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://gaimgame.pics/data/588266/1/VoXYgKhWiPCEeZS/2QG3j0Ngkma8l6l24.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/btkfPVKCvlAQLcn25.jpg';" data-lazy-src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/btkfPVKCvlAQLcn25.jpg"/><noscript><img src="https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/btkfPVKCvlAQLcn25.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://imageainewgeneration.lol/data/588266/1/VoXYgKhWiPCEeZS/btkfPVKCvlAQLcn25.jpg';"/></noscript><img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/G52NEK4QlW5DcFB26.jpg';" data-lazy-src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/G52NEK4QlW5DcFB26.jpg"/><noscript><img src="https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/G52NEK4QlW5DcFB26.jpg" alt="Nano Machine Chapter 1" onError="this.onerror=null;this.src='https://himmga.lat/data/588266/1/VoXYgKhWiPCEeZS/G52NEK4QlW5DcFB26.jpg';"/></noscript></div>
+</div>
+
+<script type="rocketlazyloadscript">
+
+</script>
+
+       </div>
+       
+
+       <div class="navig" >
+  <div class="nextprev">
+    
+
+
+        <a href="#Komentar"><div class="icol download"><i class="fas fa-comments"></i> Komentar</div></a>
+
+        <a target="_blank" href="https://bacakomik.my/komik/nano-machine/"><div class="icol daftarch"><i class="fa fa-th"></i> Daftar Chapter</div></a>
+	  
+    	  <a href="https://bacakomik.my/nano-machine-chapter-2/" rel="next">Chapter Selanjutnya »</a></div>
+
+</div>
+
+
+        </div>
+
+      </div>
+  </div>
+  <aside class="whites" role="complementary">
+
+<div class="infoanime">
+
+<div class="infoanime_wrap">
+<div class="thumb" itemprop="image" itemscope="" itemtype="https://schema.org/ImageObject">
+<img src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%200%200'%3E%3C/svg%3E" title=" Nano Machine" alt="Komik Nano Machine" itemprop="image" data-lazy-src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/12/Komik-Nano-Machine.jpg?resize=146,208"/><noscript><img src="https://i2.wp.com/bacakomik.my/wp-content/uploads/2023/12/Komik-Nano-Machine.jpg?resize=146,208" title=" Nano Machine" alt="Komik Nano Machine" itemprop="image"/></noscript>
+</div>
+<div class="infox">
+ <h2>Komik Nano Machine Indo</h2>
+<div class="shortcsc"> Nanoteknologi bertemu seni bela diri di Akademi Mashin. Ibu Cheon Yeo-un mungkin bukan salah satu dari enam istri resmi Imam Besar, namun darah ayahnya masih membuatnya memenuhi syarat untuk mendapat kesempatan menduduki posisi Imam Kecil. Akankah suntikan mesin nano misterius dari keturunan masa depan membantu Yeo-un dalam persaingan sengit melawan saudara tirinya yang kuat?</div>
+
+<div class="eps_lst infoch">
+  <div class="listeps">
+
+  
+  <div class="bxcl" id="chapter_list">
+    <ul>
+      <li>
+      <span class="lchx"><a href="https://bacakomik.my/nano-machine-chapter-324/">Chapter <chapter>324</chapter></a></span>
+
+    </li>
+    <li>
+      <span class="lchx"><a href="https://bacakomik.my/nano-machine-chapter-323/">Chapter <chapter>323</chapter></a></span>
+
+    </li>
+    <li>
+      <span class="lchx"><a href="https://bacakomik.my/nano-machine-chapter-322/">Chapter <chapter>322</chapter></a></span>
+
+    </li>
+    <li>
+      <span class="lchx"><a href="https://bacakomik.my/nano-machine-chapter-321/">Chapter <chapter>321</chapter></a></span>
+
+    </li>
+    <li>
+      <span class="lchx"><a href="https://bacakomik.my/nano-machine-chapter-320/">Chapter <chapter>320</chapter></a></span>
+
+    </li>
+</ul>
+</div>
+
+</div>
+</div>
+
+</div>
+</div>
+
+
+</div>
+
+
+</aside>
+
+
+  
+  
+  
+
+  <script type="rocketlazyloadscript">
+    (function ($) {
+      setInterval(() => {
+        $.each($('iframe'), (arr, x) => {
+          let src = $(x).attr('sandbox');
+          if (src && src.match(/(ads-iframe)|(allow-forms allow-popups allow-same-origin allow-scripts)|(rn_ad_native_sczc3)/gi)) {
+            $(x).remove();
+          }
+        });
+      }, 300);
+    })(jQuery);
+
+  </script>
+  <section class="whites" id="Komentar">
+    <div class="widget-title">
+      <h3>Komentar</h3>
+    </div>
+    <div class="commentarea">
+                
+<div id="comments" class="comments-area">
+	<div class="comments-padding">
+		
+		
+</div>
+</div><!-- #comments .comments-area -->
+            </div>
+  </section>
+
+
+
+  </article>
+
+
+</div>
+
+</div>
+<script type="rocketlazyloadscript">var post_id = 65039;
+
+  window.addEventListener('DOMContentLoaded', function () {
+    (function ($) {
+      jQuery.ajax({
+        url: ajaxurl,
+        type: 'post',
+        data: {
+          action: 'dynamic_view_ajax',
+          post_id: post_id
+        },
+        success: function (response) {
+          console.log(response);
+        }
+      });
+    })(jQuery);
+  });
+
+</script></div>
+
+<noscript>
+	<div id="nosc" style="text-align:center"><b style="color:red;">AKTIFKAN JAVASCRIPT UNTUK MELIHAT GAMBAR</b><br>
+		<small style="color:blue">Atau gunakan browser: Google Chrome / Firefox</small>
+	</div>
+</noscript>
+
+<script type="rocketlazyloadscript">
+	$(".inner-switch").on("click", function () {
+		if ($("body").hasClass("dark")) {
+			$("body").removeClass("dark");
+			$(".inner-switch").html('<i class="fa fa-moon-o" aria-hidden="true"></i>');
+			localStorage.setItem('theme-mode', 'light');
+		} else {
+			$("body").addClass("dark");
+			$(".inner-switch").html('<i class="fa fa-sun-o" aria-hidden="true"></i>');
+			localStorage.setItem('theme-mode', 'dark');
+		}
+	});
+</script>
+<script type="rocketlazyloadscript" data-rocket-type='text/javascript'>
+	$('body').on('click', function () {
+		$('body').toggleClass('click');
+	});
+</script>
+
+
+
+
+</main>
+<div class="clear"></div>
+
+
+	<nav class="floating-nav second-nav" itemscope="" itemtype="http://www.schema.org/SiteNavigationElement">
+	    	    	<div class="ch-progress-bar">
+			<div class="bar">
+				<div class="bar-long" style="width: 8.40713%;"></div>
+			</div>
+			</div>
+					<script type="rocketlazyloadscript">
+
+			$(window).scroll(function () {
+
+				if ($(this).scrollTop() > 100) {
+					$('body').addClass('click');
+				} else {
+					$('body').removeClass('click');
+				}
+
+				var o = $(window).scrollTop(),
+					r = $("#Anjay_Ini_utama").outerHeight(!0);
+				$(window).width();
+				o >= $("#Anjay_Ini_utama").offset().top ? o <= $("#Anjay_Ini_utama").offset().top + r ? $(".bar-long").css("width", (o - $(".buat_bar_keknya").offset().top) / r * 100 + "%") : $(".bar-long").css("width", "100%") : $(".bar-long").css("width", "0px")
+			});
+		</script>
+			
+		<div class="centernav navs">
+			<div class="scrolltopcont">
+				<a href="#" class="scrollToTop"><span class="fas fa-chevron-up"></span></a>
+			</div>
+
+			<ul id="menu-float" class="menu"><li id="menu-item-39" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-39"><a href="/" title="Bacakomik"><span itemprop="name"><i class="fas fa-home"></i> Beranda</span></a></li>
+<li id="menu-item-40" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-40"><a href="https://bacakomik.my/komik-terbaru/" title="Update Terbaru"><span itemprop="name"><i class="fas fa-book-open"></i> New Updates</span></a></li>
+<li id="menu-item-87851" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-87851"><a href="/daftar-komik/?list" title="Daftar Isi"><span itemprop="name"><i class="fas fa-list-alt"></i> Daftar Isi</span></a></li>
+<li id="menu-item-42" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-42"><a href="https://bacakomik.my/akun/" title="Akun"><span itemprop="name"><i class="fas fa-user"></i> Akun</span></a></li>
+</ul>		</div>
+	</nav>
+
+
+
+
+<div id="footer">
+
+<div class="footermenu">
+				<div class="menu-footer-container"><ul id="menu-footer" class="menu"><li id="menu-item-43" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-43"><a href="/">Beranda</a></li>
+<li id="menu-item-44" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-44"><a href="https://bacakomik.my/komik-populer/">Komik Populer</a></li>
+<li id="menu-item-45" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-45"><a href="/genres/isekai/">Komik Isekai</a></li>
+<li id="menu-item-46" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-46"><a href="/genres/ecchi/">Komik Dewasa</a></li>
+</ul></div></div>
+<div class='copyright_east'><p>© 2026 by <strong>BacaKomik</strong>. All Rights Reserved.
+		</p></div></div>
+
+<!-- Google tag (gtag.js) -->
+<script type="rocketlazyloadscript" async src="https://www.googletagmanager.com/gtag/js?id=G-4HKZEEW1QJ"></script>
+<script type="rocketlazyloadscript">
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-4HKZEEW1QJ');
+</script>
+
+<script type="rocketlazyloadscript" data-cfasync="false" async data-rocket-type="text/javascript" src="//qk.windowylarvule.com/r01gUXhI8aTo/73945"></script>
+<script type="rocketlazyloadscript" data-cfasync="false" async data-rocket-type="text/javascript" src="//ew.ileacringes.com/r8b89iFS2O9QSPPUO/73945"></script>
+<script type="speculationrules">
+{"prefetch":[{"source":"document","where":{"and":[{"href_matches":"/*"},{"not":{"href_matches":["/wp-*.php","/wp-admin/*","/wp-content/uploads/*","/wp-content/*","/wp-content/plugins/*","/wp-content/themes/komikcast6/*","/*\\?(.+)"]}},{"not":{"selector_matches":"a[rel~=\"nofollow\"]"}},{"not":{"selector_matches":".no-prefetch, .no-prefetch a"}}]},"eagerness":"conservative"}]}
+</script>
+<script id="bookmark_kc-js-extra">
+var bookmark_kc = {"notsupport":"Maaf, browser Anda tidak mendukung fitur ini. Gunakan browser Google Chrome / Mozilla.","limitbookmark":"Maaf, Anda mencapai batas bookmark, hapus manga lain dari bookmark"};
+//# sourceURL=bookmark_kc-js-extra
+</script>
+<script type="rocketlazyloadscript" id="bookmark_kc-js" src="https://bacakomik.my/wp-content/themes/komikcast6/assets/js/bookmark.js?ver=2.3.4" defer></script>
+<script id="live_search-js-extra">
+var eastSe = {"api":"https://bacakomik.my/wp-json/east/search/","history":"https://bacakomik.my/wp-json/east/history/","ajaxurl":"https://bacakomik.my/wp-admin/admin-ajax.php","nonce":"55226e4bd5","url":"https://bacakomik.my","area":".live-search","areahistory":"#historychapter","button":".search-button","more":"View all results","nobookmark":"Tidak ada manga yang dibaca akhir-akhir ini","livesearchactive":"1"};
+//# sourceURL=live_search-js-extra
+</script>
+<script type="rocketlazyloadscript" id="live_search-js" src="https://bacakomik.my/wp-content/themes/komikcast6/assets/js/jquery-autocomplete-min.js?ver=2.3.4" defer></script>
+<script id="theme_main_ajax-js-extra">
+var sunsetajax = {"url":"/wp-admin/admin-ajax.php","loading":"Loading..","afavorites":"Add to favorites","rfavorites":"Remove of favorites","remove":"Remove","error":"Error","enabled":"Enable","loadingplayer":"5","playeradstime":"5","autoplayer":"1","disabled":"Disable"};
+//# sourceURL=theme_main_ajax-js-extra
+</script>
+<script type="rocketlazyloadscript" data-minify="1" id="theme_main_ajax-js" src="https://bacakomik.my/wp-content/cache/min/1/wp-content/themes/komikcast6/assets/js/favorite.js?ver=1786105143" defer></script>
+<script>window.lazyLoadOptions={elements_selector:"img[data-lazy-src],.rocket-lazyload",data_src:"lazy-src",data_srcset:"lazy-srcset",data_sizes:"lazy-sizes",class_loading:"lazyloading",class_loaded:"lazyloaded",threshold:300,callback_loaded:function(element){if(element.tagName==="IFRAME"&&element.dataset.rocketLazyload=="fitvidscompatible"){if(element.classList.contains("lazyloaded")){if(typeof window.jQuery!="undefined"){if(jQuery.fn.fitVids){jQuery(element).parent().fitVids()}}}}}};window.addEventListener('LazyLoad::Initialized',function(e){var lazyLoadInstance=e.detail.instance;if(window.MutationObserver){var observer=new MutationObserver(function(mutations){var image_count=0;var iframe_count=0;var rocketlazy_count=0;mutations.forEach(function(mutation){for(var i=0;i<mutation.addedNodes.length;i++){if(typeof mutation.addedNodes[i].getElementsByTagName!=='function'){continue}
+if(typeof mutation.addedNodes[i].getElementsByClassName!=='function'){continue}
+images=mutation.addedNodes[i].getElementsByTagName('img');is_image=mutation.addedNodes[i].tagName=="IMG";iframes=mutation.addedNodes[i].getElementsByTagName('iframe');is_iframe=mutation.addedNodes[i].tagName=="IFRAME";rocket_lazy=mutation.addedNodes[i].getElementsByClassName('rocket-lazyload');image_count+=images.length;iframe_count+=iframes.length;rocketlazy_count+=rocket_lazy.length;if(is_image){image_count+=1}
+if(is_iframe){iframe_count+=1}}});if(image_count>0||iframe_count>0||rocketlazy_count>0){lazyLoadInstance.update()}});var b=document.getElementsByTagName("body")[0];var config={childList:!0,subtree:!0};observer.observe(b,config)}},!1)</script><script data-no-minify="1" async src="https://bacakomik.my/wp-content/plugins/wp-rocket/assets/js/lazyload/17.5/lazyload.min.js"></script><script type="rocketlazyloadscript">"use strict";function wprRemoveCPCSS(){var preload_stylesheets=document.querySelectorAll('link[data-rocket-async="style"][rel="preload"]');if(preload_stylesheets&&0<preload_stylesheets.length)for(var stylesheet_index=0;stylesheet_index<preload_stylesheets.length;stylesheet_index++){var media=preload_stylesheets[stylesheet_index].getAttribute("media")||"all";if(window.matchMedia(media).matches)return void setTimeout(wprRemoveCPCSS,200)}var elem=document.getElementById("rocket-critical-css");elem&&"remove"in elem&&elem.remove()}window.addEventListener?window.addEventListener("load",wprRemoveCPCSS):window.attachEvent&&window.attachEvent("onload",wprRemoveCPCSS);</script><noscript><link rel="stylesheet" href="https://bacakomik.my/wp-content/cache/min/1/919b6a1e76a9f4aea0593adfd6be0363.css" media="all" data-minify="1" /></noscript><script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a276b8eabb89558c',t:'MTc4NjExMDMzMg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"2ad81fd6b1364aebadff3a5f6874b4ea","r":1}' crossorigin="anonymous"></script>
+</body>
+
+</html>
+<!-- This website is like a Rocket, isn't it? Performance optimized by WP Rocket. Learn more: https://wp-rocket.me -->

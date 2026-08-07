@@ -1,0 +1,20 @@
+{
+  "props": {
+    "pageProps": {
+      "manga_id": "a1c7c817-4e59-43b7-9365-09675a149a6f",
+      "title": "One Piece",
+      "id": "0a6decca-5396-4f3e-84b6-03d2df7054eb",
+      "chapter_title": "Maafkan Aku, Ayah",
+      "chapter_number": "1103",
+      "prev_chapter": "7176b9ed-131b-4fa5-b8c9-91b8916a98aa",
+      "next_chapter": null,
+      "prefix": "a929ae013b24248e6f7e8262cb3bb1a2",
+      "image": [
+        "1-c53d0339b9e941da03465cebba8c18a27808e01082c6d564e532763ac26afc03.jpg",
+        "2-6099e28f902a4b012c32cdadf07a3aade03ee96c24c3717e310a7dc95c67358e.jpg",
+        "3-2272f55549cc33bb05ff5b2d40bbea57b9e5615f8affeb116308338ea5658878.jpg"
+      ]
+    }
+  },
+  "page": "/read/0a6decca-5396-4f3e-84b6-03d2df7054eb"
+}

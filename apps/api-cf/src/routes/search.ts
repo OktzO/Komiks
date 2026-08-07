@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { getAdapter } from '@manga-platform/sources';
+import type { Series } from '@manga-platform/shared';
 import type { Env, Context } from '../lib/context';
 import { getDb, json, sha256Hex } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
@@ -99,20 +100,35 @@ router.get('/search', async (c: Context) => {
   }
 
   const sourcesQueried: string[] = [];
-  const startKomiku = Date.now();
-  let komikuResults: Awaited<ReturnType<NonNullable<ReturnType<typeof getAdapter>['search']>>>;
-  try {
-    komikuResults = await retryUpstream(async () => {
-      const a = getAdapter('komiku', c.env);
-      if (!a) throw new Error('komiku adapter unavailable');
-      sourcesQueried.push('komiku');
-      return a.search({ q, limit });
-    });
-  } catch (e) {
-    komikuResults = [];
-    console.error('[search] komiku failed:', String(e));
+  const sourceDefs: Array<{ key: string; start: number }> = [
+    { key: 'komiku', start: Date.now() },
+    { key: 'bacakomik', start: Date.now() },
+    { key: 'thrive', start: Date.now() },
+  ];
+
+  const settled = await Promise.allSettled(
+    sourceDefs.map(({ key, start }) =>
+      retryUpstream(async () => {
+        const a = getAdapter(key, c.env);
+        if (!a) throw new Error(`${key} adapter unavailable`);
+        sourcesQueried.push(key);
+        return { key, start, results: await a.search({ q, limit }) };
+      })
+    )
+  );
+
+  const resultsBySource: Record<string, Series[]> = {};
+  for (const r of settled) {
+    if (r.status === 'fulfilled') {
+      resultsBySource[r.value.key] = r.value.results;
+      recordHealth(c, r.value.key, r.value.start, true);
+    } else {
+      const reason = String((r as PromiseRejectedResult).reason ?? '');
+      const errKey = reason.includes('bacakomik') ? 'bacakomik' : reason.includes('thrive') ? 'thrive' : 'komiku';
+      recordHealth(c, errKey, Date.now(), false, reason);
+      console.error('[search]', errKey, 'failed:', reason.slice(0, 200));
+    }
   }
-  recordHealth(c, 'komiku', startKomiku, true);
 
   const allResults: Record<string, { data: any; sources: string[] }> = {};
   const addResult = (series: any, source: string) => {
@@ -128,7 +144,9 @@ router.get('/search', async (c: Context) => {
   for (const row of localResults as unknown as Array<Record<string, unknown>>) {
     addResult(row, (row.source as string) || 'local');
   }
-  for (const s of komikuResults) addResult(s, 'komiku');
+  for (const s of resultsBySource.komiku ?? []) addResult(s, 'komiku');
+  for (const s of resultsBySource.bacakomik ?? []) addResult(s, 'bacakomik');
+  for (const s of resultsBySource.thrive ?? []) addResult(s, 'thrive');
 
   const merged = Object.values(allResults).slice(0, limit);
   const payload = { data: merged, total: merged.length, sources_queried: sourcesQueried, cached: false };

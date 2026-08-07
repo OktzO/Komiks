@@ -50,6 +50,19 @@ const recordHealth = (c: Context, source: string, start: number, ok: boolean, er
 const ALLOWED_IMAGE_HOSTS = new Set([
   'img.komiku.org',
   'komiku.org',
+  // BacaKomik image hosts (chapter CDN rotates among these)
+  'imageainewgeneration.lol',
+  'himmga.lat',
+  'gaimgame.pics',
+  'komikcdn.me',
+  'i0.wp.com',
+  'i1.wp.com',
+  'i2.wp.com',
+  'i3.wp.com',
+  // Thrive image hosts
+  'cdn.thrive.moe',
+  'backup.thrive.moe',
+  'kuma.thrive.moe',
 ]);
 
 const isPrivateIp = (host: string): boolean => {
