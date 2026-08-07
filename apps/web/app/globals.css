@@ -123,16 +123,33 @@ a:hover { color: var(--accent); }
 .hamburger[aria-expanded="true"] .bars span:nth-child(1) { transform: translateY(-50%) rotate(45deg); }
 .hamburger[aria-expanded="true"] .bars span:nth-child(2) { transform: translateY(-50%) rotate(-45deg); }
 
-/* Menu panel drop-down */
+/* Menu card floating di bawah hamburger (kanan) */
 #nav-menu {
-  overflow: hidden;
-  max-height: 0;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  padding: 0.5rem;
+  background-color: var(--glass-surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 1.25rem;
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
   opacity: 0;
-  transition: max-height 0.25s ease-out, opacity 0.2s ease-out;
+  transform: translateY(-8px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.2s ease-out, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 60;
 }
 #nav-menu.open {
-  max-height: 400px;
   opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+#nav-menu a {
+  display: block;
+  border-radius: 0.75rem;
 }
 @media (prefers-reduced-motion: reduce) {
   #navbar, #navbar .nav-island, .hamburger .bars span, #nav-menu { transition: none !important; }

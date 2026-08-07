@@ -59,19 +59,17 @@ export function Navbar() {
             <span />
           </span>
         </button>
-      </div>
-      <nav id="nav-menu" className={open ? 'open' : ''} aria-hidden={!open}>
-        <div className="nav-island mx-auto mt-2 flex flex-col px-3" style={{ maxWidth: 'var(--nav-width-active)' }}>
+        <nav id="nav-menu" className={open ? 'open' : ''} aria-hidden={!open}>
           {LINKS.map(l => (
-            <Link key={l.href} href={l.href} className="px-3 py-3 text-base text-secondary hover:text-primary rounded-lg hover:bg-bg-secondary transition-colors">
+            <Link key={l.href} href={l.href} className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">
               {l.label}
             </Link>
           ))}
-          <Link href="/login" className="my-2 px-3 py-2.5 text-base text-primary border border-border-default rounded-lg hover:bg-bg-secondary transition-colors text-center">
+          <Link href="/login" className="mt-1 px-3 py-2.5 text-base text-primary border border-border-default hover:bg-bg-secondary transition-colors text-center">
             Masuk
           </Link>
-        </div>
-      </nav>
+        </nav>
+      </div>
     </header>
   );
 }
