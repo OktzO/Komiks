@@ -1,9 +1,8 @@
 {
   "type": "Prerender",
-  "expiration": 600,
-  "sourcePath": "/",
+  "expiration": 60,
   "group": 4,
-  "bypassToken": "6d0a3eb625f49f7e2b05e5d1fe476b79",
+  "bypassToken": "e21db14c29c46aa70d7d42efdc6628a0",
   "experimentalBypassFor": [
     {
       "type": "header",
@@ -18,11 +17,12 @@
   "fallback": {
     "type": "FileFsRef",
     "mode": 33188,
-    "fsPath": "index.prerender-fallback.html"
+    "fsPath": "status.rsc.prerender-fallback.rsc"
   },
   "initialHeaders": {
-    "x-next-cache-tags": "_N_T_/layout,_N_T_/page,_N_T_/",
-    "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch"
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/status/layout,_N_T_/status/page,_N_T_/status",
+    "vary": "RSC, Next-Router-State-Tree, Next-Router-Prefetch",
+    "content-type": "text/x-component"
   },
   "allowQuery": []
 }

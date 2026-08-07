@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { SourceBadge } from './SourceBadge';
 
-export function MangaCard({ manga, source = 'mangadex', sources }: { manga: { id: string; title: string; cover: string | null; slug: string }; source?: string; sources?: string[] }) {
+export function MangaCard({ manga, source = 'komiku', sources }: { manga: { id: string; title: string; cover: string | null; slug: string }; source?: string; sources?: string[] }) {
   return (
-    <Link href={`/${source}/s/${manga.slug}?id=${manga.id}`} className="group block">
+    <Link href={`/${source}/s/${manga.slug}?id=${manga.id}`} prefetch={false} className="group block">
       <div className="aspect-[3/4] w-full overflow-hidden rounded border border-subtle bg-card">
         {manga.cover ? (
           // eslint-disable-next-line @next/next/no-img-element

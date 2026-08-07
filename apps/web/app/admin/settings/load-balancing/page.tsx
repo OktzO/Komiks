@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 
@@ -12,6 +12,9 @@ export default function LbAdminPage() {
   const [status, setStatus] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<'settings' | 'accounts' | 'origins' | 'status'>('settings');
+  const [provisionStatus, setProvisionStatus] = useState<any>(null);
+  const [provisioning, setProvisioning] = useState(false);
+  const provisionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const headers = () => ({ 'Content-Type': 'application/json', 'x-admin-stepup': stepup });
 
@@ -50,6 +53,49 @@ export default function LbAdminPage() {
     });
     loadAll();
   };
+
+  const provisionAccount = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const label = f.get('provision_label') as string;
+    const token = f.get('provision_token') as string;
+    const workerName = (f.get('provision_worker_name') as string) || `manga-api-${crypto.randomUUID().slice(0, 8)}`;
+    setProvisioning(true);
+    setProvisionStatus(null);
+    try {
+      const res = await fetch(`${API_URL}/api/admin/lb/accounts/provision`, {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ label, cfApiToken: token, workerName }),
+      });
+      const j = await res.json() as any;
+      const jobId = j.job_id;
+      if (!jobId) throw new Error('no job_id returned');
+      const poll = setInterval(async () => {
+        try {
+          const st = await fetch(`${API_URL}/api/admin/lb/accounts/${jobId}/provision-status`, { headers: headers() });
+          if (st.ok) {
+            const sj = await st.json() as any;
+            setProvisionStatus(sj.data);
+            if (sj.data?.status === 'completed' || sj.data?.status === 'failed') {
+              clearInterval(poll);
+              provisionPollRef.current = null;
+              setProvisioning(false);
+              loadAll();
+            }
+          }
+        } catch {}
+      }, 3000);
+      provisionPollRef.current = poll;
+    } catch (e) { setProvisioning(false); setError(String(e)); }
+  };
+
+  // Cleanup any pending provision poll interval on unmount — earlier code
+  // leaked the interval, continuing to fire fetches to a dead Worker.
+  useEffect(() => {
+    return () => {
+      if (provisionPollRef.current) clearInterval(provisionPollRef.current);
+    };
+  }, []);
 
   const addOrigin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -115,6 +161,27 @@ export default function LbAdminPage() {
 
       {tab === 'accounts' && (
         <div className="space-y-4">
+          <div className="bg-card border border-subtle rounded p-4 space-y-2">
+            <h2 className="text-sm font-medium">⚡ Auto-Provision Akun CF Baru</h2>
+            <p className="text-xs text-muted">Bikin D1 + Worker baru otomatis di akun Cloudflare lain. Token butuh permission: Workers Scripts:Edit, D1:Edit, KV:Edit, R2:Edit.</p>
+            <form onSubmit={provisionAccount} className="space-y-2">
+              <input name="provision_label" placeholder="Label akun" required className="w-full bg-base border border-border-default rounded px-3 py-2 text-primary text-sm" />
+              <input name="provision_worker_name" placeholder="Worker name (auto)" className="w-full bg-base border border-border-default rounded px-3 py-2 text-primary text-sm" />
+              <input name="provision_token" type="password" placeholder="CF API Token" required className="w-full bg-base border border-border-default rounded px-3 py-2 text-primary text-sm" />
+              <button type="submit" disabled={provisioning} className="px-4 py-1.5 border border-border-default rounded text-sm hover:bg-elevated disabled:opacity-50">
+                {provisioning ? 'Provisioning...' : 'Provision'}
+              </button>
+            </form>
+            {provisionStatus && (
+              <div className="text-xs space-y-1">
+                <div className={provisionStatus.status === 'completed' ? 'text-success' : provisionStatus.status === 'failed' ? 'text-error' : 'text-secondary'}>
+                  Status: {provisionStatus.status} — {provisionStatus.step}
+                </div>
+                {provisionStatus.workerUrl && <div className="text-success">Worker URL: {provisionStatus.workerUrl}</div>}
+                {provisionStatus.error && <div className="text-error">Error: {provisionStatus.error}</div>}
+              </div>
+            )}
+          </div>
           <form onSubmit={addAccount} className="bg-card border border-subtle rounded p-4 space-y-2">
             <h2 className="text-sm font-medium">+ Tambah Akun</h2>
             <input name="label" placeholder="Label" required className="w-full bg-base border border-border-default rounded px-3 py-2 text-primary text-sm" />

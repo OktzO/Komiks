@@ -1,14 +1,13 @@
 export const runtime = 'edge';
+export const revalidate = 60;
 import { API_URL, type Series } from '@/lib/api';
 import { MangaCard } from '@/components/MangaCard';
-
-export const dynamic = 'force-dynamic';
 
 export default async function BookmarksPage() {
   let series: Series[] = [];
   let error: string | null = null;
   try {
-    const res = await fetch(`${API_URL}/api/user/bookmarks`, { cache: 'no-store', credentials: 'include' });
+    const res = await fetch(`${API_URL}/api/user/bookmarks`, { next: { revalidate: 60 }, credentials: 'include' });
     if (res.status === 401) error = 'Masuk untuk lihat bookmark.';
     else if (!res.ok) throw new Error(`HTTP ${res.status}`);
     else series = (await res.json()).data || [];

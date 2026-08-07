@@ -1,0 +1,1 @@
+var t={},_=(l,o,r)=>(t.__chunk_6094=(a,s,e)=>{"use strict";e.d(s,{Z:()=>n});let n=(0,e(8639).D)(String.raw`/workspaces/Manga/node_modules/next/dist/esm/client/link.js#default`)},t);export{_ as __getNamedExports};

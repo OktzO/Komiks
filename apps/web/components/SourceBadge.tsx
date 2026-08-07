@@ -1,23 +1,40 @@
-const SOURCE_LABELS: Record<string, string> = {
-  komiku: 'Komiku',
-  mangadex: 'MangaDex',
+// Source badge: shows the source site logo image instead of plain text.
+// Komiku = komiku.org favicon; bacakomik/thrive placeholder (Part 4 refines).
+const SOURCE_LOGOS: Record<string, string> = {
+  komiku: 'https://komiku.org/asset/img/ico.ico',
+  bacakomik: '',
+  thrive: '',
 };
 
-const SOURCE_COLORS: Record<string, string> = {
-  komiku: 'bg-blue-900 text-blue-200 border-blue-700',
-  mangadex: 'bg-orange-900 text-orange-200 border-orange-700',
+const SOURCE_LABELS: Record<string, string> = {
+  komiku: 'Komiku',
+  bacakomik: 'BacaKomik',
+  thrive: 'Thrive',
+};
+
+const SOURCE_RING: Record<string, string> = {
+  komiku: 'ring-blue-500/40',
+  bacakomik: 'ring-green-500/40',
+  thrive: 'ring-purple-500/40',
 };
 
 export function SourceBadge({ sources }: { sources: string[] }) {
   if (!sources || sources.length === 0) return null;
   return (
-    <div className="flex gap-1 flex-wrap">
+    <div className="flex gap-1.5 flex-wrap items-center mt-1">
       {sources.map((s) => (
-        <span
-          key={s}
-          className={`text-[10px] px-1.5 py-0.5 rounded border ${SOURCE_COLORS[s] ?? 'bg-gray-800 text-gray-300 border-gray-600'}`}
-        >
-          {SOURCE_LABELS[s] ?? s}
+        <span key={s} className="inline-flex items-center gap-1 text-[10px] text-muted">
+          {SOURCE_LOGOS[s] ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={SOURCE_LOGOS[s]}
+              alt={SOURCE_LABELS[s] ?? s}
+              width={14}
+              height={14}
+              className={`h-3.5 w-3.5 rounded-sm ring-1 ${SOURCE_RING[s] ?? 'ring-white/10'} object-contain bg-white/5`}
+            />
+          ) : null}
+          <span>{SOURCE_LABELS[s] ?? s}</span>
         </span>
       ))}
     </div>

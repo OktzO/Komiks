@@ -3,17 +3,17 @@
   "target": "preview",
   "argv": [
     "/usr/local/share/nvm/versions/node/v24.14.0/bin/node",
-    "/home/codespace/.npm/_npx/69f9afb961c37556/node_modules/.bin/vc",
+    "/workspaces/Manga/node_modules/.bin/vercel",
     "build"
   ],
-  "cliVersion": "58.5.1",
+  "cliVersion": "58.7.1",
   "detectedFramework": {
     "status": "skipped"
   },
   "builds": [
     {
       "require": "@vercel/next",
-      "requirePath": "/home/codespace/.npm/_npx/69f9afb961c37556/node_modules/@vercel/next/dist/index",
+      "requirePath": "/workspaces/Manga/node_modules/@vercel/next/dist/index",
       "apiVersion": 2,
       "src": "package.json",
       "use": "@vercel/next",
