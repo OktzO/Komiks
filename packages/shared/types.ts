@@ -19,7 +19,7 @@ export const SeriesSchema = z.object({
   id: z.number().int().positive().optional(),
   slug: z.string().min(1),
   external_id: z.string().nullable().optional(),
-  source: z.string().default('mangadex'),
+  source: z.string().default('komiku'),
   title: z.string().min(1),
   synopsis: z.string().nullable().optional(),
   type: SeriesType,
