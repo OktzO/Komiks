@@ -229,6 +229,47 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
   }
 });
 
+// Aggregated sources for a manga: GET /api/reader/:source/series/:sourceId/sources
+// Uses manga_source_link aggregation (D1). Returns all sources linked to the
+// same canonical manga, plus the canonical slug.
+router.get('/:source/series/:sourceId/sources', async (c: Context) => {
+  const { sourceId } = c.req.param();
+  const cacheKey = `sources:${sourceId}`;
+  const cached = await cacheGet<{ data: unknown }>(c, cacheKey);
+  if (cached) return c.json(cached);
+
+  const db = getDb(c);
+  try {
+    // Resolve canonical series id via source link (source+slug) OR legacy row.
+    const { source } = c.req.param();
+    const manga = await db.getMangaBySource(source, sourceId).catch(() => null);
+    let canonicalId: number | null = null;
+    if (manga) {
+      canonicalId = manga.id;
+    } else {
+      const row = await c.env.DB.prepare('SELECT id FROM series WHERE slug = ?1 LIMIT 1').bind(sourceId).first<{ id: number }>();
+      canonicalId = row?.id ?? null;
+    }
+    if (!canonicalId) return c.json({ data: { sources: [], canonicalSlug: null } });
+
+    const links = await db.getSourceLinksByManga(canonicalId);
+    const canonicalRow = await c.env.DB.prepare('SELECT slug FROM series WHERE id = ?1').bind(canonicalId).first<{ slug: string }>();
+    const data = {
+      sources: links.map((l) => ({
+        source: l.source,
+        sourceSlug: l.source_slug,
+        hasChapterList: l.has_chapter_list === 1,
+        chapterCount: l.chapter_count,
+      })),
+      canonicalSlug: canonicalRow?.slug ?? null,
+    };
+    cachePut(c, cacheKey, { data }, 600);
+    return c.json({ data });
+  } catch {
+    return c.json({ data: { sources: [], canonicalSlug: null } });
+  }
+});
+
 // Chapter detail + proxy page URLs: GET /api/reader/:source/chapter/:chapterId
 router.get('/:source/chapter/:chapterId', async (c: Context) => {
   const { source, chapterId } = c.req.param();

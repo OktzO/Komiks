@@ -1,6 +1,7 @@
 export const runtime = 'edge';
 import { getChapter, API_URL, r2UrlFor } from '@/lib/api';
 import { Reader } from '@/components/Reader';
+import { SourceSwitcher } from '@/components/SourceSwitcher';
 import Link from 'next/link';
 
 export const revalidate = 300;
@@ -24,6 +25,13 @@ export default async function ChapterReader({ params }: { params: { source: stri
 
   return (
     <main className="max-w-3xl mx-auto px-4 py-6">
+      <SourceSwitcher
+        currentSource={params.source}
+        sourceId={params.slug}
+        canonicalSlug={params.slug}
+        chapterNumber={chapter.chapter_number ?? 0}
+        apiUrl={API_URL}
+      />
       <div className="mb-4">
         <Link href={`/${params.source}/s/${chapter.series_slug}`} className="text-secondary text-sm hover:text-accent">← Daftar Chapter</Link>
         <h1 className="text-lg font-medium mt-1">Chapter {chapter.chapter_number}{chapter.title ? `: ${chapter.title}` : ''}</h1>
