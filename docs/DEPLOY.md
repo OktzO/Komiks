@@ -17,7 +17,6 @@ Update `apps/api-cf/wrangler.toml` dengan ID asli.
 cd apps/api-cf
 npx wrangler secret put LB_ENCRYPTION_KEY     # 32-byte random string
 npx wrangler secret put ADMIN_PASSWORD_HASH   # password admin untuk step-up
-npx wrangler secret put MANGADEX_API_KEY      # MangaDex personal API token
 # Opsional:
 npx wrangler secret put GOOGLE_CLIENT_ID
 npx wrangler secret put GOOGLE_CLIENT_SECRET
@@ -55,8 +54,8 @@ npx wrangler pages deploy .vercel/output/static --project-name manga-web
 ## 7. Verifikasi
 - Buka `https://<domain>/` → home manga Indonesia
 - `/search?q=one+piece` → hasil pencarian
-- `/mangadex/s/<slug>?id=<mangaId>` → detail + chapter list
-- `/mangadex/s/<slug>/<chapterId>` → reader (gambar proxy)
+- `/komiku/s/<slug>?id=<mangaId>` → detail + chapter list
+- `/komiku/s/<slug>/<chapterId>` → reader (gambar proxy)
 - `/login` `/register` → auth
 - `/admin/settings/load-balancing` → panel LB (password admin)
 
@@ -66,11 +65,10 @@ npx wrangler pages deploy .vercel/output/static --project-name manga-web
 cd apps/api-cf && npx wrangler dev --port 8787 --local
 # Web (terminal lain)
 cd apps/web && npx next dev --port 3000
-# .dev.vars sudah ada MANGADEX_API_KEY
 ```
 
 ## Catatan
-- Gambar MangaDex **diproxy server-side**, tidak di-rehost ke R2 (ToS MangaDex)
+- Gambar Komiku **diproxy server-side** + rehost cache-aside ke R2 (hash ring); sumber lain tetap 100% proxy
 - Token LB dienkripsi AES-GCM at-rest, key = Worker secret
 - Rate limit 60 req/min per IP via KV
 - Cron health-check jalan tiap 1 menit saat LB mode=on

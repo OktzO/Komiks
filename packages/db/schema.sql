@@ -7,8 +7,8 @@
 CREATE TABLE series (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   slug          TEXT    UNIQUE NOT NULL,
-  external_id   TEXT,                       -- source external id (e.g. mangadex manga id)
-  source        TEXT    NOT NULL DEFAULT 'mangadex',
+  external_id   TEXT,                       -- source external id (e.g. komiku slug)
+  source        TEXT    NOT NULL DEFAULT 'komiku',
   title         TEXT    NOT NULL,
   synopsis      TEXT,                       -- mapped to FTS5 `description` column
   type          TEXT    NOT NULL CHECK (type IN ('manga', 'manhwa', 'manhua')),

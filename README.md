@@ -1,6 +1,6 @@
 # 📚 Manga Reader Platform
 
-Platform baca manga/manhwa/manhua bahasa Indonesia dengan sumber dari MangaDex API. Dibangun dengan Next.js (Cloudflare Pages) + Cloudflare Workers + D1 + KV + R2.
+Platform baca manga/manhwa/manhua bahasa Indonesia dengan sumber dari Komiku (primary) + BacaKomik + Thrive. Dibangun dengan Next.js (Cloudflare Pages) + Cloudflare Workers + D1 + KV + R2.
 
 ![Status](https://img.shields.io/badge/status-MVP-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Runtime](https://img.shields.io/badge/runtime-Cloudflare%20Workers-orange)
 
@@ -23,8 +23,8 @@ Platform baca manga/manhwa/manhua bahasa Indonesia dengan sumber dari MangaDex A
 ## ✨ Fitur
 
 ### Reader
-- ✅ Baca manga Indonesia dari MangaDex (scanlation fan-translation)
-- ✅ Image proxy server-side (tidak rehost, ToS MangaDex compliant)
+- ✅ Baca manga Indonesia dari Komiku (primary)
+- ✅ Image proxy server-side
 - ✅ Mode scroll & mode halaman (toggle di reader)
 - ✅ Lazy load gambar
 - ✅ KV cache dengan stale-while-revalidate
@@ -71,7 +71,7 @@ Platform baca manga/manhwa/manhua bahasa Indonesia dengan sumber dari MangaDex A
 | Cache | Cloudflare KV |
 | Storage | Cloudflare R2 |
 | Auth | Custom (PBKDF2 + Web Crypto, session KV) |
-| Search | MangaDex API + KV cache |
+| Search | Komiku + KV cache |
 | Load Balancing | Custom router (KV-based) + opsi Native CF LB |
 | Encryption | AES-GCM via Web Crypto |
 | Deployment | Cloudflare Pages (web) + Workers (API) |
@@ -157,9 +157,6 @@ manga-platform/
 │   │
 │   ├── sources/                         # Source adapter registry
 │   │   ├── index.ts                     # getAdapter(sourceKey, env?)
-│   │   ├── mangadex/
-│   │   │   ├── client.ts                # MangaDex API fetch wrappers
-│   │   │   └── index.ts                 # Adapter (search, getSeries, chapters, pages)
 │   │   ├── test/
 │   │   │   └── mapping.test.mjs         # Fixture-based self-check
 │   │   ├── package.json
@@ -198,12 +195,12 @@ manga-platform/
 | Method | Path | Deskripsi |
 |--------|------|-----------|
 | GET | `/api/health` | Health check (`{status:"ok", ts}`) |
-| GET | `/api/search?q=<query>` | Search manga (MangaDex + KV cache 120s) |
+| GET | `/api/search?q=<query>` | Search manga (Komiku + KV cache 120s) |
 | GET | `/api/series?genre=&page=&limit=` | List series (D1) |
 | GET | `/api/series/:slug` | Series detail by slug (D1 + KV) |
 | GET | `/api/series/:slug/:chapterId` | Chapter detail (D1) |
 
-### Reader (MangaDex)
+### Reader
 | Method | Path | Deskripsi |
 |--------|------|-----------|
 | GET | `/api/reader/:source/series/:sourceId` | Series detail from source (KV 600s) |
@@ -281,7 +278,6 @@ series_search (title, description)  -- shadow table via triggers, synopsis → d
 ```env
 LB_ENCRYPTION_KEY=<32-byte random string>
 ADMIN_PASSWORD_HASH=<password admin untuk step-up>
-MANGADEX_API_KEY=<MangaDex personal API token>
 ALLOWED_ORIGINS=http://localhost:3000
 GOOGLE_CLIENT_ID=              # opsional
 GOOGLE_CLIENT_SECRET=          # opsional
@@ -291,7 +287,6 @@ GOOGLE_CLIENT_SECRET=          # opsional
 ```bash
 wrangler secret put LB_ENCRYPTION_KEY
 wrangler secret put ADMIN_PASSWORD_HASH
-wrangler secret put MANGADEX_API_KEY
 ```
 
 ### Frontend (`apps/web/.env.local`)
@@ -318,7 +313,6 @@ npm install
 
 # 3. Copy secrets template
 cp apps/api-cf/.dev.vars.example apps/api-cf/.dev.vars
-# Edit .dev.vars: isi MANGADEX_API_KEY
 
 # 4. (Opsional) Setup local D1
 npx wrangler d1 execute manga-db --local --file=packages/db/schema.sql
@@ -343,7 +337,7 @@ Buka http://localhost:3000
 # D1 schema smoke test
 node scripts/smoke-db.mjs
 
-# MangaDex adapter self-check
+# Source adapter self-check
 node packages/sources/test/mapping.test.mjs
 
 # LB crypto roundtrip
@@ -380,7 +374,6 @@ npx wrangler r2 bucket create manga-assets
 cd apps/api-cf
 npx wrangler secret put LB_ENCRYPTION_KEY
 npx wrangler secret put ADMIN_PASSWORD_HASH
-npx wrangler secret put MANGADEX_API_KEY
 
 # 4. Migrasi D1
 npx wrangler d1 execute manga-db --file=../../packages/db/schema.sql --remote
@@ -436,11 +429,10 @@ Layout: minimalis, border tipis 1px (bukan shadow tebal), skeleton loading untuk
 
 ## ⚖️ Legal
 
-Konten dari MangaDex = **scanlation fan-translation**, mayoritas tanpa lisensi resmi. Platform ini:
-- ✅ **Reader saja** — tidak menyimpan/hosting gambar sendiri
-- ✅ **Proxy stream** — Worker fetch URL sementara MangaDex@Home, stream ke browser
-- ✅ **Tidak rehost** — R2 tidak menyimpan gambar MangaDex (ToS compliant)
-- ✅ **Attribution** — metadata dari MangaDex API
+Konten bersumber dari Komiku (primary) + BacaKomik + Thrive. Platform ini:
+- ✅ **Reader saja** — tidak menyimpan/hosting gambar sendiri untuk sumber non-Komiku
+- ✅ **Proxy stream** — Worker fetch URL gambar, stream ke browser
+- ✅ **Rehost** — gambar Komiku di-rehost ke R2 (cache-aside, hash ring)
 
 Pengguna platform bertanggung jawab atas kepatuhan hukum di yurisdiksi masing-masing.
 

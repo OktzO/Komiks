@@ -12,7 +12,6 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  MANGADEX_API_KEY?: string;
   ADMIN_PASSWORD_HASH?: string;
   ADMIN_PASSWORD?: string;
   SCRAPE_API_KEY?: string;
