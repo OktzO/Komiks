@@ -55,7 +55,7 @@ export const s3SignedHeaders = async (opts: {
     `host:${host}\n` +
     `x-amz-content-sha256:${payloadHash}\n` +
     `x-amz-date:${amzDate}\n`;
-  const signedHeaders = 'host;content-type;x-amz-content-sha256;x-amz-date';
+  const signedHeaders = 'content-type;host;x-amz-content-sha256;x-amz-date';
   const canonicalRequest = `PUT\n${path}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
   const scope = `${dateStamp}/${REGION}/${SERVICE}/aws4_request`;
   const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalRequest)))}`;

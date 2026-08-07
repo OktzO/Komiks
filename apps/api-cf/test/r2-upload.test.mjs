@@ -40,7 +40,7 @@ test('s3SignedHeaders deterministic + structure', async () => {
   const h1 = await s3SignedHeaders(opts);
   const h2 = await s3SignedHeaders(opts);
   assert.deepEqual(h1, h2, 'same inputs → same headers');
-  assert.match(h1.Authorization, /^AWS4-HMAC-SHA256 Credential=AK1\/\d{8}\/auto\/s3\/aws4_request, SignedHeaders=host;content-type;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/);
+  assert.match(h1.Authorization, /^AWS4-HMAC-SHA256 Credential=AK1\/\d{8}\/auto\/s3\/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/);
   assert.equal(h1['x-amz-content-sha256'], 'UNSIGNED-PAYLOAD');
   assert.ok(h1['x-amz-date'], 'has x-amz-date');
   assert.ok(h1.Host.startsWith('acc1.r2.cloudflarestorage.com'), `host ${h1.Host}`);

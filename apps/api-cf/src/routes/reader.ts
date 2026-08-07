@@ -320,6 +320,21 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   headers.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
   setCorsHeaders(c.env, headers, c.req.header('origin'));
 
+  // Cache-aside R2 (komiku saja — MangaDex tetap 100% proxy, ToS):
+  // clone stream SEBELUM Response dibuat — setelah `new Response(upstream.body)`
+  // stream terkunci dan clone() melempar "ReadableStream locked to a reader".
+  // Upload di background; request berikutnya diserve langsung dari R2 tanpa
+  // lewat Worker. Upload idempoten (key sama → overwrite).
+  let r2Upload: Promise<void> | null = null;
+  if (source === 'komiku') {
+    const slug = await resolveKomikuSlug(c, chapterId);
+    const body = upstream.clone().body;
+    if (slug && body) {
+      const contentType = upstream.headers.get('content-type') || 'image/jpeg';
+      r2Upload = uploadToR2(c, { slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body }).catch(() => {});
+    }
+  }
+
   const response = new Response(upstream.body, { status: 200, headers });
 
   // Store in Cloudflare edge cache for subsequent requests
@@ -328,20 +343,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
     c.executionCtx.waitUntil(cache.put(c.req.raw, response.clone()).catch(() => {}));
   }
 
-  // Cache-aside R2: simpan ke bucket target (hash slug) di background supaya
-  // request berikutnya diserve langsung dari R2 tanpa lewat Worker. Komiku
-  // saja: MangaDex tetap 100% proxy (ToS). Upload = clone stream — response
-  // asli tetap streaming ke client tanpa terpengaruh.
-  if (source === 'komiku') {
-    const slug = await resolveKomikuSlug(c, chapterId);
-    const body = upstream.clone().body;
-    if (slug && body) {
-      const contentType = upstream.headers.get('content-type') || 'image/jpeg';
-      c.executionCtx.waitUntil(
-        uploadToR2(c, { slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body }).catch(() => {})
-      );
-    }
-  }
+  if (r2Upload) c.executionCtx.waitUntil(r2Upload);
 
   return response;
 });
