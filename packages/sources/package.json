@@ -8,10 +8,11 @@
     ".": "./index.ts",
     "./komiku": "./komiku/index.ts",
     "./bacakomik": "./bacakomik/index.ts",
-    "./thrive": "./thrive/index.ts"
+    "./thrive": "./thrive/index.ts",
+    "./manhwaindo": "./manhwaindo/index.ts"
   },
   "scripts": {
-    "test": "tsx test/thrive.test.mjs && tsx test/bacakomik.test.mjs"
+    "test": "tsx test/thrive.test.mjs && tsx test/bacakomik.test.mjs && tsx test/manhwaindo.test.mjs"
   },
   "dependencies": {
     "@manga-platform/shared": "0.1.0",
