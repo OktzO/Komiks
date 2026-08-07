@@ -104,6 +104,7 @@ router.get('/search', async (c: Context) => {
     { key: 'komiku', start: Date.now() },
     { key: 'bacakomik', start: Date.now() },
     { key: 'thrive', start: Date.now() },
+    { key: 'manhwaindo', start: Date.now() },
   ];
 
   const settled = await Promise.allSettled(
@@ -147,6 +148,7 @@ router.get('/search', async (c: Context) => {
   for (const s of resultsBySource.komiku ?? []) addResult(s, 'komiku');
   for (const s of resultsBySource.bacakomik ?? []) addResult(s, 'bacakomik');
   for (const s of resultsBySource.thrive ?? []) addResult(s, 'thrive');
+  for (const s of resultsBySource.manhwaindo ?? []) addResult(s, 'manhwaindo');
 
   const merged = Object.values(allResults).slice(0, limit);
   const payload = { data: merged, total: merged.length, sources_queried: sourcesQueried, cached: false };

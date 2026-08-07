@@ -59,6 +59,9 @@ const ALLOWED_IMAGE_HOSTS = new Set([
   'i1.wp.com',
   'i2.wp.com',
   'i3.wp.com',
+  // ManhwaIndo image hosts
+  'kacu.gmbr.pro',
+  'upload.gmbr.pro',
   // Thrive image hosts
   'cdn.thrive.moe',
   'backup.thrive.moe',
