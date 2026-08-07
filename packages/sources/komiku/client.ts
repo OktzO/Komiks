@@ -1,5 +1,5 @@
 // Komiku HTTP client: robots.txt fetch + raw HTML fetch (no puppeteer for static pages).
-const BASE = 'https://komiku.id';
+const BASE = 'https://komiku.org';
 
 export interface RobotsResult {
   allowed: boolean;

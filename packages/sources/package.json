@@ -6,7 +6,6 @@
   "main": "index.ts",
   "exports": {
     ".": "./index.ts",
-    "./mangadex": "./mangadex/index.ts",
     "./komiku": "./komiku/index.ts"
   },
   "dependencies": {
