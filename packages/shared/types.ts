@@ -192,3 +192,27 @@ export const ImageHashRowSchema = z.object({
   created_at: z.number().int().optional()
 });
 export type ImageHashRow = z.infer<typeof ImageHashRowSchema>;
+
+// ---- Manga aggregation (multi-source) --------------------------------------
+export const SourceLinkSchema = z.object({
+  id: z.number().int().optional(),
+  manga_id: z.number().int(),
+  source: z.string(),
+  source_slug: z.string(),
+  has_chapter_list: z.number().int().min(0).max(1).default(1),
+  chapter_count: z.number().int().default(0),
+  last_scraped_at: z.number().int().nullable().optional()
+});
+export type SourceLink = z.infer<typeof SourceLinkSchema>;
+
+export const MergeQueueItemSchema = z.object({
+  id: z.number().int(),
+  source: z.string(),
+  source_slug: z.string(),
+  title: z.string(),
+  candidate_ids: z.string(), // JSON array string of series.id
+  confidence: z.number(),
+  status: z.enum(['pending', 'merged', 'rejected']),
+  created_at: z.number().int()
+});
+export type MergeQueueItem = z.infer<typeof MergeQueueItemSchema>;

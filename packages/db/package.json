@@ -5,10 +5,15 @@
   "type": "module",
   "main": "index.ts",
   "exports": {
-    ".": "./index.ts"
+    ".": "./index.ts",
+    "./src/matching": "./src/matching.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240802.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "tsx": "^4.19.0"
+  },
+  "scripts": {
+    "test": "tsx test/matching.test.mjs"
   }
 }

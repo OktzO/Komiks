@@ -67,10 +67,43 @@ router.post('/scrape', async (c: Context) => {
         return;
       }
 
-      // Upsert series + chapters to D1
+      // ---- Aggregation: dedup against existing canonical series ----
+      const { matchCandidate } = await import('@manga-platform/db/src/matching');
+      const srcSlug = result.series.slug;
+
+      // 1. Existing link for (source, source_slug)? → reuse canonical, skip match.
+      const existing = await db.getMangaBySource(body.source, srcSlug);
+      let canonicalSlug = existing?.slug ?? null;
+
+      if (!canonicalSlug) {
+        // 2. Fuzzy match against all series titles.
+        const all = await db.getAllSeriesTitles();
+        const match = matchCandidate(result.series.title, all.map((s) => ({
+          id: s.id,
+          title: s.title,
+          alt_titles: s.alt_titles ? JSON.parse(s.alt_titles) as string[] : undefined,
+        })));
+        if (match.type === 'exact' || match.type === 'fuzzy') {
+          const matched = await db.getSeriesById(match.id);
+          if (matched) canonicalSlug = matched.slug;
+        } else if (match.type === 'queue') {
+          await db.addMergeQueue({
+            source: body.source,
+            sourceSlug: srcSlug,
+            title: result.series.title,
+            candidateIds: match.candidateIds,
+            confidence: match.confidence,
+          });
+        }
+      }
+
+      const finalSlug = canonicalSlug ?? srcSlug;
+      const isNew = !canonicalSlug;
+
+      // Upsert canonical series (keep the FIRST source's row as canonical when new).
       await db.upsertSeries({
-        slug: result.series.slug,
-        external_id: result.series.external_id ?? null,
+        slug: finalSlug,
+        external_id: result.series.external_id ?? (isNew ? srcSlug : null),
         source: body.source,
         title: result.series.title,
         synopsis: result.series.synopsis ?? null,
@@ -83,6 +116,25 @@ router.post('/scrape', async (c: Context) => {
         source_url: ((result.series as Record<string, unknown>).source_url as string) ?? null,
         language: ((result.series as Record<string, unknown>).language as string) ?? null,
       });
+
+      // Record source link (source → canonical manga).
+      const canonicalRow = await db.getSeriesBySlug(finalSlug);
+      if (canonicalRow?.id) {
+        await db.upsertSourceLink({
+          mangaId: canonicalRow.id,
+          source: body.source,
+          sourceSlug: srcSlug,
+          hasChapterList: result.chapters.length > 0 ? 1 : 0,
+          chapterCount: result.chapters.length,
+          lastScrapedAt: Math.floor(Date.now() / 1000),
+        });
+      }
+
+      // Migrate chapter rows to the canonical slug when merged.
+      if (!isNew && finalSlug !== srcSlug) {
+        await c.env.DB.prepare('UPDATE chapters SET series_slug = ?1 WHERE series_slug = ?2')
+          .bind(finalSlug, srcSlug).run();
+      }
 
       // Fetch cover image → R2 → pHash → image_hashes
       if (result.coverImageUrl) {
