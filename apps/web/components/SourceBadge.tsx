@@ -1,42 +1,51 @@
-// Source badge: shows the source site logo image instead of plain text.
-// Komiku = komiku.org favicon; bacakomik/thrive placeholder (Part 4 refines).
-const SOURCE_LOGOS: Record<string, string> = {
-  komiku: 'https://komiku.org/asset/img/ico.ico',
-  bacakomik: '',
-  thrive: '',
+// Source badge: icon-only. No text label — accessibility via title/alt.
+// Icons are local static assets in /public/sources/ (favicons per source).
+
+export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo';
+
+export const SOURCE_ORDER: SourceKey[] = ['komiku', 'bacakomik', 'thrive', 'manhwaindo'];
+
+const SOURCE_ICONS: Record<string, string> = {
+  komiku: '/sources/komiku.ico',
+  bacakomik: '/sources/bacakomik.jpg',
+  thrive: '/sources/thrive.ico',
+  manhwaindo: '/sources/manhwaindo.png',
 };
 
 const SOURCE_LABELS: Record<string, string> = {
   komiku: 'Komiku',
   bacakomik: 'BacaKomik',
   thrive: 'Thrive',
+  manhwaindo: 'ManhwaIndo',
 };
 
-const SOURCE_RING: Record<string, string> = {
-  komiku: 'ring-blue-500/40',
-  bacakomik: 'ring-green-500/40',
-  thrive: 'ring-purple-500/40',
-};
-
-export function SourceBadge({ sources }: { sources: string[] }) {
+export function SourceBadge({ sources, size = 'sm' }: { sources?: string[]; size?: 'sm' | 'md' }) {
   if (!sources || sources.length === 0) return null;
+  const dim = size === 'md' ? 'h-6 w-6' : 'h-4 w-4';
+  const ordered = SOURCE_ORDER.filter((s) => sources.includes(s));
+  const shown = ordered.slice(0, 3);
+  const overflow = ordered.length - shown.length;
   return (
-    <div className="flex gap-1.5 flex-wrap items-center mt-1">
-      {sources.map((s) => (
-        <span key={s} className="inline-flex items-center gap-1 text-[10px] text-muted">
-          {SOURCE_LOGOS[s] ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={SOURCE_LOGOS[s]}
-              alt={SOURCE_LABELS[s] ?? s}
-              width={14}
-              height={14}
-              className={`h-3.5 w-3.5 rounded-sm ring-1 ${SOURCE_RING[s] ?? 'ring-white/10'} object-contain bg-white/5`}
-            />
-          ) : null}
-          <span>{SOURCE_LABELS[s] ?? s}</span>
+    <span className="inline-flex items-center gap-1 align-middle">
+      {shown.map((s) => (
+        <span
+          key={s}
+          title={SOURCE_LABELS[s] ?? s}
+          className={`${dim} inline-block overflow-hidden rounded-full ring-1 ring-white/15 bg-white/5 shrink-0`}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={SOURCE_ICONS[s]} alt={SOURCE_LABELS[s] ?? s} className="h-full w-full object-cover" loading="lazy" />
         </span>
       ))}
-    </div>
+      {overflow > 0 && (
+        <span title={`+${overflow} sumber lagi`} className={`${dim} inline-flex items-center justify-center rounded-full bg-bg-secondary text-[10px] text-secondary ring-1 ring-white/15`}>
+          +{overflow}
+        </span>
+      )}
+    </span>
   );
+}
+
+export function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? source;
 }

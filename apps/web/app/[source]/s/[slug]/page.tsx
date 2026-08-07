@@ -1,6 +1,7 @@
 import { getSeriesDetail } from '@/lib/api';
 import { ChapterList } from '@/components/ChapterList';
 import { Synopsis } from '@/components/Synopsis';
+import { SourceBadge } from '@/components/SourceBadge';
 import Link from 'next/link';
 
 export const runtime = 'edge';
@@ -44,6 +45,7 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
         <div className="flex items-center justify-center gap-2 mt-2">
           <span className="text-[10px] px-2 py-0.5 border border-border-subtle rounded capitalize text-muted">{series.type}</span>
           <span className="text-[10px] px-2 py-0.5 border border-border-subtle rounded text-muted capitalize">{series.status}</span>
+          <SourceBadge sources={[params.source]} size="sm" />
         </div>
       </div>
 
