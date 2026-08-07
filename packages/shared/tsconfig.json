@@ -11,6 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["types.ts"],
+  "include": ["types.ts", "src"],
   "exclude": ["node_modules"]
 }

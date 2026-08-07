@@ -23,6 +23,10 @@ export interface Db {
   listSeries: (params: { genre?: string; page?: number; limit?: number }) => Promise<ListResult<Series>>;
   getChapter: (chapterId: string) => Promise<Result<Chapter>>;
   listChapterPages: (chapterId: string) => Promise<ListResult<ChapterPage>>;
+  markPageR2Uploaded: (params: { chapterId: string; pageNumber: number; imageUrl: string; r2Key: string; r2AccountIdx: number }) => Promise<{ success: boolean }>;
+  touchLastAccess: (params: { r2Keys: string[]; accountIdx: number }) => Promise<{ success: boolean }>;
+  incrementLbUsage: (params: { originUrl: string; dateKey: string }) => Promise<{ success: boolean }>;
+  listLbUsage: (dateKey: string) => Promise<Array<{ origin_url: string; req_count: number }>>;
   searchSeries: (query: string) => Promise<ListResult<Series>>;
   createUser: (params: { email: string; name?: string | null; passwordHash: string; role?: string }) => Promise<Result<{ id: number }>>;
   getUserById: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string }>>;
@@ -95,6 +99,38 @@ export const db = (client: D1Database): Db => {
         'SELECT id, chapter_id, page_number, image_url FROM chapter_pages WHERE chapter_id = ?1 ORDER BY page_number ASC'
       ).bind(chapterId).all<Row>();
       return (results ?? []) as unknown as ListResult<ChapterPage>;
+    },
+
+    markPageR2Uploaded: async (p) => {
+      await prep(`INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`)
+        .bind(p.chapterId, p.pageNumber, p.imageUrl, p.r2Key, p.r2AccountIdx).run();
+      return { success: true };
+    },
+
+    touchLastAccess: async (p) => {
+      const now = Date.now();
+      const stmts = p.r2Keys.map((k) =>
+        prep(`INSERT INTO r2_last_access (r2_key, account_idx, last_viewed, created_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT(r2_key) DO UPDATE SET last_viewed = excluded.last_viewed, account_idx = excluded.account_idx`)
+          .bind(k, p.accountIdx, now, now)
+      );
+      if (stmts.length > 0) await client.batch(stmts);
+      return { success: true };
+    },
+
+    incrementLbUsage: async (p) => {
+      await prep(`INSERT INTO lb_usage (origin_url, date_key, req_count, updated_at) VALUES (?, ?, 1, ?)
+        ON CONFLICT(origin_url, date_key) DO UPDATE SET req_count = req_count + 1, updated_at = excluded.updated_at`)
+        .bind(p.originUrl, p.dateKey, Date.now()).run();
+      return { success: true };
+    },
+
+    listLbUsage: async (dateKey) => {
+      const { results } = await prep('SELECT origin_url, req_count FROM lb_usage WHERE date_key = ? ORDER BY req_count DESC')
+        .bind(dateKey).all<Row>();
+      return (results ?? []) as unknown as Array<{ origin_url: string; req_count: number }>;
     },
 
     searchSeries: async (query) => {

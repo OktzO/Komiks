@@ -1,5 +1,5 @@
 import { Context as HonoContext } from 'hono';
-import type { D1Database, KVNamespace, R2Bucket } from '@cloudflare/workers-types';
+import type { D1Database, KVNamespace, R2Bucket, Fetcher } from '@cloudflare/workers-types';
 import { db } from '@manga-platform/db';
 import type { Db } from '@manga-platform/db';
 
@@ -7,13 +7,19 @@ export interface Env {
   DB: D1Database;
   CACHE_KV: KVNamespace;
   ASSETS_R2: R2Bucket;
+  MY_BROWSER: Fetcher;
   LB_ENCRYPTION_KEY: string;
   ALLOWED_ORIGINS?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   MANGADEX_API_KEY?: string;
   ADMIN_PASSWORD_HASH?: string;
+  ADMIN_PASSWORD?: string;
+  SCRAPE_API_KEY?: string;
   CF_ACCOUNT_ID?: string;
+  R2_ACCOUNTS?: string;
+  R2_RING_VNODES?: string;
+  R2_EVICTION_DAYS?: string;
   [k: string]: unknown;
 }
 
@@ -29,10 +35,20 @@ export const json = <T>(
 
 export const parseAllowedOrigins = (env: Env): string[] => {
   const raw = env.ALLOWED_ORIGINS;
-  const list = (raw ? raw.split(',') : ['http://localhost:3000'])
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return list;
+  if (!raw) {
+    // Fail closed in production — never default to an origin when unset.
+    // Local dev is expected to set ALLOWED_ORIGINS=http://localhost:3000.
+    return [];
+  }
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+};
+
+// Returns the request's origin if allowed, else null.
+// Use on response headers; omit A-C-Allow-Origin entirely when not allowed.
+export const allowedOriginFor = (env: Env, requestOrigin: string | undefined): string | null => {
+  if (!requestOrigin) return null;
+  const allowed = parseAllowedOrigins(env);
+  return allowed.includes(requestOrigin) ? requestOrigin : null;
 };
 
 export const sha256Hex = async (input: string): Promise<string> => {

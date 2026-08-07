@@ -5,10 +5,12 @@
   "scripts": {
     "dev:api": "wrangler dev",
     "dev": "wrangler dev",
-    "build": "tsc"
+    "build": "tsc",
+    "build:bundle": "node scripts/build-worker-bundle.mjs"
   },
   "dependencies": {
-    "hono": "^3.12.0"
+    "hono": "^3.12.0",
+    "@manga-platform/shared": "*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240802.0",

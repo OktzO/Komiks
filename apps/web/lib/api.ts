@@ -1,3 +1,5 @@
+// API_URL must be set in production via NEXT_PUBLIC_API_URL. The localhost
+// fallback is only for local dev (wrangler dev on :8787).
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 
 export interface Series {
@@ -27,13 +29,6 @@ export interface Chapter {
   pages?: { proxyUrl: string }[];
 }
 
-export interface MangaDexManga {
-  id: string;
-  title: string;
-  cover: string | null;
-  slug: string;
-}
-
 // 12s timeout prevents Cloudflare Pages Function timeout (30s) from
 // triggering a 502 when the Worker API is slow on cold KV cache.
 async function api<T>(path: string): Promise<T> {
@@ -45,32 +40,26 @@ async function api<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Consolidated series + chapters endpoint — 1 Worker call instead of 2.
+export const getSeriesDetail = (source: string, sourceId: string, lang = 'id') =>
+  apiWithFailover<{ data: Series & { chapters: Chapter[] } }>(`/api/reader/${source}/series/${sourceId}/detail?lang=${lang}`).then((r) => r.data);
+
 export const getSeries = (source: string, sourceId: string) =>
-  api<{ data: Series }>(`/api/reader/${source}/series/${sourceId}`).then((r) => r.data);
+  apiWithFailover<{ data: Series }>(`/api/reader/${source}/series/${sourceId}`).then((r) => r.data);
 
 export const getChapters = (source: string, sourceId: string, lang = 'id') =>
-  api<{ data: Chapter[] }>(`/api/reader/${source}/series/${sourceId}/chapters?lang=${lang}`).then((r) => r.data);
+  apiWithFailover<{ data: Chapter[] }>(`/api/reader/${source}/series/${sourceId}/chapters?lang=${lang}`).then((r) => r.data);
 
 export const getChapter = (source: string, chapterId: string) =>
-  api<{ data: Chapter }>(`/api/reader/${source}/chapter/${chapterId}`).then((r) => r.data);
+  apiWithFailover<{ data: Chapter }>(`/api/reader/${source}/chapter/${chapterId}`).then((r) => r.data);
 
-export async function fetchPopularIndonesian(): Promise<MangaDexManga[]> {
-  const url = 'https://api.mangadex.org/manga?limit=24&availableTranslatedLanguage[]=id&includes[]=cover_art&order[followedCount]=desc&contentRating[]=safe&contentRating[]=suggestive';
-  const res = await fetch(url, { next: { revalidate: 600 } });
-  if (!res.ok) throw new Error(`MangaDex popular → ${res.status}`);
-  const j = await res.json() as any;
-  return j.data.map((m: any) => {
-    const title = m.attributes.title.en || m.attributes.title['ja-ro'] || Object.values(m.attributes.title)[0] || 'Untitled';
-    const coverRel = m.relationships.find((r: any) => r.type === 'cover_art');
-    const cover = coverRel?.attributes?.fileName
-      ? `https://uploads.mangadex.org/covers/${m.id}/${coverRel.attributes.fileName}`
-      : null;
-    return { id: m.id, title, cover, slug: title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) };
-  });
-}
+// Local D1 series list — used by homepage instead of searchMerged('') to
+// avoid 2 upstream fetches + 2 source-health writes per homepage load.
+export const getSeriesList = (page = 1, limit = 24): Promise<Series[]> =>
+  apiWithFailover<Series[]>(`/api/series?page=${page}&limit=${limit}`);
 
-// ---- Data API (manga-data-api Worker) --------------------------------------
-export const DATA_API_URL = process.env.NEXT_PUBLIC_DATA_API_URL || 'http://localhost:8788';
+// ---- Data API (now merged into single manga-api Worker) ----------------------
+export const DATA_API_URL = process.env.NEXT_PUBLIC_DATA_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 
 export interface MergedManga {
   slug: string;
@@ -105,3 +94,91 @@ export const searchMerged = (q: string): Promise<{ data: MergedManga[]; sources_
 
 export const getSourceStatus = (): Promise<{ data: SourceStatus[] }> =>
   dataApi('/api/source-status');
+
+// ---- R2 multi-account direct serving (komiku) --------------------------
+// Domain R2 dari env build-time; urutan = index akun, HARUS sama dengan
+// R2_ACCOUNTS di Worker. Ring di-build sekali per proses (pure).
+import { buildRing, accountFor } from '@manga-platform/shared/r2-routing';
+
+export const R2_DOMAINS = (process.env.NEXT_PUBLIC_R2_DOMAINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const R2_VNODES = Number(process.env.NEXT_PUBLIC_R2_VNODES) || 32;
+const r2Ring = R2_DOMAINS.length > 0 ? buildRing(R2_DOMAINS, R2_VNODES) : null;
+
+// Key deterministik: komiku/{slug}/{chapterId}/{pageNo} (tanpa ext — sama
+// dengan sisi Worker). null saat R2 belum dikonfigurasi → proxy-only.
+export const r2UrlFor = (slug: string, chapterId: string, pageNo: number): string | null => {
+  if (!r2Ring || !slug) return null;
+  const idx = accountFor(slug, r2Ring);
+  return `https://${R2_DOMAINS[idx]}/komiku/${slug}/${chapterId}/${pageNo}`;
+};
+
+// ---- Round-robin origin failover (LB multi-account) --------------------
+// Health-aware: skip origin yang 429/5xx/timeout (circuit breaker 60s per
+// origin setelah 2 gagal beruntun). Retry max 2x, bukan coba semua akun.
+// Hanya path publik yang boleh dipanggil ke origin — allowlist eksplisit.
+const ORIGIN_PATH_ALLOWLIST = [
+  '/api/health',
+  '/api/search',
+  '/api/series',
+  '/api/manga/',
+  '/api/reader/',
+  '/api/source-status',
+];
+
+export const getOrigins = async (): Promise<{ url: string }[]> => {
+  const cached = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('origins') : null;
+  if (cached) return JSON.parse(cached) as { url: string }[];
+  try {
+    const res = await fetch(`${API_URL}/api/origins`, {
+      signal: AbortSignal.timeout(8000),
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) return [];
+    const json = await res.json() as { data: { url: string }[] };
+    const data = json.data || [];
+    if (typeof sessionStorage !== 'undefined' && data.length > 0) {
+      sessionStorage.setItem('origins', JSON.stringify(data));
+      setTimeout(() => sessionStorage.removeItem('origins'), 60000);
+    }
+    return data;
+  } catch {
+    return [];
+  }
+};
+
+// Circuit state per origin: gagal beruntun → skip 60s.
+const failures = new Map<string, { count: number; until: number }>();
+
+export async function apiWithFailover<T>(path: string): Promise<T> {
+  if (!ORIGIN_PATH_ALLOWLIST.some((p) => path.startsWith(p))) {
+    return api<T>(path); // non-publik → main API saja
+  }
+  const origins = await getOrigins();
+  const now = Date.now();
+  let attempts = 0;
+  for (const origin of origins) {
+    if (attempts >= 2) break; // retry terbatas, bukan loop semua akun
+    const state = failures.get(origin.url);
+    if (state && state.until > now) continue;
+    attempts++;
+    try {
+      const res = await fetch(`${origin.url}${path}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 429 || res.status >= 500) {
+        const f = failures.get(origin.url);
+        const count = (f?.count ?? 0) + 1;
+        failures.set(origin.url, { count, until: count >= 2 ? now + 60000 : now + 5000 });
+        continue;
+      }
+      failures.set(origin.url, { count: 0, until: 0 });
+      if (!res.ok) throw new Error(`origin ${path} → ${res.status}`);
+      return res.json() as Promise<T>;
+    } catch {
+      const f = failures.get(origin.url);
+      const count = (f?.count ?? 0) + 1;
+      failures.set(origin.url, { count, until: count >= 2 ? now + 60000 : now + 5000 });
+    }
+  }
+  return api<T>(path); // semua origin gagal → main API
+}

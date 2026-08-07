@@ -6,7 +6,8 @@
   "main": "types.ts",
   "exports": {
     ".": "./types.ts",
-    "./types": "./types.ts"
+    "./types": "./types.ts",
+    "./r2-routing": "./src/r2-routing.ts"
   },
   "dependencies": {
     "zod": "3.22.3"

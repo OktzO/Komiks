@@ -1,16 +1,20 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { Env, getDb, json } from '../../lib/context';
+import { constantTimeEqualStr } from '../../lib/auth';
 import { createAccount, listAccountsSafe, testAccount } from '@manga-platform/lb/accounts';
+import { provisionAccount, checkProvisionStatus } from '@manga-platform/lb/provision';
 
 export const router = new Hono<{ Bindings: Env }>();
 
 // Step-up re-auth: every LB admin mutation requires the admin password hash
-// echoed back via x-admin-stepup. Compares against env.ADMIN_PASSWORD_HASH.
+// echoed back via x-admin-stepup. Compares against env.ADMIN_PASSWORD_HASH
+// (or ADMIN_PASSWORD for the renamed variant) using a constant-time compare
+// to avoid timing side-channels.
 const requireAdminStepUp: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const supplied = c.req.header('x-admin-stepup');
-  const expected = c.env.ADMIN_PASSWORD_HASH;
-  if (!expected || supplied !== expected) {
+  const expected = c.env.ADMIN_PASSWORD_HASH || c.env.ADMIN_PASSWORD;
+  if (!expected || !supplied || !constantTimeEqualStr(supplied, expected)) {
     return json(c, { error: 'step-up auth required' }, 401);
   }
   await next();
@@ -134,4 +138,36 @@ router.get('/status', async (c) => {
       }))
     }
   });
+});
+
+// Quota tracking: request count per origin per hari (approximation dari
+// pengambilan daftar origin — lihat routes/origins.ts).
+router.get('/usage', async (c) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await getDb(c).listLbUsage(today);
+  return json(c, { data: rows, date_key: today });
+});
+
+router.post('/accounts/provision', async (c) => {
+  const body = await c.req.json().catch(() => null) as {
+    label: string;
+    cfApiToken: string;
+    workerName?: string;
+  } | null;
+  if (!body || !body.label || !body.cfApiToken) {
+    return json(c, { error: 'label and cfApiToken required' }, 400);
+  }
+  const workerName = body.workerName || `manga-api-${Date.now().toString(36)}`;
+  const jobId = crypto.randomUUID();
+  c.executionCtx.waitUntil(
+    provisionAccount(c.env, { label: body.label, cfApiToken: body.cfApiToken, workerName, jobId })
+      .catch((e) => console.error('[provision]', e))
+  );
+  return json(c, { job_id: jobId, worker_name: workerName, provisioning: true });
+});
+
+router.get('/accounts/:id/provision-status', async (c) => {
+  const status = await checkProvisionStatus(c.env, c.req.param('id'));
+  if (!status) return json(c, { error: 'job not found' }, 404);
+  return json(c, { data: status });
 });
