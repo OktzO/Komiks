@@ -41,31 +41,33 @@ export function Navbar() {
   }, [open]);
 
   return (
-    <header id="navbar" className="px-4 py-3">
-      <div className="mx-auto flex items-center" style={{ maxWidth: 'min(1024px, 100%)' }}>
+    <header id="navbar" className="fixed inset-x-0 top-0 z-50">
+      <div className="nav-island relative mx-auto flex items-center justify-between px-5 py-3">
         <Link href="/" className="flex items-center gap-2 text-xl tracking-tight font-medium text-primary hover:text-accent">
           <span className="inline-block h-7 w-7 rounded-full bg-gradient-to-br from-accent to-muted" />
           Manga
         </Link>
         <button
-          className="hamburger ml-auto"
+          className="hamburger"
           aria-label="Menu"
           aria-expanded={open}
           aria-controls="nav-menu"
           onClick={() => setOpen(o => !o)}
         >
-          <span />
-          <span />
+          <span className="bars">
+            <span />
+            <span />
+          </span>
         </button>
       </div>
       <nav id="nav-menu" className={open ? 'open' : ''} aria-hidden={!open}>
-        <div className="mx-auto mt-2 flex flex-col" style={{ maxWidth: 'min(1024px, 100%)' }}>
+        <div className="nav-island mx-auto mt-2 flex flex-col px-3" style={{ maxWidth: 'var(--nav-width-active)' }}>
           {LINKS.map(l => (
             <Link key={l.href} href={l.href} className="px-3 py-3 text-base text-secondary hover:text-primary rounded-lg hover:bg-bg-secondary transition-colors">
               {l.label}
             </Link>
           ))}
-          <Link href="/login" className="mx-3 my-2 px-3 py-2.5 text-base text-primary border border-border-default rounded-lg hover:bg-bg-secondary transition-colors text-center">
+          <Link href="/login" className="my-2 px-3 py-2.5 text-base text-primary border border-border-default rounded-lg hover:bg-bg-secondary transition-colors text-center">
             Masuk
           </Link>
         </div>
