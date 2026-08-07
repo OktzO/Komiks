@@ -1,4 +1,5 @@
 import type { Env, Context } from './context';
+import type { MiddlewareHandler } from 'hono';
 import { db } from '@manga-platform/db';
 
 const PBKDF2_ITER = 100000;
@@ -74,5 +75,31 @@ function parseCookie(header: string): Record<string, string> {
 }
 
 export function setSessionCookie(token: string): string {
-  return `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}`;
+  // Secure flag ensures the cookie is only sent over HTTPS in production.
+  // Local dev over HTTP must tolerate this — browsers will simply not persist
+  // the cookie over http, which is acceptable for local testing (use wrangler
+  // dev which serves HTTPS, or set a separate non-Secure cookie for localhost).
+  return `session=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${SESSION_TTL}`;
 }
+
+export function clearSessionCookie(): string {
+  return `session=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`;
+}
+
+// Constant-time string comparison — exported for use by admin step-up auth
+// to avoid timing side-channels on password/key comparisons.
+export const constantTimeEqualStr = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+};
+
+export const requireAdminKey: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const supplied = c.req.header('x-admin-api-key');
+  const expected = c.env.SCRAPE_API_KEY;
+  if (!expected || !supplied || !constantTimeEqualStr(supplied, expected)) {
+    return c.json({ error: 'admin api key required' }, 401);
+  }
+  await next();
+};

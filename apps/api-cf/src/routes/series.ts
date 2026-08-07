@@ -12,25 +12,25 @@ interface CachedSeriesList {
 router.get('/series', async (c) => {
   const genre = c.req.query('genre') ?? undefined;
   const page = Number(c.req.query('page') ?? '1') || 1;
-  const limit = Number(c.req.query('limit') ?? '20') || 20;
+  const limit = Math.min(Number(c.req.query('limit') ?? '20') || 20, 100);
   const cacheKey = `series:list:${genre ?? ''}:${page}:${limit}`;
 
   const cachedRaw = await c.env.CACHE_KV.get(cacheKey, { type: 'json' });
   if (cachedRaw) {
     const cached = cachedRaw as CachedSeriesList;
     const age = Math.floor(Date.now() / 1000) - cached.ts;
-    if (age < 300) {
+    if (age < 600) {
+      c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
       return json(c, cached.data);
     }
   }
 
   const series = await getDb(c).listSeries({ genre, page, limit });
   const now = Math.floor(Date.now() / 1000);
-  await c.env.CACHE_KV.put(
-    cacheKey,
-    JSON.stringify({ data: series, ts: now }),
-    { expirationTtl: 600 }
+  c.executionCtx.waitUntil(
+    c.env.CACHE_KV.put(cacheKey, JSON.stringify({ data: series, ts: now }), { expirationTtl: 600 }).catch(() => {})
   );
+  c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
   return json(c, series);
 });
 
@@ -40,6 +40,7 @@ router.get('/series/:slug', async (c) => {
 
   const cached = await c.env.CACHE_KV.get(cacheKey, { type: 'json' });
   if (cached) {
+    c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
     return json(c, cached);
   }
 
@@ -47,7 +48,10 @@ router.get('/series/:slug', async (c) => {
   if (!series) {
     return json(c, { error: 'Series not found' }, 404);
   }
-  await c.env.CACHE_KV.put(cacheKey, JSON.stringify(series), { expirationTtl: 600 });
+  c.executionCtx.waitUntil(
+    c.env.CACHE_KV.put(cacheKey, JSON.stringify(series), { expirationTtl: 600 }).catch(() => {})
+  );
+  c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
   return json(c, series);
 });
 

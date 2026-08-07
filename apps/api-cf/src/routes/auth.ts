@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env, Context } from '../lib/context';
 import { db } from '@manga-platform/db';
-import { hashPassword, verifyPassword, createSession, getSessionUser, setSessionCookie } from '../lib/auth';
+import { hashPassword, verifyPassword, createSession, getSessionUser, setSessionCookie, clearSessionCookie } from '../lib/auth';
 
 export const router = new Hono<{ Bindings: Env }>();
 
@@ -38,7 +38,7 @@ router.post('/login', async (c: Context) => {
 router.post('/logout', async (c: Context) => {
   const token = c.req.header('authorization')?.replace('Bearer ', '') || parseCookie(c.req.header('cookie') || '').session;
   if (token) await c.env.CACHE_KV.delete(`session:${token}`).catch(() => {});
-  c.header('Set-Cookie', 'session=; Path=/; HttpOnly; Max-Age=0');
+  c.header('Set-Cookie', clearSessionCookie());
   return c.json({ ok: true });
 });
 

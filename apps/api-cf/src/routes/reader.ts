@@ -50,7 +50,6 @@ const recordHealth = (c: Context, source: string, start: number, ok: boolean, er
 const ALLOWED_IMAGE_HOSTS = new Set([
   'img.komiku.org',
   'komiku.org',
-  'uploads.mangadex.org',
 ]);
 
 const isPrivateIp = (host: string): boolean => {
@@ -67,12 +66,10 @@ const isAllowedImageUrl = (raw: string): boolean => {
   if (isPrivateIp(host)) return false;
   // Allow known image hosts outright.
   if (ALLOWED_IMAGE_HOSTS.has(host)) return true;
-  // MangaDex at-home nodes use *.mangadex-network.app / *.mangadex.org — allow subdomains.
-  if (host.endsWith('.mangadex-network.app') || host.endsWith('.mangadex.org')) return true;
   return false;
 };
 
-// Fetch page URLs with KV caching to avoid re-hitting MangaDex at-home
+// Fetch page URLs with KV caching to avoid re-hitting the source CDN
 // on every image request (prevents 429 rate-limit → 502 cascade).
 const fetchPageUrlsWithCache = async (
   c: Context,
@@ -267,7 +264,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
     return c.json({ error: 'upstream image host not allowed' }, 403);
   }
 
-  // Check Cloudflare Cache API first — avoids re-fetching from MangaDex CDN
+  // Check Cloudflare Cache API first — avoids re-fetching from source CDN
   // and reduces Worker execution cost.
   let cachedImg: Response | null = null;
   if (typeof caches !== 'undefined') {
@@ -280,7 +277,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
     return new Response(cachedImg.body, { status: 200, headers: h });
   }
 
-  // MangaDex at-home nodes occasionally fail transiently (502/503/connection
+  // Source CDNs occasionally fail transiently (502/503/connection reset).
   // reset). Retry up to 2 times (reduced from 3 to cap CPU time) before
   // surfacing the error. Only accept HTTP 200.
   let upstream: Response | null = null;
@@ -320,7 +317,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   headers.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
   setCorsHeaders(c.env, headers, c.req.header('origin'));
 
-  // Cache-aside R2 (komiku saja — MangaDex tetap 100% proxy, ToS):
+  // Cache-aside R2 (komiku rehost; sumber lain tetap 100% proxy):
   // clone stream SEBELUM Response dibuat — setelah `new Response(upstream.body)`
   // stream terkunci dan clone() melempar "ReadableStream locked to a reader".
   // Upload di background; request berikutnya diserve langsung dari R2 tanpa

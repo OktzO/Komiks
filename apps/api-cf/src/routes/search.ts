@@ -1,25 +1,141 @@
 import { Hono } from 'hono';
 import { getAdapter } from '@manga-platform/sources';
-import { Env, json, sha256Hex } from '../lib/context';
+import type { Env, Context } from '../lib/context';
+import { getDb, json, sha256Hex } from '../lib/context';
+import { retryUpstream } from '../lib/retry';
 
 export const router = new Hono<{ Bindings: Env }>();
 
-router.get('/search', async (c) => {
-  const q = c.req.query('q');
-  if (!q) return json(c, { error: 'query param "q" is required' }, 400);
+const normalizeTitle = (s: string): string =>
+  s.toLowerCase().normalize('NFKD').replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
 
+const recordHealth = (c: Context, source: string, start: number, ok: boolean, error?: string) => {
+  c.executionCtx.waitUntil(
+    getDb(c).recordSourceHealth({
+      source,
+      healthy: ok,
+      latencyMs: Date.now() - start,
+      error: ok ? null : (error ?? 'unknown error'),
+    }).catch(() => {})
+  );
+};
+
+// Parse limit with NaN fallback — earlier code passed NaN to SQLite LIMIT
+// which silently returned 0 rows.
+const parseLimit = (raw: string | undefined, def = 20, max = 50): number => {
+  const n = parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n) || n < 1) return def;
+  return Math.min(n, max);
+};
+
+router.get('/search', async (c: Context) => {
+  const q = c.req.query('q')?.trim() || '';
+  const limit = parseLimit(c.req.query('limit'));
+
+  // KV cache lookup (now also caches empty-query homepage result).
   const cacheKey = `search:${await sha256Hex(q)}`;
   const cached = await c.env.CACHE_KV.get(cacheKey, { type: 'json' });
-  if (cached) return json(c, cached);
-
-  const adapter = getAdapter('mangadex', c.env);
-  if (!adapter) return json(c, { error: 'unknown source' }, 500);
-  try {
-    const data = await adapter.search({ q, limit: 24 });
-    const payload = { data };
-    c.executionCtx.waitUntil(c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 120 }).catch(() => {}));
-    return json(c, payload);
-  } catch (e) {
-    return json(c, { error: 'search failed', detail: String(e) }, 502);
+  if (cached) {
+    c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+    return json(c, { ...(cached as object), cached: true });
   }
+
+  const db = c.env.DB;
+
+  // Local D1 lookup. Empty query → latest series list (no external fetch).
+  // Non-empty query → FTS5 match with LIKE fallback on FTS syntax errors.
+  let localResults: unknown[];
+  if (q) {
+    try {
+      const r = await db.prepare("SELECT s.* FROM series_search f JOIN series s ON s.id = f.rowid WHERE series_search MATCH ?1 ORDER BY rank LIMIT ?2").bind(q, limit).all();
+      localResults = r.results ?? [];
+    } catch {
+      // FTS5 MATCH can throw on unmatched quotes / special chars. Fall back
+      // to a LIKE search so the endpoint never 500s on malformed queries.
+      const like = `%${q.replace(/[%_]/g, (m) => '\\' + m)}%`;
+      const r = await db.prepare("SELECT * FROM series WHERE title LIKE ?1 ESCAPE '\\' OR synopsis LIKE ?1 ESCAPE '\\' ORDER BY title LIMIT ?2").bind(like, limit).all();
+      localResults = r.results ?? [];
+    }
+  } else {
+    const r = await db.prepare('SELECT * FROM series ORDER BY updated_at DESC LIMIT ?1').bind(limit).all();
+    localResults = r.results ?? [];
+  }
+
+  // Empty query → prefer local D1 list (saves upstream fetches when DB has
+  // data). BUT if D1 is empty (cold DB / fresh deploy), fall back to Komiku
+  // popular listings so the homepage isn't blank.
+  // its empty-query search returns random results, not useful for browsing.
+  if (!q) {
+    if (localResults.length === 0) {
+      // D1 cold — fetch Komiku popular listings as homepage feed.
+      const a = getAdapter('komiku', c.env);
+      if (a) {
+        const start = Date.now();
+        try {
+          const komiku = await retryUpstream(() => a.search({ q: '', limit }));
+          recordHealth(c, 'komiku', start, true);
+          const merged = komiku.map((s) => ({ data: { ...s, sources: ['komiku'] }, sources: ['komiku'] }));
+          const payload = { data: merged, total: merged.length, sources_queried: ['komiku'], cached: false };
+          c.executionCtx.waitUntil(
+            c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
+          );
+          c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+          return json(c, payload);
+        } catch (e) {
+          recordHealth(c, 'komiku', start, false, String(e));
+        }
+      }
+    }
+    const merged = (localResults as unknown as Array<Record<string, unknown>>).map((row) => ({
+      data: { ...row, sources: [(row.source as string) || 'local'] },
+      sources: [(row.source as string) || 'local'],
+    }));
+    const payload = { data: merged, total: merged.length, sources_queried: ['local'], cached: false };
+    c.executionCtx.waitUntil(
+      c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
+    );
+    c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+    return json(c, payload);
+  }
+
+  const sourcesQueried: string[] = [];
+  const startKomiku = Date.now();
+  let komikuResults: Awaited<ReturnType<NonNullable<ReturnType<typeof getAdapter>['search']>>>;
+  try {
+    komikuResults = await retryUpstream(async () => {
+      const a = getAdapter('komiku', c.env);
+      if (!a) throw new Error('komiku adapter unavailable');
+      sourcesQueried.push('komiku');
+      return a.search({ q, limit });
+    });
+  } catch (e) {
+    komikuResults = [];
+    console.error('[search] komiku failed:', String(e));
+  }
+  recordHealth(c, 'komiku', startKomiku, true);
+
+  const allResults: Record<string, { data: any; sources: string[] }> = {};
+  const addResult = (series: any, source: string) => {
+    const key = normalizeTitle(series.title || series.slug || '');
+    if (!key) return;
+    if (allResults[key]) {
+      if (!allResults[key].sources.includes(source)) allResults[key].sources.push(source);
+    } else {
+      allResults[key] = { data: { ...series, sources: [source] }, sources: [source] };
+    }
+  };
+
+  for (const row of localResults as unknown as Array<Record<string, unknown>>) {
+    addResult(row, (row.source as string) || 'local');
+  }
+  for (const s of komikuResults) addResult(s, 'komiku');
+
+  const merged = Object.values(allResults).slice(0, limit);
+  const payload = { data: merged, total: merged.length, sources_queried: sourcesQueried, cached: false };
+
+  c.executionCtx.waitUntil(
+    c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
+  );
+  c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+  return json(c, payload);
 });
