@@ -187,3 +187,9 @@ a:hover { color: var(--accent); }
   from { transform: scaleX(0); }
   to   { transform: scaleX(1); }
 }
+
+/* ── Home hero: subtle glow on keyword ── */
+.text-glow {
+  color: var(--accent);
+  text-shadow: 0 0 24px oklch(98% 0 0 / 0.25);
+}
