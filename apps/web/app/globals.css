@@ -154,3 +154,36 @@ a:hover { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   #navbar, #navbar .nav-island, .hamburger .bars span, #nav-menu { transition: none !important; }
 }
+
+/* ── Skeleton shimmer ── */
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, oklch(14% 0 0) 25%, oklch(20% 0 0) 50%, oklch(14% 0 0) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: var(--radius);
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* ── Route transition thin progress bar (YouTube/GitHub style) ── */
+.route-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 100;
+  pointer-events: none;
+  background: var(--accent);
+  transform-origin: left;
+  animation: route-progress 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes route-progress {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}

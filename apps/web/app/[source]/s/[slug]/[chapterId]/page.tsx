@@ -15,6 +15,12 @@ export default async function ChapterReader({ params }: { params: { source: stri
   }
 
   const pages = chapter.pages || [];
+  const chapterNum = chapter.chapter_number ?? 0;
+  // Next-chapter prefetch URL (best-effort; chapter URLs follow the
+  // `<slug>-chapter-<n>` convention on most sources).
+  const nextChapterUrl = chapterNum > 0
+    ? `/${params.source}/s/${params.slug}/${params.slug}-chapter-${chapterNum + 1}`
+    : null;
 
   // R2-first: hash slug → domain R2 untuk tiap halaman (deterministik, sama
   // dengan sisi Worker). null saat R2 belum dikonfigurasi → proxy-only.
@@ -39,7 +45,7 @@ export default async function ChapterReader({ params }: { params: { source: stri
       {r2Pages.length === 0 ? (
         <div className="text-muted text-sm py-8 text-center">Tidak ada halaman.</div>
       ) : (
-        <Reader pages={r2Pages} apiUrl={API_URL} />
+        <Reader pages={r2Pages} apiUrl={API_URL} nextChapterUrl={nextChapterUrl} />
       )}
     </main>
   );
