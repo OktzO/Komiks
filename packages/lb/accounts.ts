@@ -18,7 +18,8 @@ export interface VerifyResult {
 // CF: GET /user/tokens/verify with Authorization: Bearer <token>.
 const verifyCloudflare = async (token: string): Promise<VerifyResult> => {
   const res = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) return { ok: false, err: `cloudflare verify HTTP ${res.status}` };
   const body = (await res.json()) as { success?: boolean; result?: { status?: string } };
@@ -29,7 +30,8 @@ const verifyCloudflare = async (token: string): Promise<VerifyResult> => {
 // Vercel: GET /v2/user with Authorization: Bearer <token>.
 const verifyVercel = async (token: string): Promise<VerifyResult> => {
   const res = await fetch('https://api.vercel.com/v2/user', {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) return { ok: false, err: `vercel verify HTTP ${res.status}` };
   const body = (await res.json()) as { user?: unknown };

@@ -12,10 +12,10 @@
   },
   "scripts": {
     "dev:api": "turbo run dev:api",
-    "dev:web": "turbo run dev:web",
-    "dev:data": "turbo run dev:data"
+    "dev:web": "turbo run dev:web"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "turbo": "^2.0.6",
     "typescript": "^5.5.4"
   }

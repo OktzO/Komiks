@@ -1,6 +1,7 @@
 name = "manga-api"
 main = "./src/index.ts"
 compatibility_date = "2024-08-01"
+compatibility_flags = ["nodejs_compat"]
 
 account_id = "4ce21aec2dd478bf380b7b59990a9165"
 
@@ -19,5 +20,6 @@ binding = "ASSETS_R2"
 bucket_name = "manga-assets"
 preview_bucket_name = "manga-assets-dev"
 
-[triggers]
-crons = ["* * * * *"]
+[browser]
+binding = "MY_BROWSER"
+remote = true

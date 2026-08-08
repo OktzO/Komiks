@@ -8,7 +8,8 @@
     ".": "./index.ts",
     "./crypto": "./crypto.ts",
     "./accounts": "./accounts.ts",
-    "./router": "./router.ts"
+    "./router": "./router.ts",
+    "./provision": "./provision.ts"
   },
   "dependencies": {
     "@manga-platform/db": "0.1.0",
