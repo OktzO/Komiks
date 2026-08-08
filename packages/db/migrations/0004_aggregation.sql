@@ -1,8 +1,7 @@
 -- Manga aggregation: multi-source links + manual merge queue.
 -- series table remains the canonical entity; manga_source_link maps a series
 -- to (source, source_slug) rows from each upstream site.
-
-ALTER TABLE series ADD COLUMN alt_titles TEXT;  -- JSON array string
+-- NOTE: series.alt_titles already exists (added in 0001) — no ALTER here.
 
 CREATE TABLE manga_source_link (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
