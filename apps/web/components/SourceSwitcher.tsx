@@ -3,8 +3,11 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { SOURCE_ORDER } from './SourceBadge';
 
-// Sticky source switcher for the reader page. Shows aggregated sources for the
-// manga; tapping switches to the same chapter number on another source.
+// Sticky source switcher. Two modes:
+// - 'reader': sticky bar above the reader; switches to the same chapter
+//   number on another source.
+// - 'detail': appears under the manga title on the detail page; switches to
+//   the manga detail on another source (source acts as an independent source).
 // Default: user preference (localStorage per canonical slug) → komiku → first
 // source with a chapter list.
 
@@ -21,12 +24,14 @@ export function SourceSwitcher({
   canonicalSlug,
   chapterNumber,
   apiUrl,
+  mode = 'reader',
 }: {
   currentSource: string;
   sourceId: string;
   canonicalSlug: string | null;
   chapterNumber: number;
   apiUrl: string;
+  mode?: 'reader' | 'detail';
 }) {
   const router = useRouter();
   const [links, setLinks] = useState<SourceLink[]>([]);
@@ -65,16 +70,23 @@ export function SourceSwitcher({
       localStorage.setItem(`src-pref:${canonicalSlug}`, source);
       setPref(source);
     }
-    // Chapter-number matching: the chapter URL on the new source follows the
-    // same `<slug>-chapter-<n>` or `<sourceSlug>/<chapterId>` convention.
-    // Navigate to the series page with a chapter hint if chapter unknown.
-    router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?ch=${chapterNumber || 1}`);
+    if (mode === 'detail') {
+      // Independent source: go to that source's manga detail page.
+      router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?id=${encodeURIComponent(link.sourceSlug)}`);
+    } else {
+      // Chapter-number matching: the chapter URL on the new source follows the
+      // same `<slug>-chapter-<n>` convention.
+      router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?ch=${chapterNumber || 1}`);
+    }
   };
 
   return (
-    <div className="sticky top-16 z-40 mb-4">
-      <div className="nav-island mx-auto flex items-center gap-2 overflow-x-auto px-3 py-2 rounded-xl" style={{ maxWidth: 'min(1024px, 100%)' }}>
-        <span className="text-[10px] uppercase tracking-wider text-muted shrink-0">Sumber</span>
+    <div className={mode === 'detail' ? 'mb-4' : 'sticky top-16 z-40 mb-4'}>
+      <div className={mode === 'detail'
+        ? 'flex flex-wrap items-center justify-center gap-2'
+        : 'nav-island mx-auto flex items-center gap-2 overflow-x-auto px-3 py-2 rounded-xl'}
+        style={mode === 'reader' ? { maxWidth: 'min(1024px, 100%)' } : undefined}>
+        <span className="text-[10px] uppercase tracking-wider text-muted shrink-0">Sumber:</span>
         {ordered.map((s) => {
           const link = links.find((l) => l.source === s);
           const isActive = s === currentSource;

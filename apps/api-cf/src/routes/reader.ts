@@ -230,18 +230,18 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
 });
 
 // Aggregated sources for a manga: GET /api/reader/:source/series/:sourceId/sources
-// Uses manga_source_link aggregation (D1). Returns all sources linked to the
-// same canonical manga, plus the canonical slug.
+// 1) Uses manga_source_link aggregation (D1) when rows exist.
+// 2) Fallback (live-resolve): searches the OTHER sources for the same title so
+//    the source switcher works even before any scrape has persisted rows.
 router.get('/:source/series/:sourceId/sources', async (c: Context) => {
-  const { sourceId } = c.req.param();
-  const cacheKey = `sources:${sourceId}`;
+  const { source, sourceId } = c.req.param();
+  const cacheKey = `sources:${source}:${sourceId}`;
   const cached = await cacheGet<{ data: unknown }>(c, cacheKey);
   if (cached) return c.json(cached);
 
   const db = getDb(c);
   try {
-    // Resolve canonical series id via source link (source+slug) OR legacy row.
-    const { source } = c.req.param();
+    // 1. Aggregated rows first.
     const manga = await db.getMangaBySource(source, sourceId).catch(() => null);
     let canonicalId: number | null = null;
     if (manga) {
@@ -250,18 +250,63 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
       const row = await c.env.DB.prepare('SELECT id FROM series WHERE slug = ?1 LIMIT 1').bind(sourceId).first<{ id: number }>();
       canonicalId = row?.id ?? null;
     }
-    if (!canonicalId) return c.json({ data: { sources: [], canonicalSlug: null } });
 
-    const links = await db.getSourceLinksByManga(canonicalId);
-    const canonicalRow = await c.env.DB.prepare('SELECT slug FROM series WHERE id = ?1').bind(canonicalId).first<{ slug: string }>();
+    let links: Array<{ source: string; sourceSlug: string; hasChapterList: boolean; chapterCount: number }> = [];
+    let canonicalSlug: string | null = null;
+    if (canonicalId) {
+      const rows = await db.getSourceLinksByManga(canonicalId);
+      links = rows.map((l) => ({ source: l.source, sourceSlug: l.source_slug, hasChapterList: l.has_chapter_list === 1, chapterCount: l.chapter_count }));
+      const canonicalRow = await c.env.DB.prepare('SELECT slug FROM series WHERE id = ?1').bind(canonicalId).first<{ slug: string }>();
+      canonicalSlug = canonicalRow?.slug ?? null;
+    }
+
+    // 2. Live-resolve when aggregation is empty (or missing current source).
+    const hasCurrent = links.some((l) => l.source === source);
+    if (links.length === 0 || !hasCurrent) {
+      const adapter = getAdapter(source, c.env);
+      if (adapter) {
+        const series = await adapter.getSeries(sourceId).catch(() => null);
+        if (series?.title) {
+          const norm = series.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+          const resolved: Array<{ source: string; sourceSlug: string; hasChapterList: boolean; chapterCount: number }> = [];
+          const all = await Promise.all(
+            (['komiku', 'bacakomik', 'manhwaindo', 'thrive'] as const)
+              .filter((s) => s !== source)
+              .map(async (s) => {
+                const a = getAdapter(s, c.env);
+                if (!a) return null;
+                const results = await a.search({ q: series!.title.slice(0, 60), limit: 8 }).catch(() => []);
+                const hit = results.find((r) => {
+                  const n = r.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                  return n === norm || (norm.length > 10 && n.includes(norm.slice(0, 20)));
+                });
+                return hit ? { source: s, sourceSlug: hit.slug, hasChapterList: true, chapterCount: 0 } : null;
+              })
+          );
+          for (const r of all) {
+            if (r) resolved.push(r);
+          }
+          // Merge with any aggregated links (dedupe by source).
+          const seen = new Set(resolved.map((r) => r.source));
+          for (const l of links) {
+            if (!seen.has(l.source)) {
+              resolved.push(l);
+              seen.add(l.source);
+            }
+          }
+          links = resolved;
+        }
+      }
+    }
+
     const data = {
       sources: links.map((l) => ({
         source: l.source,
-        sourceSlug: l.source_slug,
-        hasChapterList: l.has_chapter_list === 1,
-        chapterCount: l.chapter_count,
+        sourceSlug: l.sourceSlug,
+        hasChapterList: l.hasChapterList,
+        chapterCount: l.chapterCount,
       })),
-      canonicalSlug: canonicalRow?.slug ?? null,
+      canonicalSlug,
     };
     cachePut(c, cacheKey, { data }, 600);
     return c.json({ data });
