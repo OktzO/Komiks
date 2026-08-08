@@ -1,13 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { SOURCE_ORDER } from './SourceBadge';
+import { SOURCE_ORDER, sourceLabel } from './SourceBadge';
 
-// Sticky source switcher. Two modes:
+// Source switcher. Two modes:
+// - 'detail': a "Source" button under the manga title. Tap → dropdown panel
+//   listing every source that hosts this manga (all badges). Picking one
+//   navigates to that source's manga detail page (independent source).
 // - 'reader': sticky bar above the reader; switches to the same chapter
 //   number on another source.
-// - 'detail': appears under the manga title on the detail page; switches to
-//   the manga detail on another source (source acts as an independent source).
 // Default: user preference (localStorage per canonical slug) → komiku → first
 // source with a chapter list.
 
@@ -16,6 +17,20 @@ interface SourceLink {
   sourceSlug: string;
   hasChapterList: boolean;
   chapterCount: number;
+}
+
+const SOURCE_ICONS: Record<string, string> = {
+  komiku: '/sources/komiku.png',
+  bacakomik: '/sources/bacakomik.png',
+  thrive: '/sources/thrive.png',
+  manhwaindo: '/sources/manhwaindo.png',
+};
+
+function SourceIcon({ source, dim = 'h-4 w-4' }: { source: string; dim?: string }) {
+  const src = SOURCE_ICONS[source];
+  if (!src) return null;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src} alt="" className={`${dim} rounded-full object-cover ring-1 ring-white/15`} />;
 }
 
 export function SourceSwitcher({
@@ -36,8 +51,9 @@ export function SourceSwitcher({
   const router = useRouter();
   const [links, setLinks] = useState<SourceLink[]>([]);
   const [pref, setPref] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
-  // Load aggregated sources from API.
+  // Load aggregated sources from API (live-resolve when aggregation empty).
   useEffect(() => {
     let alive = true;
     fetch(`${apiUrl}/api/reader/${currentSource}/series/${encodeURIComponent(sourceId)}/sources`)
@@ -57,47 +73,96 @@ export function SourceSwitcher({
     setPref(saved);
   }, [canonicalSlug]);
 
+  // Close panel on route change.
+  useEffect(() => { setOpen(false); }, [router]);
+
   if (links.length <= 1) return null;
 
   const ordered = SOURCE_ORDER.filter((s) => links.some((l) => l.source === s));
-  const active = ordered.find((s) => s === currentSource);
 
   const onPick = (source: string) => {
-    if (source === currentSource) return;
     const link = links.find((l) => l.source === source);
     if (!link) return;
-    if (canonicalSlug) {
+    if (source !== currentSource && canonicalSlug) {
       localStorage.setItem(`src-pref:${canonicalSlug}`, source);
       setPref(source);
     }
     if (mode === 'detail') {
-      // Independent source: go to that source's manga detail page.
+      if (source === currentSource) { setOpen(false); return; }
       router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?id=${encodeURIComponent(link.sourceSlug)}`);
     } else {
-      // Chapter-number matching: the chapter URL on the new source follows the
-      // same `<slug>-chapter-<n>` convention.
+      if (source === currentSource) return;
       router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?ch=${chapterNumber || 1}`);
     }
   };
 
+  // ── Detail mode: "Source" button + dropdown panel with all badges ──
+  if (mode === 'detail') {
+    const active = ordered.find((s) => s === currentSource);
+    return (
+      <div className="relative mb-5">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          className="inline-flex items-center gap-2 rounded-full border border-border-default bg-card/60 px-3.5 py-1.5 text-xs text-secondary hover:text-primary hover:border-border-subtle transition-colors"
+        >
+          <SourceIcon source={currentSource} />
+          <span className="text-primary font-medium capitalize">{active ?? currentSource}</span>
+          <span className="text-muted text-[10px]">· {ordered.length} sumber</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            className={`text-muted transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+
+        {open && (
+          <div className="absolute left-0 top-full mt-2 z-40 min-w-[220px] rounded-xl border border-border-subtle bg-elevated shadow-xl p-1.5 anim-slide-up">
+            {ordered.map((s) => {
+              const link = links.find((l) => l.source === s);
+              const isActive = s === currentSource;
+              const isPref = pref === s;
+              const isDefault = !pref && s === 'komiku';
+              return (
+                <button
+                  key={s}
+                  onClick={() => onPick(s)}
+                  disabled={!link?.hasChapterList}
+                  title={`${sourceLabel(s)}${link?.hasChapterList ? '' : ' (belum ada daftar chapter)'}`}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors text-left ${
+                    isActive ? 'bg-bg-secondary text-primary' : 'text-secondary hover:text-primary hover:bg-bg-secondary/60'
+                  } ${!link?.hasChapterList ? 'opacity-40' : ''}`}
+                >
+                  <SourceIcon source={s} dim="h-5 w-5" />
+                  <span className="capitalize flex-1">{sourceLabel(s)}</span>
+                  {isActive && <span className="text-[10px] text-muted">aktif</span>}
+                  {!isActive && isPref && <span className="text-[10px] text-accent">pilihanmu</span>}
+                  {!pref && isDefault && !isActive && <span className="text-[10px] text-muted">default</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Reader mode: sticky bar with all source badges ──
   return (
-    <div className={mode === 'detail' ? 'mb-4' : 'sticky top-16 z-40 mb-4'}>
-      <div className={mode === 'detail'
-        ? 'flex flex-wrap items-center justify-center gap-2'
-        : 'nav-island mx-auto flex items-center gap-2 overflow-x-auto px-3 py-2 rounded-xl'}
-        style={mode === 'reader' ? { maxWidth: 'min(1024px, 100%)' } : undefined}>
+    <div className="sticky top-16 z-40 mb-4">
+      <div className="nav-island mx-auto flex items-center gap-2 overflow-x-auto px-3 py-2 rounded-xl" style={{ maxWidth: 'min(1024px, 100%)' }}>
         <span className="text-[10px] uppercase tracking-wider text-muted shrink-0">Sumber:</span>
         {ordered.map((s) => {
           const link = links.find((l) => l.source === s);
           const isActive = s === currentSource;
-          const isDefault = !pref && s === 'komiku';
           const isPref = pref === s;
+          const isDefault = !pref && s === 'komiku';
           return (
             <button
               key={s}
               onClick={() => onPick(s)}
               disabled={!link?.hasChapterList}
-              title={`${s}${link?.hasChapterList ? '' : ' (belum ada daftar chapter)'}`}
+              title={`${sourceLabel(s)}${link?.hasChapterList ? '' : ' (belum ada daftar chapter)'}`}
               className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs transition-colors shrink-0 ${
                 isActive
                   ? 'bg-bg-secondary text-primary ring-1 ring-border-default'
@@ -105,7 +170,7 @@ export function SourceSwitcher({
               } ${!link?.hasChapterList ? 'opacity-40' : ''}`}
             >
               <SourceIcon source={s} />
-              <span className="capitalize">{s}</span>
+              <span className="capitalize">{sourceLabel(s)}</span>
               {isActive && <span className="text-[9px] text-muted">· aktif</span>}
               {!isActive && isPref && <span className="text-[9px] text-accent">· pilihanmu</span>}
               {!pref && isDefault && !isActive && <span className="text-[9px] text-muted">· default</span>}
@@ -115,17 +180,4 @@ export function SourceSwitcher({
       </div>
     </div>
   );
-}
-
-function SourceIcon({ source }: { source: string }) {
-  const icons: Record<string, string> = {
-    komiku: '/sources/komiku.png',
-    bacakomik: '/sources/bacakomik.png',
-    thrive: '/sources/thrive.png',
-    manhwaindo: '/sources/manhwaindo.png',
-  };
-  const src = icons[source];
-  if (!src) return null;
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={src} alt="" className="h-4 w-4 rounded-full object-cover ring-1 ring-white/15" />;
 }

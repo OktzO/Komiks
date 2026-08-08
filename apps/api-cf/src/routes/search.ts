@@ -8,7 +8,9 @@ import { retryUpstream } from '../lib/retry';
 export const router = new Hono<{ Bindings: Env }>();
 
 const normalizeTitle = (s: string): string =>
-  s.toLowerCase().normalize('NFKD').replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+  s.toLowerCase().normalize('NFKD').replace(/[^\w\s]/g, '')
+    .replace(/\b(komik|comic|manga|manhwa|manhua)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
 
 const recordHealth = (c: Context, source: string, start: number, ok: boolean, error?: string) => {
   c.executionCtx.waitUntil(

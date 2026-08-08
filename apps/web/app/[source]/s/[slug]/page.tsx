@@ -1,4 +1,4 @@
-import { getSeriesDetail, API_URL } from '@/lib/api';
+import { getSeriesDetail, getMangaSources, API_URL } from '@/lib/api';
 import { ChapterList } from '@/components/ChapterList';
 import { Synopsis } from '@/components/Synopsis';
 import { SourceBadge } from '@/components/SourceBadge';
@@ -13,8 +13,22 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
   if (!sourceId) return <div className="p-8 text-error">Missing ?id=mangaId</div>;
 
   let series: Awaited<ReturnType<typeof getSeriesDetail>>;
+  let allSources: string[] = [];
   try {
-    series = await getSeriesDetail(params.source, sourceId, 'id');
+    // Fetch detail + aggregated sources in parallel so the header can show
+    // every source that hosts this manga (badges), not just the current one.
+    const [s, srcs] = await Promise.all([
+      getSeriesDetail(params.source, sourceId, 'id'),
+      getMangaSources(params.source, sourceId).catch(() => null),
+    ]);
+    series = s;
+    if (srcs?.sources?.length) {
+      const srcNames = srcs.sources.map((x) => x.source);
+      if (!srcNames.includes(params.source)) srcNames.push(params.source);
+      allSources = srcNames;
+    } else {
+      allSources = [params.source];
+    }
   } catch (e) {
     return <div className="p-8 text-error">Gagal memuat: {String(e)}</div>;
   }
@@ -46,7 +60,7 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
         <div className="flex items-center justify-center gap-2 mt-2">
           <span className="text-[10px] px-2 py-0.5 border border-border-subtle rounded capitalize text-muted">{series.type}</span>
           <span className="text-[10px] px-2 py-0.5 border border-border-subtle rounded text-muted capitalize">{series.status}</span>
-          <SourceBadge sources={[params.source]} size="sm" />
+          <SourceBadge sources={allSources} size="sm" />
         </div>
         {/* Source picker — independent source switch */}
         <SourceSwitcher

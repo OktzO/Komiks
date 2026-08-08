@@ -47,6 +47,11 @@ export const getSeriesDetail = (source: string, sourceId: string, lang = 'id') =
 export const getSeries = (source: string, sourceId: string) =>
   apiWithFailover<{ data: Series }>(`/api/reader/${source}/series/${sourceId}`).then((r) => r.data);
 
+export const getMangaSources = (source: string, sourceId: string) =>
+  apiWithFailover<{ data: { sources: Array<{ source: string; sourceSlug: string; hasChapterList: boolean; chapterCount: number }>; canonicalSlug: string | null } }>(
+    `/api/reader/${source}/series/${sourceId}/sources`
+  ).then((r) => r.data);
+
 export const getChapters = (source: string, sourceId: string, lang = 'id') =>
   apiWithFailover<{ data: Chapter[] }>(`/api/reader/${source}/series/${sourceId}/chapters?lang=${lang}`).then((r) => r.data);
 

@@ -295,6 +295,51 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
             }
           }
           links = resolved;
+
+          // Auto-index (background, best-effort): persist resolved links to D1
+          // so the aggregation index builds itself from user activity without
+          // needing manual scrape jobs. The current source's series row is the
+          // canonical entry.
+          c.executionCtx.waitUntil((async () => {
+            try {
+              const slug = series!.slug || sourceId;
+              await db.upsertSeries({
+                slug,
+                title: series!.title,
+                external_id: series!.external_id ?? sourceId,
+                source,
+                synopsis: series!.synopsis ?? null,
+                type: series!.type,
+                status: series!.status ?? 'ongoing',
+                author: series!.author ?? null,
+                artist: series!.artist ?? null,
+                cover_image: series!.cover_image ?? null,
+                genres: series!.genres,
+                source_url: (series as unknown as Record<string, unknown>).source_url as string ?? null,
+                language: (series as unknown as Record<string, unknown>).language as string ?? null,
+              });
+              const row = await c.env.DB.prepare('SELECT id FROM series WHERE slug = ?1 LIMIT 1').bind(slug).first<{ id: number }>();
+              if (!row) return;
+              await db.upsertSourceLink({
+                mangaId: row.id,
+                source,
+                sourceSlug: sourceId,
+                hasChapterList: 1,
+                chapterCount: 0,
+                lastScrapedAt: Math.floor(Date.now() / 1000),
+              });
+              for (const r of resolved) {
+                await db.upsertSourceLink({
+                  mangaId: row.id,
+                  source: r.source,
+                  sourceSlug: r.sourceSlug,
+                  hasChapterList: r.hasChapterList ? 1 : 0,
+                  chapterCount: r.chapterCount,
+                  lastScrapedAt: Math.floor(Date.now() / 1000),
+                });
+              }
+            } catch { /* index persist is best-effort */ }
+          })());
         }
       }
     }
