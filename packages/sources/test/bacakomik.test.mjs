@@ -8,6 +8,7 @@ import { bacakomikAdapter } from '../bacakomik/index.ts';
 const detailFixture = readFileSync(new URL('../bacakomik/fixtures/detail.html', import.meta.url), 'utf8');
 const chapterFixture = readFileSync(new URL('../bacakomik/fixtures/chapter.html', import.meta.url), 'utf8');
 const searchFixture = readFileSync(new URL('../bacakomik/fixtures/search.html', import.meta.url), 'utf8');
+const homepageFixture = readFileSync(new URL('../bacakomik/fixtures/homepage.html', import.meta.url), 'utf8');
 
 test('search parses animepost cards with slug/title/type', () => {
   const adapter = bacakomikAdapter();
@@ -19,6 +20,16 @@ test('search parses animepost cards with slug/title/type', () => {
     assert.ok(it.source === 'bacakomik');
     assert.ok(['manga', 'manhwa', 'manhua'].includes(it.type));
   }
+});
+
+test('homepage listing parses cards with lazy covers', () => {
+  const adapter = bacakomikAdapter();
+  const items = adapter.searchFromFixtureForTest(homepageFixture);
+  assert.ok(items.length >= 20, `expected 20+ cards, got ${items.length}`);
+  assert.ok(items.some((s) => s.title === 'One Piece'));
+  assert.ok(items.some((s) => s.title === 'Nano Machine'));
+  const withCover = items.filter((s) => s.cover_image && s.cover_image.startsWith('http'));
+  assert.ok(withCover.length > 0, 'lazy covers resolved');
 });
 
 test('getSeries maps detail page to normalized Series', () => {

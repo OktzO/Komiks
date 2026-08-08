@@ -32,7 +32,8 @@ const parseRelativeDate = (raw: string): number | undefined => {
   return Math.floor(Date.now() / 1000) - secs;
 };
 
-// Parse search page cards: `.animepost` blocks.
+// Parse search/homepage cards: `.animepost` blocks (same markup both places,
+// homepage uses data-lazy-src for covers).
 const parseSearchHtml = (html: string): Series[] => {
   const blocks = html.split('<div class="animepost">').slice(1);
   const items: Series[] = [];
@@ -40,7 +41,9 @@ const parseSearchHtml = (html: string): Series[] => {
     const href = b.match(/href="([^"]*\/komik\/[^"]+)"/)?.[1] ?? '';
     const slug = href.split('/').filter(Boolean).pop() ?? '';
     const title = b.match(/<h4>([^<]+)<\/h4>/)?.[1]?.trim() ?? '';
-    const img = b.match(/<img[^>]*src="([^"]+)"/)?.[1] ?? null;
+    const lazyImg = b.match(/data-lazy-src="([^"]+)"/)?.[1];
+    const plainImg = b.match(/<img[^>]*src="(https?:\/\/[^"]+)"/)?.[1];
+    const img = lazyImg ?? plainImg ?? null;
     const typeRaw = b.match(/typeflag\s*([A-Za-z]+)/)?.[1]?.toLowerCase() ?? 'manga';
     const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
     if (title) {
@@ -120,7 +123,10 @@ export const bacakomikAdapter = (env?: BacaFetchEnv) => {
     sourceKey: 'bacakomik' as const,
 
     async search({ q, limit = 20 }: { q: string; limit?: number; offset?: number }): Promise<Series[]> {
-      const url = `${BACA_BASE}/?s=${encodeURIComponent(q)}`;
+      // Empty query → homepage listing (latest updates). Non-empty → ?s= search.
+      const url = q.trim()
+        ? `${BACA_BASE}/?s=${encodeURIComponent(q.trim())}`
+        : `${BACA_BASE}/`;
       const html = await fetchHtml(url, env);
       const items = parseSearchHtml(html);
       return items.slice(0, limit);

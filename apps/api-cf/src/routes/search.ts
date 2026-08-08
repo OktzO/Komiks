@@ -62,36 +62,63 @@ router.get('/search', async (c: Context) => {
     localResults = r.results ?? [];
   }
 
-  // Empty query → prefer local D1 list (saves upstream fetches when DB has
-  // data). BUT if D1 is empty (cold DB / fresh deploy), fall back to Komiku
-  // popular listings so the homepage isn't blank.
-  // its empty-query search returns random results, not useful for browsing.
+  // Empty query → homepage feed. Prefer local D1 when populated; else fetch
+  // homepage listings from ALL sources in parallel and merge by title so a
+  // manga present on multiple sources gets the sources badges automatically.
   if (!q) {
-    if (localResults.length === 0) {
-      // D1 cold — fetch Komiku popular listings as homepage feed.
-      const a = getAdapter('komiku', c.env);
-      if (a) {
-        const start = Date.now();
-        try {
-          const komiku = await retryUpstream(() => a.search({ q: '', limit }));
-          recordHealth(c, 'komiku', start, true);
-          const merged = komiku.map((s) => ({ data: { ...s, sources: ['komiku'] }, sources: ['komiku'] }));
-          const payload = { data: merged, total: merged.length, sources_queried: ['komiku'], cached: false };
-          c.executionCtx.waitUntil(
-            c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
-          );
-          c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
-          return json(c, payload);
-        } catch (e) {
-          recordHealth(c, 'komiku', start, false, String(e));
-        }
+    if (localResults.length > 0) {
+      const merged = (localResults as unknown as Array<Record<string, unknown>>).map((row) => ({
+        data: { ...row, sources: [(row.source as string) || 'local'] },
+        sources: [(row.source as string) || 'local'],
+      }));
+      const payload = { data: merged, total: merged.length, sources_queried: ['local'], cached: false };
+      c.executionCtx.waitUntil(
+        c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
+      );
+      c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+      return json(c, payload);
+    }
+
+    // D1 cold — fetch homepage listings from all sources in parallel.
+    const sourceDefs: Array<{ key: string; start: number }> = [
+      { key: 'komiku', start: Date.now() },
+      { key: 'bacakomik', start: Date.now() },
+      { key: 'manhwaindo', start: Date.now() },
+    ];
+    const settled = await Promise.allSettled(
+      sourceDefs.map(({ key, start }) =>
+        retryUpstream(async () => {
+          const a = getAdapter(key, c.env);
+          if (!a) throw new Error(`${key} adapter unavailable`);
+          return { key, start, results: await a.search({ q: '', limit: limit > 20 ? limit : 24 }) };
+        })
+      )
+    );
+
+    const allResults: Record<string, { data: any; sources: string[] }> = {};
+    const addResult = (series: any, source: string) => {
+      const key = normalizeTitle(series.title || series.slug || '');
+      if (!key) return;
+      if (allResults[key]) {
+        if (!allResults[key].sources.includes(source)) allResults[key].sources.push(source);
+      } else {
+        allResults[key] = { data: { ...series, sources: [source] }, sources: [source] };
+      }
+    };
+    const sourcesQueried: string[] = [];
+    for (const r of settled) {
+      if (r.status === 'fulfilled') {
+        sourcesQueried.push(r.value.key);
+        recordHealth(c, r.value.key, r.value.start, true);
+        for (const s of r.value.results) addResult(s, r.value.key);
+      } else {
+        const reason = String((r as PromiseRejectedResult).reason ?? '');
+        const errKey = reason.includes('bacakomik') ? 'bacakomik' : reason.includes('manhwaindo') ? 'manhwaindo' : 'komiku';
+        recordHealth(c, errKey, Date.now(), false, reason.slice(0, 200));
       }
     }
-    const merged = (localResults as unknown as Array<Record<string, unknown>>).map((row) => ({
-      data: { ...row, sources: [(row.source as string) || 'local'] },
-      sources: [(row.source as string) || 'local'],
-    }));
-    const payload = { data: merged, total: merged.length, sources_queried: ['local'], cached: false };
+    const merged = Object.values(allResults).slice(0, limit > 20 ? limit : 60);
+    const payload = { data: merged, total: merged.length, sources_queried: sourcesQueried, cached: false };
     c.executionCtx.waitUntil(
       c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
     );

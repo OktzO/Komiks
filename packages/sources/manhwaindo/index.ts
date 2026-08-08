@@ -130,7 +130,10 @@ export const manhwaindoAdapter = (env?: ManhwaFetchEnv) => {
     sourceKey: 'manhwaindo' as const,
 
     async search({ q, limit = 20 }: { q: string; limit?: number; offset?: number }): Promise<Series[]> {
-      const url = `${MANHWA_BASE}/?s=${encodeURIComponent(q)}`;
+      // Empty query → homepage listing (latest updates). Non-empty → ?s= search.
+      const url = q.trim()
+        ? `${MANHWA_BASE}/?s=${encodeURIComponent(q.trim())}`
+        : `${MANHWA_BASE}/`;
       const html = await fetchHtml(url, env);
       const items = parseSearchHtml(html);
       return items.slice(0, limit);
