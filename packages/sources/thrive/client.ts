@@ -1,4 +1,6 @@
 // Thrive.moe HTTP client: UA fetch + __NEXT_DATA__ extraction.
+import { drainResponse } from '@manga-platform/shared/http';
+
 export const THRIVE_BASE = 'https://thrive.moe';
 
 export const THRIVE_UA =
@@ -27,7 +29,7 @@ export const fetchHtml = async (url: string, timeoutMs = 15000): Promise<string>
     headers: { 'User-Agent': THRIVE_UA, 'Referer': THRIVE_BASE + '/' },
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`thrive fetch ${res.status} ${url}`);
+  if (!res.ok) { await drainResponse(res); throw new Error(`thrive fetch ${res.status} ${url}`); }
   return res.text();
 };
 

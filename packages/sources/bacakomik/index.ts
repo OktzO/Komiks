@@ -3,6 +3,7 @@
 // Cloudflare Bot Fight on pages — hybrid fetch (plain fetch + Puppeteer
 // fallback via MY_BROWSER binding). See client.ts.
 import type { Series, Chapter } from '@manga-platform/shared';
+import { drainResponse } from '@manga-platform/shared/http';
 import { BACA_BASE, fetchHtml, fetchRobots, isPathAllowed } from './client.js';
 import type { BacaFetchEnv, RobotsResult } from './client.js';
 
@@ -210,6 +211,7 @@ export const bacakomikAdapter = (env?: BacaFetchEnv) => {
           headers: { 'User-Agent': 'mozilla' },
           signal: AbortSignal.timeout(5000),
         });
+        await drainResponse(res);
         return { healthy: res.ok, latency_ms: Date.now() - start };
       } catch (e) {
         return { healthy: false, latency_ms: Date.now() - start, error: String(e) };

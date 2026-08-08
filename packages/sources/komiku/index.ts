@@ -2,6 +2,7 @@
 // Komiku adapter: PRIMARY source. Fetches HTML directly from komiku.org (no Puppeteer).
 // Komiku site returns server-rendered HTML — parsing via regex avoids browser rendering rate limits.
 import type { Series, Chapter } from '@manga-platform/shared';
+import { drainResponse } from '@manga-platform/shared/http';
 import { KOMIKU_SELECTORS } from './selectors.js';
 import { fetchRobots, isPathAllowed, KOMIKU_BASE } from './client.js';
 import type { RobotsResult } from './client.js';
@@ -82,7 +83,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
         headers: { 'User-Agent': 'manga-platform/1.0', 'Referer': KOMIKU_BASE + '/' },
         signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) return [];
+      if (!res.ok) { await drainResponse(res); return []; }
       const html = await res.text();
       const items = parseSearchHtml(html, KOMIKU_SELECTORS.search);
       return items.slice(0, limit);
@@ -93,7 +94,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
         headers: { 'User-Agent': 'manga-platform/1.0' },
         signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error(`komiku getSeries ${res.status}`);
+      if (!res.ok) { await drainResponse(res); throw new Error(`komiku getSeries ${res.status}`); }
       const html = await res.text();
       const data = parseDetailHtml(html);
       // Komiku detail HTML lazily-loads the cover; the itemprop selector often
@@ -103,16 +104,18 @@ export const komikuAdapter = (env?: AdapterEnv) => {
       if (!cover) {
         try {
           const qWords = sourceId.split('-').slice(0, 2).join(' ');
-          const searchRes = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
-            headers: { 'User-Agent': 'manga-platform/1.0', 'Referer': KOMIKU_BASE + '/' },
-            signal: AbortSignal.timeout(8000),
-          });
-          if (searchRes.ok) {
-            const sHtml = await searchRes.text();
-            const items = parseSearchHtml(sHtml, KOMIKU_SELECTORS.search);
-            const match = items.find((it) => it.slug === sourceId);
-            if (match?.cover_image) cover = match.cover_image;
-          }
+           const searchRes = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
+             headers: { 'User-Agent': 'manga-platform/1.0', 'Referer': KOMIKU_BASE + '/' },
+             signal: AbortSignal.timeout(8000),
+           });
+           if (searchRes.ok) {
+             const sHtml = await searchRes.text();
+             const items = parseSearchHtml(sHtml, KOMIKU_SELECTORS.search);
+             const match = items.find((it) => it.slug === sourceId);
+             if (match?.cover_image) cover = match.cover_image;
+           } else {
+             await drainResponse(searchRes);
+           }
         } catch { /* cover fallback optional */ }
       }
       return {
@@ -130,7 +133,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
         headers: { 'User-Agent': 'manga-platform/1.0' },
         signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error(`komiku listChapters ${res.status}`);
+      if (!res.ok) { await drainResponse(res); throw new Error(`komiku listChapters ${res.status}`); }
       const html = await res.text();
       const links = Array.from(html.matchAll(/<a[^>]*href="(\/[^"]*-chapter-[\d.-]+\/?)"[^>]*title="([^"]*)"/g)).map((m) => {
         const href = m[1];
@@ -169,7 +172,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
         headers: { 'User-Agent': 'manga-platform/1.0' },
         signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error(`komiku fetchPageUrls ${res.status}`);
+      if (!res.ok) { await drainResponse(res); throw new Error(`komiku fetchPageUrls ${res.status}`); }
       const html = await res.text();
       const urls = Array.from(html.matchAll(/<img[^>]*src="(https?:\/\/img\.komiku\.org\/[^"]+)"/g)).map((m) => m[1]);
       // Komiku images require Referer header — pass to image proxy.
@@ -181,7 +184,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
         headers: { 'User-Agent': 'manga-platform/1.0' },
         signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error(`komiku scrapeUrl ${res.status}`);
+      if (!res.ok) { await drainResponse(res); throw new Error(`komiku scrapeUrl ${res.status}`); }
       const html = await res.text();
       const data = parseDetailHtml(html);
       const slug = url.split('/').filter(Boolean).pop() ?? slugify(data.title);
@@ -229,6 +232,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
       const start = Date.now();
       try {
         const res = await fetch(KOMIKU_BASE, { signal: AbortSignal.timeout(5000) });
+        await drainResponse(res);
         return { healthy: res.ok, latency_ms: Date.now() - start };
       } catch (e) {
         return { healthy: false, latency_ms: Date.now() - start, error: String(e) };

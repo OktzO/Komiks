@@ -2,6 +2,7 @@
 // ManhwaIndo.my adapter. WordPress + mangareader theme, server-rendered HTML.
 // Cloudflare Bot Fight — hybrid fetch (plain + MY_BROWSER Puppeteer fallback).
 import type { Series, Chapter } from '@manga-platform/shared';
+import { drainResponse } from '@manga-platform/shared/http';
 import { MANHWA_BASE, fetchHtml, fetchRobots, isPathAllowed } from './client.js';
 import type { ManhwaFetchEnv, RobotsResult } from './client.js';
 
@@ -38,6 +39,7 @@ const parseSearchHtml = (html: string): Series[] => {
     const title = b.match(/<div class="tt">\s*([^<]+?)\s*<\/div>/)?.[1]?.trim()
       ?? b.match(/<div class="tt">([^<]+)<\/div>/)?.[1]?.trim() ?? '';
     const img = b.match(/data-src="([^"]+)"/)?.[1] ?? b.match(/src="(http[^"]+)"/)?.[1] ?? null;
+    const cover_image = img ? img.replace(/^http:\/\//i, 'https://') : null;
     const typeRaw = b.match(/typename\s*([A-Za-z]+)/)?.[1]?.toLowerCase() ?? 'manga';
     const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
     if (title) {
@@ -46,7 +48,7 @@ const parseSearchHtml = (html: string): Series[] => {
         title,
         source: 'manhwaindo',
         source_url: href.startsWith('http') ? href : MANHWA_BASE + href,
-        cover_image: img,
+        cover_image: cover_image,
         type,
         status: 'ongoing',
       } as Series);
@@ -65,7 +67,7 @@ const parseDetailHtml = (html: string): {
   const altTitle = html.match(/<span class="alternative">([^<]+)<\/span>/)?.[1]?.trim() ?? null;
   const synopsis = html.match(/class="entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]
     ?.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, '').trim() ?? null;
-  const cover = html.match(/property="og:image"[^>]*content="([^"]+)"/)?.[1] ?? null;
+  const cover = html.match(/property="og:image"[^>]*content="([^"]+)"/)?.[1]?.replace(/^http:\/\//i, 'https://') ?? null;
   const genresBlocks = Array.from(html.matchAll(/<span class="mgen">([\s\S]*?)<\/span>/g));
   const genres = genresBlocks[0]?.[1]
     ? Array.from(genresBlocks[0][1].matchAll(/<a[^>]*>([^<]+)<\/a>/g)).map((m) => m[1].trim()).filter(Boolean)
@@ -217,6 +219,7 @@ export const manhwaindoAdapter = (env?: ManhwaFetchEnv) => {
           headers: { 'User-Agent': 'mozilla' },
           signal: AbortSignal.timeout(5000),
         });
+        await drainResponse(res);
         return { healthy: res.ok, latency_ms: Date.now() - start };
       } catch (e) {
         return { healthy: false, latency_ms: Date.now() - start, error: String(e) };

@@ -98,7 +98,7 @@ export function Reader({
         <div className="flex gap-2 mb-4">
           <button onClick={() => setMode('page')} className="px-3 py-1 text-xs border border-border-default rounded hover:bg-elevated">Mode Halaman</button>
         </div>
-        <div className="flex flex-col items-center gap-1">
+        <div className="flex flex-col items-center">
           {visible.map((u, i) => pageSlot(i, u, retries[i] ?? 0))}
           {visibleCount < urls.length && (
             <button onClick={loadMore} className="px-4 py-2 text-sm border border-border-default rounded hover:bg-elevated mt-2">Muat lebih banyak</button>

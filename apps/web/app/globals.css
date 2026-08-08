@@ -193,3 +193,30 @@ a:hover { color: var(--accent); }
   color: var(--accent);
   text-shadow: 0 0 24px oklch(98% 0 0 / 0.25);
 }
+
+/* ── Home: rise-in reveal (hero stack) ── */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.anim-rise { animation: riseIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* ── Home: update ticker (CSS-only marquee, GPU transform) ── */
+.marquee {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 48s linear infinite;
+}
+.marquee:hover .marquee-track { animation-play-state: paused; }
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .anim-rise, .marquee-track { animation: none; }
+  .marquee { overflow-x: auto; mask-image: none; -webkit-mask-image: none; }
+}

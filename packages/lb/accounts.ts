@@ -2,6 +2,7 @@
 // Tokens are AES-GCM encrypted at rest; only token_last4 is returned to clients.
 import type { D1Database } from '@cloudflare/workers-types';
 import type { LbProvider, LbAccountSafe } from '@manga-platform/shared/types';
+import { drainResponse } from '@manga-platform/shared/http';
 import type { Db } from '@manga-platform/db';
 import { encryptToken, decryptToken } from './crypto.ts';
 
@@ -21,7 +22,7 @@ const verifyCloudflare = async (token: string): Promise<VerifyResult> => {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(5000),
   });
-  if (!res.ok) return { ok: false, err: `cloudflare verify HTTP ${res.status}` };
+  if (!res.ok) { await drainResponse(res); return { ok: false, err: `cloudflare verify HTTP ${res.status}` }; }
   const body = (await res.json()) as { success?: boolean; result?: { status?: string } };
   if (body.success && body.result?.status === 'active') return { ok: true };
   return { ok: false, err: `cloudflare token not active: ${JSON.stringify(body)}` };
@@ -33,7 +34,7 @@ const verifyVercel = async (token: string): Promise<VerifyResult> => {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(5000),
   });
-  if (!res.ok) return { ok: false, err: `vercel verify HTTP ${res.status}` };
+  if (!res.ok) { await drainResponse(res); return { ok: false, err: `vercel verify HTTP ${res.status}` }; }
   const body = (await res.json()) as { user?: unknown };
   if (body.user) return { ok: true };
   return { ok: false, err: 'vercel user lookup empty' };

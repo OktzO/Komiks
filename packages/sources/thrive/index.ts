@@ -4,6 +4,7 @@
 // Backs content from MangaDex UUIDs but we scrape Thrive's own HTML, never
 // the MangaDex API.
 import type { Series, Chapter } from '@manga-platform/shared';
+import { drainResponse } from '@manga-platform/shared/http';
 import { THRIVE_BASE, fetchHtml, parseNextData, fetchRobots, isPathAllowed } from './client.js';
 import type { RobotsResult } from './client.js';
 
@@ -200,6 +201,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
           headers: { 'User-Agent': 'mozilla' },
           signal: AbortSignal.timeout(5000),
         });
+        await drainResponse(res);
         return { healthy: res.ok, latency_ms: Date.now() - start };
       } catch (e) {
         return { healthy: false, latency_ms: Date.now() - start, error: String(e) };

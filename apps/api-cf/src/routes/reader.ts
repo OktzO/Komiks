@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { getAdapter } from '@manga-platform/sources';
 import { buildRing, accountFor } from '@manga-platform/shared/r2-routing';
+import { drainResponse } from '@manga-platform/shared/http';
 import { getDb } from '../lib/context';
 import type { Env, Context } from '../lib/context';
 import { allowedOriginFor } from '../lib/context';
@@ -140,6 +141,7 @@ const uploadToR2 = async (c: Context, opts: { slug: string; chapterId: string; p
     const account = cfg.accounts[idx];
     const r2Key = `komiku/${opts.slug}/${opts.chapterId}/${opts.pageNo}`;
     const res = await s3PutObject(account, r2Key, opts.body, opts.contentType);
+    await drainResponse(res);
     if (!res.ok) throw new Error(`r2 upload ${res.status}`);
     await getDb(c).markPageR2Uploaded({
       chapterId: opts.chapterId,
@@ -447,6 +449,10 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
         cf: { cacheEverything: true, cacheTtl: 3600 },
       });
       if (r.status === 200) { upstream = r; break; }
+      // Non-2xx: drain the body before retrying so the subrequest (bounded by
+      // the 6-concurrent-fetch limit) is released. Un-drained bodies keep the
+      // fetch "in flight" and can trip CF's deadlock-avoidance cancellation.
+      await drainResponse(r);
       // 3xx/4xx/5xx → retry
     } catch {
       // network error → retry

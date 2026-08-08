@@ -161,6 +161,8 @@ router.post('/scrape', async (c: Context) => {
             const { hashImage } = await import('@manga-platform/vision');
             const hash = await hashImage(imgBytes, ct);
             await db.addImageHash({ seriesSlug: result.series.slug, hash, r2Key, imageType: 'cover' });
+          } else {
+            await imgRes.body?.cancel().catch(() => {});
           }
         } catch (e) {
           console.error('[scrape] cover hash failed:', e);
