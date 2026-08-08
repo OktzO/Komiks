@@ -275,10 +275,15 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
               .map(async (s) => {
                 const a = getAdapter(s, c.env);
                 if (!a) return null;
-                const results = await a.search({ q: series!.title.slice(0, 60), limit: 8 }).catch(() => []);
-                const hit = results.find((r) => {
+                const results = await a.search({ q: series!.title.slice(0, 60), limit: 10 }).catch(() => []);
+                // Prefer exact normalized title match; fallback to prefix match.
+                const exact = results.find((r) => {
                   const n = r.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-                  return n === norm || (norm.length > 10 && n.includes(norm.slice(0, 20)));
+                  return n === norm;
+                });
+                const hit = exact ?? results.find((r) => {
+                  const n = r.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+                  return norm.length > 10 && n.startsWith(norm.slice(0, 20));
                 });
                 return hit ? { source: s, sourceSlug: hit.slug, hasChapterList: true, chapterCount: 0 } : null;
               })
@@ -338,7 +343,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
                   lastScrapedAt: Math.floor(Date.now() / 1000),
                 });
               }
-            } catch { /* index persist is best-effort */ }
+            } catch (e) { console.error('[sources] auto-index failed:', String(e)); }
           })());
         }
       }
