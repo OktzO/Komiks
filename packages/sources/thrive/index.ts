@@ -73,10 +73,34 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
     sourceKey: 'thrive' as const,
 
     // Thrive has no server-side search (`?route=` is client-only SSG-ignored).
-    // Build an index from genre pages, then match titles locally.
+    // Empty query → homepage listing (Update Terbaru cards). Non-empty →
+    // build an index from genre pages, then match titles locally.
     async search({ q, limit = 20 }: { q: string; limit?: number; offset?: number }): Promise<Series[]> {
       const query = q.trim().toLowerCase();
-      if (!query) return [];
+      if (!query) {
+        const html = await fetchHtml(`${THRIVE_BASE}/`, 10000);
+        const items: Series[] = [];
+        const seen = new Set<string>();
+        // Homepage carousel cards: <a href="/title/<uuid>">...<img src="cdn...">...
+        // <div class="line-clamp-2 ...">Title</div>. Match img + title in one pass.
+        for (const m of html.matchAll(/href="\/title\/([0-9a-f-]{36})"[^>]*>[\s\S]*?<img[^>]*src="(https:\/\/cdn\.thrive\.moe\/covers\/[^"]+)"[\s\S]*?<div[^>]*class="[^"]*line-clamp-2[^"]*"[^>]*>([^<]+)<\/div>/g)) {
+          const id = m[1];
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const title = m[3].trim();
+          items.push({
+            slug: id,
+            external_id: id,
+            source: 'thrive',
+            source_url: `${THRIVE_BASE}/title/${id}/`,
+            title,
+            cover_image: m[2],
+            type: 'manga',
+            status: 'ongoing',
+          } as Series);
+        }
+        return items.slice(0, limit);
+      }
       const genreSlugs = [
         'action', 'adventure', 'comedy', 'drama', 'fantasy', 'romance',
         'sci-fi', 'slice-of-life', 'shounen', 'shoujo', 'mystery', 'seinen',
@@ -184,6 +208,27 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
 
     // Fixture helpers — used by unit tests only (no network).
     getSeriesFromFixtureForTest(d: ThriveDetail): Series { return toSeries(d); },
+    searchHomepageFromFixtureForTest(html: string): Series[] {
+      const items: Series[] = [];
+      const seen = new Set<string>();
+      for (const m of html.matchAll(/href="\/title\/([0-9a-f-]{36})"[^>]*>[\s\S]*?<img[^>]*src="(https:\/\/cdn\.thrive\.moe\/covers\/[^"]+)"[\s\S]*?<div[^>]*class="[^"]*line-clamp-2[^"]*"[^>]*>([^<]+)<\/div>/g)) {
+        const id = m[1];
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const title = m[3].trim();
+        items.push({
+          slug: id,
+          external_id: id,
+          source: 'thrive',
+          source_url: `${THRIVE_BASE}/title/${id}/`,
+          title,
+          cover_image: m[2],
+          type: 'manga',
+          status: 'ongoing',
+        } as Series);
+      }
+      return items;
+    },
     listChaptersFromFixtureForTest(d: ThriveDetail): Chapter[] {
       return (d.chapterlist || []).map((c) => ({
         id: c.chapter_id,

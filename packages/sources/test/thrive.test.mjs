@@ -8,6 +8,7 @@ import { thriveAdapter } from '../thrive/index.ts';
 
 const detailFixture = JSON.parse(readFileSync(new URL('../thrive/fixtures/detail.json', import.meta.url), 'utf8'));
 const chapterFixture = JSON.parse(readFileSync(new URL('../thrive/fixtures/chapter.json', import.meta.url), 'utf8'));
+const homepageFixture = readFileSync(new URL('../thrive/fixtures/homepage.html', import.meta.url), 'utf8');
 
 test('parseNextData extracts pageProps from __NEXT_DATA__ HTML', () => {
   const html = `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(detailFixture)}</script></body></html>`;
@@ -50,8 +51,12 @@ test('fetchPageUrls builds cdn.thrive.moe URLs from prefix + images', () => {
   assert.equal(urls[0].proxyHeaders?.Referer, 'https://thrive.moe/');
 });
 
-test('search returns empty for empty query (no network)', async () => {
+test('homepage listing parses carousel cards with covers', () => {
   const adapter = thriveAdapter();
-  const out = await adapter.search({ q: '' });
-  assert.deepEqual(out, []);
+  const items = adapter.searchHomepageFromFixtureForTest(homepageFixture);
+  assert.ok(items.length >= 20, `expected 20+ cards, got ${items.length}`);
+  assert.ok(items.some((s) => s.slug === 'ba8730b3-cef9-4d99-97bb-bcfeeca6a61e'));
+  const withCover = items.filter((s) => s.cover_image);
+  assert.ok(withCover.length > 0, 'covers resolved');
+  assert.match(withCover[0].cover_image, /cdn\.thrive\.moe\/covers/);
 });

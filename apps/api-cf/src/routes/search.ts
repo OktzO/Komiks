@@ -64,27 +64,14 @@ router.get('/search', async (c: Context) => {
     localResults = r.results ?? [];
   }
 
-  // Empty query → homepage feed. Prefer local D1 when populated; else fetch
-  // homepage listings from ALL sources in parallel and merge by title so a
-  // manga present on multiple sources gets the sources badges automatically.
+  // Empty query → homepage feed. Merge local D1 rows WITH live homepage
+  // listings from all sources, deduped by normalized title so a manga on
+  // multiple sources gets all its source badges.
   if (!q) {
-    if (localResults.length > 0) {
-      const merged = (localResults as unknown as Array<Record<string, unknown>>).map((row) => ({
-        data: { ...row, sources: [(row.source as string) || 'local'] },
-        sources: [(row.source as string) || 'local'],
-      }));
-      const payload = { data: merged, total: merged.length, sources_queried: ['local'], cached: false };
-      c.executionCtx.waitUntil(
-        c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
-      );
-      c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
-      return json(c, payload);
-    }
-
-    // D1 cold — fetch homepage listings from all sources in parallel.
     const sourceDefs: Array<{ key: string; start: number }> = [
       { key: 'komiku', start: Date.now() },
       { key: 'bacakomik', start: Date.now() },
+      { key: 'thrive', start: Date.now() },
       { key: 'manhwaindo', start: Date.now() },
     ];
     const settled = await Promise.allSettled(
@@ -115,9 +102,13 @@ router.get('/search', async (c: Context) => {
         for (const s of r.value.results) addResult(s, r.value.key);
       } else {
         const reason = String((r as PromiseRejectedResult).reason ?? '');
-        const errKey = reason.includes('bacakomik') ? 'bacakomik' : reason.includes('manhwaindo') ? 'manhwaindo' : 'komiku';
+        const errKey = ['bacakomik', 'thrive', 'manhwaindo'].find((k) => reason.includes(k)) ?? 'komiku';
         recordHealth(c, errKey, Date.now(), false, reason.slice(0, 200));
       }
+    }
+    // Local D1 rows join the feed (source badge from row.source).
+    for (const row of localResults as unknown as Array<Record<string, unknown>>) {
+      addResult(row, (row.source as string) || 'local');
     }
     const merged = Object.values(allResults).slice(0, limit > 20 ? limit : 60);
     const payload = { data: merged, total: merged.length, sources_queried: sourcesQueried, cached: false };

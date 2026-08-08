@@ -16,7 +16,7 @@ export default async function StatusPage() {
   return (
     <main className="max-w-4xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-semibold mb-1">Status Sumber Data</h1>
-      <p className="text-secondary text-sm mb-6">Status sumber manga berdasarkan aktivitas terakhir (Komiku, BacaKomik, ManhwaIndo)</p>
+      <p className="text-secondary text-sm mb-6">Status sumber manga berdasarkan aktivitas terakhir (Komiku, BacaKomik, Thrive, ManhwaIndo)</p>
 
       {error && <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>}
 
