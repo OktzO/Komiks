@@ -8,7 +8,7 @@ router.get('/source-status', async (c: Context) => {
   const db = getDb(c);
   const sources: { source: string; healthy: boolean; latency_ms: number | null; last_checked_at: number; error?: string | null }[] = [];
 
-  for (const key of ['komiku'] as const) {
+  for (const key of ['komiku', 'bacakomik', 'manhwaindo'] as const) {
     const row = await db.getLatestSourceHealth(key);
     if (row) {
       sources.push({

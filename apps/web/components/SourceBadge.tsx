@@ -6,9 +6,9 @@ export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo';
 export const SOURCE_ORDER: SourceKey[] = ['komiku', 'bacakomik', 'thrive', 'manhwaindo'];
 
 const SOURCE_ICONS: Record<string, string> = {
-  komiku: '/sources/komiku.ico',
-  bacakomik: '/sources/bacakomik.jpg',
-  thrive: '/sources/thrive.ico',
+  komiku: '/sources/komiku.png',
+  bacakomik: '/sources/bacakomik.png',
+  thrive: '/sources/thrive.png',
   manhwaindo: '/sources/manhwaindo.png',
 };
 

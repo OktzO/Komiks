@@ -107,9 +107,9 @@ export function SourceSwitcher({
 
 function SourceIcon({ source }: { source: string }) {
   const icons: Record<string, string> = {
-    komiku: '/sources/komiku.ico',
-    bacakomik: '/sources/bacakomik.jpg',
-    thrive: '/sources/thrive.ico',
+    komiku: '/sources/komiku.png',
+    bacakomik: '/sources/bacakomik.png',
+    thrive: '/sources/thrive.png',
     manhwaindo: '/sources/manhwaindo.png',
   };
   const src = icons[source];

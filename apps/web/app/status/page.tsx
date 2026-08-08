@@ -1,4 +1,5 @@
 import { getSourceStatus } from '@/lib/api';
+import { SourceBadge, sourceLabel } from '@/components/SourceBadge';
 
 export const revalidate = 60;
 
@@ -15,7 +16,7 @@ export default async function StatusPage() {
   return (
     <main className="max-w-4xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-semibold mb-1">Status Sumber Data</h1>
-      <p className="text-secondary text-sm mb-6">Status sumber manga berdasarkan aktivitas terakhir (Komiku)</p>
+      <p className="text-secondary text-sm mb-6">Status sumber manga berdasarkan aktivitas terakhir (Komiku, BacaKomik, ManhwaIndo)</p>
 
       {error && <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>}
 
@@ -25,7 +26,10 @@ export default async function StatusPage() {
           return (
             <div key={s.source} className="border border-subtle rounded p-4 bg-card">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-primary capitalize">{s.source}</span>
+                <span className="flex items-center gap-2 text-sm font-medium text-primary capitalize">
+                  <SourceBadge sources={[s.source]} size="md" />
+                  {sourceLabel(s.source)}
+                </span>
                 <span className={`text-xs px-2 py-1 rounded border ${s.healthy ? 'bg-green-900 text-green-200 border-green-700' : 'bg-red-900 text-red-200 border-red-700'}`}>
                   {s.healthy ? 'Sehat' : 'Tidak Sehat'}
                 </span>
