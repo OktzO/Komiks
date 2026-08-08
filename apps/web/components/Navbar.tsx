@@ -40,6 +40,12 @@ export function Navbar() {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // Reader route: `/[source]/s/[slug]/[chapterId]` — navbar disembunyikan,
+  // digantikan chrome reader (top bar + toolbox) di ReaderShell. Diletakkan
+  // SETELAH semua hooks → jumlah hook selalu sama di tiap route (rules-of-hooks).
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length === 4 && segments[1] === 's') return null;
+
   return (
     <header id="navbar" className="fixed inset-x-0 top-0 z-50">
       <div className="nav-island relative mx-auto flex items-center justify-between px-5 py-3">

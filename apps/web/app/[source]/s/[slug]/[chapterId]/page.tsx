@@ -1,8 +1,6 @@
 export const runtime = 'edge';
-import { getChapter, API_URL, r2UrlFor } from '@/lib/api';
-import { Reader } from '@/components/Reader';
-import { SourceSwitcher } from '@/components/SourceSwitcher';
-import Link from 'next/link';
+import { getChapter, getSeries, API_URL, r2UrlFor } from '@/lib/api';
+import { ReaderShell } from '@/components/ReaderShell';
 
 export const revalidate = 300;
 
@@ -12,6 +10,13 @@ export default async function ChapterReader({ params }: { params: { source: stri
     chapter = await getChapter(params.source, params.chapterId);
   } catch (e) {
     return <div className="p-8 text-error">Gagal memuat chapter: {String(e)}</div>;
+  }
+
+  let series;
+  try {
+    series = await getSeries(params.source, params.slug);
+  } catch {
+    series = null;
   }
 
   const pages = chapter.pages || [];
@@ -30,23 +35,17 @@ export default async function ChapterReader({ params }: { params: { source: stri
   }));
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-6">
-      <SourceSwitcher
-        currentSource={params.source}
-        sourceId={params.slug}
-        canonicalSlug={params.slug}
-        chapterNumber={chapter.chapter_number ?? 0}
-        apiUrl={API_URL}
-      />
-      <div className="mb-4">
-        <Link href={`/${params.source}/s/${chapter.series_slug}`} className="text-secondary text-sm hover:text-accent">← Daftar Chapter</Link>
-        <h1 className="text-lg font-medium mt-1">Chapter {chapter.chapter_number}{chapter.title ? `: ${chapter.title}` : ''}</h1>
-      </div>
-      {r2Pages.length === 0 ? (
-        <div className="text-muted text-sm py-8 text-center">Tidak ada halaman.</div>
-      ) : (
-        <Reader pages={r2Pages} apiUrl={API_URL} nextChapterUrl={nextChapterUrl} />
-      )}
-    </main>
+    <ReaderShell
+      source={params.source}
+      slug={params.slug}
+      chapterId={params.chapterId}
+      chapterNumber={chapterNum}
+      chapterTitle={chapter.title}
+      seriesTitle={series?.title || params.slug}
+      seriesType={series?.type}
+      pages={r2Pages}
+      apiUrl={API_URL}
+      nextChapterUrl={nextChapterUrl}
+    />
   );
 }

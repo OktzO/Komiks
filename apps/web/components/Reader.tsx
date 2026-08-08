@@ -13,10 +13,16 @@ export function Reader({
   pages,
   apiUrl,
   nextChapterUrl,
+  mode: modeProp,
+  onModeChange,
+  onActivePage,
 }: {
   pages: { proxyUrl: string; r2Url?: string | null }[];
   apiUrl: string;
   nextChapterUrl?: string | null;
+  mode?: 'scroll' | 'page';
+  onModeChange?: (m: 'scroll' | 'page') => void;
+  onActivePage?: (i: number) => void;
 }) {
   const [mode, setMode] = useState<'scroll' | 'page'>('scroll');
   const [idx, setIdx] = useState(0);
@@ -25,6 +31,12 @@ export function Reader({
   const [loaded, setLoaded] = useState<Record<number, boolean>>({});
   const retryTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
   const router = useRouter();
+
+  const activeMode = modeProp ?? mode;
+  const switchMode = (m: 'scroll' | 'page') => {
+    if (onModeChange) onModeChange(m);
+    setMode(m);
+  };
 
   // R2-first: coba domain R2 langsung (hash slug). 404/error → retry logic
   // existing mengalihkan ke proxy (yang sekaligus meng-upload ke R2 di
@@ -41,8 +53,7 @@ export function Reader({
     }
   }, [retries]);
 
-  // Cleanup all pending retry timers on unmount — earlier code leaked them
-  // and attempted state updates on unmounted components.
+  // Cleanup semua pending retry timers saat unmount.
   useEffect(() => {
     return () => {
       for (const t of Object.values(retryTimers.current)) clearTimeout(t);
@@ -64,6 +75,30 @@ export function Reader({
     return () => window.removeEventListener('scroll', onScroll);
   }, [loadMore]);
 
+  // Lapor halaman terlihat sekarang (untuk tombol unduh di toolbar).
+  const reportActive = useCallback(
+    (i: number) => { if (onActivePage) onActivePage(i); },
+    [onActivePage]
+  );
+
+  // Observer halaman aktif di mode scroll — pasif, satu IntersectionObserver.
+  const ioRef = useRef<IntersectionObserver | null>(null);
+  useEffect(() => {
+    if (!onActivePage) return;
+    ioRef.current = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            const i = Number((e.target as HTMLElement).dataset.idx);
+            if (!Number.isNaN(i)) reportActive(i);
+          }
+        }
+      },
+      { rootMargin: '0px 0px -12% 0px', threshold: 0.1 }
+    );
+    return () => ioRef.current?.disconnect();
+  }, [reportActive]);
+
   // Prefetch next chapter image pages once user reaches the last rendered page.
   useEffect(() => {
     if (!nextChapterUrl || visibleCount < pages.length) return;
@@ -84,6 +119,10 @@ export function Reader({
         src={r > 0 ? `${fallbackUrls[i]}?retry=${r}` : u}
         alt={`Halaman ${i + 1}`}
         loading="lazy"
+        data-idx={i}
+        ref={(el) => {
+          if (el && ioRef.current && activeMode === 'scroll') ioRef.current.observe(el);
+        }}
         className="max-w-full h-auto"
         onError={() => handleImageError(i)}
         onLoad={() => markLoaded(i)}
@@ -91,19 +130,19 @@ export function Reader({
     </div>
   );
 
-  if (mode === 'scroll') {
+  // Lapor idx default saat mode page.
+  useEffect(() => {
+    if (activeMode === 'page') reportActive(idx);
+  }, [idx, activeMode, reportActive]);
+
+  if (activeMode === 'scroll') {
     const visible = urls.slice(0, visibleCount);
     return (
-      <div>
-        <div className="flex gap-2 mb-4">
-          <button onClick={() => setMode('page')} className="px-3 py-1 text-xs border border-border-default rounded hover:bg-elevated">Mode Halaman</button>
-        </div>
-        <div className="flex flex-col items-center">
-          {visible.map((u, i) => pageSlot(i, u, retries[i] ?? 0))}
-          {visibleCount < urls.length && (
-            <button onClick={loadMore} className="px-4 py-2 text-sm border border-border-default rounded hover:bg-elevated mt-2">Muat lebih banyak</button>
-          )}
-        </div>
+      <div className="flex flex-col items-center">
+        {visible.map((u, i) => pageSlot(i, u, retries[i] ?? 0))}
+        {visibleCount < urls.length && (
+          <button onClick={loadMore} className="px-4 py-2 text-sm border border-border-default rounded hover:bg-elevated mt-2">Muat lebih banyak</button>
+        )}
       </div>
     );
   }
@@ -113,17 +152,11 @@ export function Reader({
 
   const r = retries[idx] ?? 0;
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={() => setMode('scroll')} className="px-3 py-1 text-xs border border-border-default rounded hover:bg-elevated">Mode Scroll</button>
-        <span className="text-muted text-xs">{idx + 1} / {urls.length}</span>
-      </div>
-      <div className="flex flex-col items-center">
-        {pageSlot(idx, urls[idx], r)}
-        <div className="flex gap-3 mt-4">
-          <button onClick={prev} disabled={idx === 0} className="px-4 py-2 text-sm border border-border-default rounded disabled:opacity-30 hover:bg-elevated">← Sebelumnya</button>
-          <button onClick={next} disabled={idx === urls.length - 1} className="px-4 py-2 text-sm border border-border-default rounded disabled:opacity-30 hover:bg-elevated">Berikutnya →</button>
-        </div>
+    <div className="flex flex-col items-center">
+      {pageSlot(idx, urls[idx], r)}
+      <div className="flex gap-3 mt-4">
+        <button onClick={prev} disabled={idx === 0} className="px-4 py-2 text-sm border border-border-default rounded disabled:opacity-30 hover:bg-elevated">← Sebelumnya</button>
+        <button onClick={next} disabled={idx === urls.length - 1} className="px-4 py-2 text-sm border border-border-default rounded disabled:opacity-30 hover:bg-elevated">Berikutnya →</button>
       </div>
     </div>
   );

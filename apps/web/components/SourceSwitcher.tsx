@@ -40,6 +40,7 @@ export function SourceSwitcher({
   chapterNumber,
   apiUrl,
   mode = 'reader',
+  embedded = false,
 }: {
   currentSource: string;
   sourceId: string;
@@ -47,6 +48,7 @@ export function SourceSwitcher({
   chapterNumber: number;
   apiUrl: string;
   mode?: 'reader' | 'detail';
+  embedded?: boolean;
 }) {
   const router = useRouter();
   const [links, setLinks] = useState<SourceLink[]>([]);
@@ -148,35 +150,41 @@ export function SourceSwitcher({
   }
 
   // ── Reader mode: sticky bar with all source badges ──
+  const orderedChips = ordered.map((s) => {
+    const link = links.find((l) => l.source === s);
+    const isActive = s === currentSource;
+    const isPref = pref === s;
+    const isDefault = !pref && s === 'komiku';
+    return (
+      <button
+        key={s}
+        onClick={() => onPick(s)}
+        disabled={!link?.hasChapterList}
+        title={`${sourceLabel(s)}${link?.hasChapterList ? '' : ' (belum ada daftar chapter)'}`}
+        className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs transition-colors shrink-0 ${
+          isActive
+            ? 'bg-bg-secondary text-primary ring-1 ring-border-default'
+            : 'text-secondary hover:text-primary hover:bg-bg-secondary/60'
+        } ${!link?.hasChapterList ? 'opacity-40' : ''}`}
+      >
+        <SourceIcon source={s} />
+        <span className="capitalize">{sourceLabel(s)}</span>
+        {isActive && <span className="text-[9px] text-muted">· aktif</span>}
+        {!isActive && isPref && <span className="text-[9px] text-accent">· pilihanmu</span>}
+        {!pref && isDefault && !isActive && <span className="text-[9px] text-muted">· default</span>}
+      </button>
+    );
+  });
+
+  if (embedded) {
+    return <div className="flex flex-wrap items-center gap-1.5">{orderedChips}</div>;
+  }
+
   return (
     <div className="sticky top-16 z-40 mb-4">
       <div className="nav-island mx-auto flex items-center gap-2 overflow-x-auto px-3 py-2 rounded-xl" style={{ maxWidth: 'min(1024px, 100%)' }}>
         <span className="text-[10px] uppercase tracking-wider text-muted shrink-0">Sumber:</span>
-        {ordered.map((s) => {
-          const link = links.find((l) => l.source === s);
-          const isActive = s === currentSource;
-          const isPref = pref === s;
-          const isDefault = !pref && s === 'komiku';
-          return (
-            <button
-              key={s}
-              onClick={() => onPick(s)}
-              disabled={!link?.hasChapterList}
-              title={`${sourceLabel(s)}${link?.hasChapterList ? '' : ' (belum ada daftar chapter)'}`}
-              className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs transition-colors shrink-0 ${
-                isActive
-                  ? 'bg-bg-secondary text-primary ring-1 ring-border-default'
-                  : 'text-secondary hover:text-primary hover:bg-bg-secondary/60'
-              } ${!link?.hasChapterList ? 'opacity-40' : ''}`}
-            >
-              <SourceIcon source={s} />
-              <span className="capitalize">{sourceLabel(s)}</span>
-              {isActive && <span className="text-[9px] text-muted">· aktif</span>}
-              {!isActive && isPref && <span className="text-[9px] text-accent">· pilihanmu</span>}
-              {!pref && isDefault && !isActive && <span className="text-[9px] text-muted">· default</span>}
-            </button>
-          );
-        })}
+        {orderedChips}
       </div>
     </div>
   );

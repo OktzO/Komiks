@@ -155,6 +155,110 @@ a:hover { color: var(--accent); }
   #navbar, #navbar .nav-island, .hamburger .bars span, #nav-menu { transition: none !important; }
 }
 
+/* ── Reader chrome: top bar + bottom toolbox + daftar chapter sheet ──
+   Semua animasi transform/opacity saja + will-change → GPU compositor,
+   tanpa layout/paint saat scroll panjang. */
+.reader-top, .reader-bottom {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  pointer-events: none;
+  will-change: transform;
+  transition: transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reader-top { top: 10px; }
+.reader-bottom { bottom: 14px; }
+.reader-top > *, .reader-bottom > * { pointer-events: auto; }
+.reader-hidden.reader-top { transform: translateY(-140%); }
+.reader-hidden.reader-bottom { transform: translateY(140%); }
+
+.reader-top-inner {
+  width: min(680px, calc(100% - 24px));
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 9999px;
+}
+.reader-toolbar {
+  position: relative;
+  width: min(480px, calc(100% - 24px));
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 9999px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.reader-settings {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 71;
+  min-width: 190px;
+  padding: 10px;
+  border-radius: 1rem;
+  animation: slideUp 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  background: color-mix(in oklab, var(--bg-card) 55%, transparent);
+  border: 1px solid var(--border-default);
+  transition: color 0.2s, background 0.2s;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.rbtn:hover { color: var(--text-primary); background: var(--bg-secondary); }
+.rbtn:active { background: var(--bg-secondary); }
+.rbtn:disabled, .rbtn-disabled { opacity: 0.35; pointer-events: none; }
+
+.reader-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: oklch(0% 0 0 / 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.reader-backdrop.open { opacity: 1; pointer-events: auto; }
+.reader-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-surface);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border-top: 1px solid var(--glass-border);
+  border-radius: 1.5rem 1.5rem 0 0;
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  transform: translateY(105%);
+  transition: transform 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+.reader-sheet.open { transform: translateY(0); }
+.reader-sheet .sheet-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-top, .reader-bottom, .reader-backdrop, .reader-sheet { transition: none !important; }
+}
+
 /* ── Skeleton shimmer ── */
 @keyframes shimmer {
   from { background-position: 200% 0; }
