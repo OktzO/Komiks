@@ -121,7 +121,7 @@ export default function LbAdminPage() {
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-semibold mb-4">Load Balancing</h1>
+      <h1 className="text-2xl font-semibold mb-4">Load Balancing</h1><p className="text-sm text-muted mb-4">Akun 1 (main) + Akun 2 (origin) sudah terhubung — atur traffic distribution di bawah.</p>
       {error && <div className="text-error text-sm mb-4">{error}</div>}
       <div className="flex gap-2 mb-6 border-b border-subtle">
         {(['settings', 'accounts', 'origins', 'status'] as const).map((t) => (

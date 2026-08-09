@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { fetchMe, logout, type AuthUser } from '../lib/api';
 
 const LINKS = [
   { href: '/search', label: 'Cari' },
@@ -12,7 +13,14 @@ const LINKS = [
 
 export function Navbar() {
   const [open, setOpen] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const pathname = usePathname();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMe().then((u) => { if (!cancelled) setUser(u); });
+    return () => { cancelled = true; };
+  }, [pathname]);
 
   useEffect(() => {
     let ticking = false;
@@ -40,11 +48,15 @@ export function Navbar() {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  // Reader route: `/[source]/s/[slug]/[chapterId]` — navbar disembunyikan,
-  // digantikan chrome reader (top bar + toolbox) di ReaderShell. Diletakkan
-  // SETELAH semua hooks → jumlah hook selalu sama di tiap route (rules-of-hooks).
+  const handleLogout = async () => {
+    await logout();
+    setUser(null);
+  };
+
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 4 && segments[1] === 's') return null;
+
+  const isAdmin = user?.role === 'admin';
 
   return (
     <header id="navbar" className="fixed inset-x-0 top-0 z-50">
@@ -71,9 +83,33 @@ export function Navbar() {
               {l.label}
             </Link>
           ))}
-          <Link href="/login" className="mt-1 px-3 py-2.5 text-base text-primary border border-border-default hover:bg-bg-secondary transition-colors text-center">
-            Masuk
-          </Link>
+          {user ? (
+            <>
+              {isAdmin && (
+                <Link href="/admin/load-balancing" className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">
+                  Load Balancing
+                </Link>
+              )}
+              <Link href="/profile" className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">
+                Profile
+              </Link>
+              <div className="mt-1 px-3 py-1.5 text-xs text-tertiary truncate" title={user.email}>
+                {user.email}
+                {user.role === 'admin' && <span className="ml-2 text-accent">admin</span>}
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="mt-1 px-3 py-2.5 text-base text-primary border border-border-default hover:bg-bg-secondary transition-colors text-center"
+              >
+                Keluar
+              </button>
+            </>
+          ) : (
+            <Link href="/login" className="mt-1 px-3 py-2.5 text-base text-primary border border-border-default hover:bg-bg-secondary transition-colors text-center">
+              Masuk
+            </Link>
+          )}
         </nav>
       </div>
     </header>
