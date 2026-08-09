@@ -57,12 +57,24 @@ const deleteMeSchema = z.object({ confirm: z.literal('DELETE') }).strict();
 
 // ─── Auth middleware: getSessionUser → 401, set user in context ────────────
 
-router.use('*', async (c, next) => {
+// requireSession middleware: applied inline to auth-required routes.
+// GET /me is guest-friendly (returns {data:null} for unauthenticated visitors) —
+// registered separately below without a guard.
+
+async function requireSession(c: Context, next: () => Promise<void>) {
   const user = await getSessionUser(c);
   if (!user) return c.json({ error: 'unauthorized' }, 401);
   (c as unknown as { set: (k: string, v: unknown) => void }).set('user', user);
   await next();
-});
+}
+
+router.use('/bookmark', requireSession);
+router.use('/bookmark/:slug', requireSession);
+router.use('/bookmarks', requireSession);
+router.use('/history', requireSession);
+router.use('/sessions', requireSession);
+router.use('/sessions/:token', requireSession);
+router.use('/sessions/revoke-all', requireSession);
 
 // ─── Existing routes: bookmark & history CRUD ────────────────────────────────
 
@@ -103,7 +115,8 @@ router.get('/history', async (c: Context) => {
 // ─── Profile: GET /me ──────────────────────────────────────────────────────
 
 router.get('/me', async (c: Context) => {
-  const user = getSessionUserFromContext(c);
+  const user = await getSessionUser(c);
+  if (!user) return c.json({ data: null });
   const profile = await db(c.env.DB).getUserProfileById(user.id);
   if (!profile) return c.json({ error: 'user not found' }, 404);
   return c.json({ data: profile });
@@ -111,7 +124,7 @@ router.get('/me', async (c: Context) => {
 
 // ─── Profile: PATCH /me ────────────────────────────────────────────────────
 
-router.patch('/me', async (c: Context) => {
+router.patch('/me', requireSession, async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const body = await c.req.json().catch(() => null);
   if (!body || typeof body !== 'object') return c.json({ error: 'invalid json body' }, 400);
@@ -133,7 +146,7 @@ router.patch('/me', async (c: Context) => {
 
 // ─── Profile: DELETE /me ───────────────────────────────────────────────────
 
-router.delete('/me', async (c: Context) => {
+router.delete('/me', requireSession, async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const body = (await c.req.json().catch(() => null)) as { confirm?: string } | null;
 
