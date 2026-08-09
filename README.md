@@ -40,21 +40,27 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 
 ### User
 - ✅ Auth email + password (PBKDF2 hash via Web Crypto)
+- ✅ Google OAuth (verify via Google tokeninfo, avatar dari `gUser.picture`)
 - ✅ Session di KV (TTL 7 hari, HttpOnly cookie)
 - ✅ Bookmark series
 - ✅ Reading history (auto-save posisi halaman)
+- ✅ Profile page (`/profile`): Profile, Account, Preferences, Privacy, Sessions, Admin sections
+- ✅ Multi-device session list + per-session revoke + revoke-all
+- ✅ Clear history / clear bookmarks
+- ✅ Hapus akun permanen (`DELETE /api/user/me` dengan body `{confirm:'DELETE'}`)
 
 ### Identifikasi Gambar
 - ✅ `/api/identify`: upload gambar → phash 64-bit → match series dari D1
 
 ### Admin
-- ✅ Panel `/admin/settings/load-balancing` (step-up auth)
+- ✅ Panel `/admin/load-balancing` (step-up auth, direname dari `/admin/settings/load-balancing`)
 - ✅ Auto-provision akun baru: CF API token → create D1 + KV + R2 (opsional) + deploy Worker dari KV bundle
 - ✅ Origin pool (priority, weight, enable/disable), steering failover / round-robin / weighted
 - ✅ Quota per origin per hari (D1 `lb_usage`)
-- ✅ Merge queue `manga_merge_queue` + resolve (merge/reject)
+- ✅ Merge queue `manga_merge_queue` + resolve (merge/reject) + manual merge 2 series
 - ✅ Scrape jobs via adapter (`/api/scrape`)
 - ✅ Audit log
+- ✅ Auto-role admin via secret `ADMIN_EMAILS` (comma-separated) saat register/login
 
 ### Security
 - ✅ Rate limiting berjenjang: public 60/min, identify 10/min, admin 600/min
@@ -90,16 +96,18 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 manga-platform/
 ├── apps/
 │   ├── api-cf/                          # 1 Worker tunggal (manga-api)
-│   │   ├── wrangler.toml                # D1/KV/R2 + browser binding (no cron)
+│   │   ├── wrangler.toml                # D1/KV/R2 + browser binding (akun-1, no cron)
+│   │   ├── wrangler.origin.toml         # Config akun-2 origin (D1+KV+browser, NO R2)
 │   │   ├── src/
-│   │   │   ├── index.ts                 # Hono app, CORS, rate limit, mount routes
+│   │   │   ├── index.ts                 # Hono app, CORS, security headers, rate limit, mount routes
 │   │   │   ├── lib/
 │   │   │   │   ├── context.ts           # Env type, getDb, json, allowed origins
-│   │   │   │   ├── auth.ts              # PBKDF2, session, admin key, step-up
+│   │   │   │   ├── auth.ts              # PBKDF2, session, admin key, step-up, Google OAuth verify
 │   │   │   │   ├── rateLimit.ts         # makeLimiter factory (60/10/600 per min)
 │   │   │   │   ├── retry.ts             # retryUpstream (429 backoff)
 │   │   │   │   ├── r2Accounts.ts        # parse R2_ACCOUNTS secret (urutan = index)
 │   │   │   │   ├── s3Upload.ts          # SigV4 signed PUT ke R2 akun lain
+│   │   │   │   ├── dbWrite.ts           # D1 overflow detector (KV usage tracking, threshold 400MB)
 │   │   │   │   └── komikuSlug.ts        # parse slug dari '<slug>-chapter-<num>'
 │   │   │   └── routes/
 │   │   │       ├── health.ts            # GET /api/health
@@ -110,9 +118,10 @@ manga-platform/
 │   │   │       ├── origins.ts           # GET /api/origins (lazy health, cache 30s)
 │   │   │       ├── sourceStatus.ts      # GET /api/source-status (D1 passive)
 │   │   │       ├── identify.ts          # POST /api/identify (phash → series)
-│   │   │       ├── auth.ts / user.ts    # auth + bookmark/history
+│   │   │       ├── auth.ts              # register/login/logout/me + Google OAuth
+│   │   │       ├── user.ts              # /api/user/* (profile, sessions, bookmarks, history)
 │   │   │       └── admin/
-│   │   │           ├── lb.ts            # settings/accounts/provision/origins/status
+│   │   │           ├── lb.ts            # settings/accounts/provision/origins/status/usage
 │   │   │           ├── scrape.ts        # scrape jobs
 │   │   │           └── merge.ts         # merge queue + manual merge
 │   │   └── dist/worker.js               # ESM bundle (auto-provision seed)
@@ -124,27 +133,29 @@ manga-platform/
 │       │   ├── globals.css              # OKLCH tokens, nav-island, marquee, skeleton
 │       │   ├── search/                  # Search (merge 4 source)
 │       │   ├── login/ register/ bookmark/ history/
-│       │   ├── status/                  # Source health passive
-│       │   ├── admin/settings/load-balancing/
+│       │   ├── profile/                 # Profile (sections: Profile, Account, Preferences, Privacy, Sessions, Admin)
+│       │   ├── status/                  # Source health passive — BetterStack-style cards v2
+│       │   ├── admin/load-balancing/    # LB + auto-provision (rename dari /admin/settings/load-balancing)
 │       │   └── [source]/s/[slug]/
 │       │       ├── page.tsx             # Series detail + SourceSwitcher
 │       │       └── [chapterId]/page.tsx # Reader (scroll + page mode)
 │       ├── components/
-│       │   ├── MangaCard.tsx / CoverImage.tsx   # kartu + fallback gambar gagal
+│       │   ├── MangaCard.tsx / CoverImage.tsx / Avatar.tsx / ConfirmModal.tsx
 │       │   ├── ChapterList.tsx / Synopsis.tsx / SourceBadge.tsx / SourceSwitcher.tsx
-│       │   ├── Reader.tsx               # virtualized, R2-first, retry proxy
+│       │   ├── Reader.tsx / ReaderShell.tsx  # virtualized, R2-first, retry proxy
 │       │   ├── Skeleton.tsx / AuthForm.tsx
-│       │   └── Navbar.tsx               # scroll island + hamburger menu
-│       ├── lib/api.ts                   # API client + round-robin failover + R2 URL
+│       │   ├── Navbar.tsx               # scroll island + hamburger menu (Profile/Load Balancing)
+│       │   └── profile/                 # Profile sub-sections (Sidebar, MobileTabs, sections)
+│       ├── lib/api.ts                   # API client + round-robin failover + R2 URL + profile helpers
 │       └── next.config.mjs / tailwind.config.ts
 │
 ├── packages/
 │   ├── db/                              # D1 schema + query helpers
 │   │   ├── schema.sql                   # base: 10 tabel + FTS5 + triggers
-│   │   ├── migrations/                  # 0001 data, 0002 r2, 0003 drop mangadex, 0004 aggregation
+│   │   ├── migrations/                  # 0001 data, 0002 r2, 0003 drop mangadex, 0004 aggregation, 0005 user_profile
 │   │   ├── src/matching.ts              # normalize + levenshtein + jaroWinkler (pure)
 │   │   ├── test/matching.test.mjs
-│   │   └── index.ts                     # db(d1) factory + 40+ typed helpers
+│   │   └── index.ts                     # db(d1) factory + 40+ typed helpers (termasuk updateUserProfile, listUserSessions, dll)
 │   ├── shared/
 │   │   ├── types.ts                     # Zod schemas
 │   │   └── src/r2-routing.ts            # hash ring (Worker + frontend, satu sumber)
@@ -162,8 +173,9 @@ manga-platform/
 │
 ├── scripts/
 │   ├── build-worker-bundle.mjs          # esbuild → dist/worker.js
+│   ├── deploy-worker-api.sh             # helper deploy akun1|akun2 (token Workers Scripts:Edit)
 │   ├── setup-r2-account.mjs             # panduan akun R2 baru + remap report
-│   ├── smoke-db.mjs / smoke-data-db.mjs / smoke-r2-db.mjs
+│   ├── smoke-db.mjs / smoke-data-db.mjs / smoke-r2-db.mjs / smoke-user.mjs
 │
 ├── docs/
 │   ├── DEPLOY.md                        # Panduan deploy production
@@ -199,16 +211,27 @@ manga-platform/
 ### Auth
 | Method | Path | Deskripsi |
 |--------|------|-----------|
-| POST | `/api/auth/register` / `/api/auth/login` | → session cookie |
+| POST | `/api/auth/register` | `{email,password}` → session cookie (admin role jika email di `ADMIN_EMAILS`) |
+| POST | `/api/auth/login` | `{email,password}` → session cookie |
 | POST | `/api/auth/logout` | Hapus session |
-| GET | `/api/auth/me` | Current user |
+| GET | `/api/auth/me` | Current user (redirect jika guest) |
+| GET | `/api/auth/google` | Redirect ke Google OAuth consent |
+| GET | `/api/auth/google/callback` | OAuth callback → simpan `avatar_url` dari `gUser.picture` |
 
-### User (auth required)
+### User (auth required, kecuali GET `/user/me` = guest-friendly)
 | Method | Path | Deskripsi |
 |--------|------|-----------|
+| GET | `/api/user/me` | Current user; `{data:null}` jika guest |
+| PATCH | `/api/user/me` | Update `{display_name?, bio?, preferences?, avatar_url?}` |
+| DELETE | `/api/user/me` | Hapus akun permanen. Body `{confirm:'DELETE'}` |
 | POST/DELETE | `/api/user/bookmark` `/api/user/bookmark/:slug` | Bookmark series |
 | GET | `/api/user/bookmarks` | List bookmark |
+| DELETE | `/api/user/bookmarks` | Clear all |
 | POST/GET | `/api/user/history` | Save / list reading history |
+| DELETE | `/api/user/history` | Clear all |
+| GET | `/api/user/sessions` | List active sessions (current + others) |
+| DELETE | `/api/user/sessions/:token` | Revoke specific session |
+| POST | `/api/user/sessions/revoke-all` | Revoke semua kecuali current → `{revoked:N}` |
 
 ### Identify (rate limit 10/min)
 | Method | Path | Deskripsi |
@@ -232,6 +255,7 @@ manga-platform/
 | POST | `/api/admin/lb/accounts/:id/test` | Test koneksi |
 | GET/POST/PUT | `/api/admin/lb/origins` | Origin pool CRUD |
 | GET | `/api/admin/lb/status` | Status realtime per origin |
+| GET | `/api/admin/lb/usage` | Aggregate LB usage dari D1 `lb_usage` |
 
 ### Admin Merge (key + step-up)
 | Method | Path | Deskripsi |
@@ -244,7 +268,7 @@ manga-platform/
 
 ## 🗄 Database Schema (D1)
 
-Base di `packages/db/schema.sql` (10 tabel) + 4 migrasi incremental (jangan edit schema untuk kolom baru, buat migration baru).
+Base di `packages/db/schema.sql` (10 tabel) + 5 migrasi incremental (jangan edit schema untuk kolom baru, buat migration baru).
 
 ```sql
 -- Konten
@@ -254,7 +278,8 @@ chapters (id TEXT PK '<external_id>@<lang>', series_slug FK, chapter_number, vol
 chapter_pages (id, chapter_id, page_number, image_url, r2_key, r2_account_idx)  -- r2 via 0002
 
 -- User
-users (id, email UNIQUE, password_hash, role, created_at)
+users (id, email UNIQUE, password_hash, role, created_at,
+       display_name, avatar_url, bio, preferences JSON)   -- 0005 user_profile
 bookmarks (user_id, series_slug)              -- PK: (user_id, series_slug)
 reading_history (user_id, chapter_id, last_page, updated_at)
 
@@ -287,10 +312,13 @@ ALLOWED_ORIGINS=http://localhost:3000
 ```bash
 LB_ENCRYPTION_KEY     # AES-GCM key token LB
 ADMIN_PASSWORD_HASH   # step-up admin LB
+ADMIN_EMAILS          # comma-separated; auto-role admin saat register/login
 SCRAPE_API_KEY        # admin key /api/scrape
 ALLOWED_ORIGINS       # comma-separated, contoh: https://oktzz.xyz,http://localhost:3000
 R2_ACCOUNTS           # JSON: [{"account_id","access_key_id","secret_access_key","public_domain","bucket?"}]
                       # urutan = index akun (identitas hash ring), 1 secret untuk semua akun
+GOOGLE_CLIENT_ID      # OAuth (optional)
+GOOGLE_CLIENT_SECRET  # OAuth (optional)
 ```
 
 Env tambahan (wrangler.toml / default): `R2_RING_VNODES` (default 32), `R2_EVICTION_DAYS` (default 30), binding `DB`, `CACHE_KV`, `ASSETS_R2`, `MY_BROWSER` (browser binding remote).
@@ -382,6 +410,18 @@ npx wrangler pages deploy .vercel/output/static --project-name manga-web --branc
 npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0002_r2_storage.sql
 npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0003_drop_mangadex.sql
 npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0004_aggregation.sql
+npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0005_user_profile.sql
+```
+
+### Akun-2 (origin LB) deploy
+```bash
+# Token akun-2 harus punya Workers Scripts:Edit
+CLOUDFLARE_API_TOKEN=<token-akun2> CLOUDFLARE_ACCOUNT_ID=6a0bdfb8bccff744bd738a57502d0380 \
+  ./scripts/deploy-worker-api.sh akun2
+
+# Migrasi D1 akun-2 (D1 ID beda)
+CLOUDFLARE_API_TOKEN=<token-akun2> CLOUDFLARE_ACCOUNT_ID=6a0bdfb8bccff744bd738a57502d0380 \
+  npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0005_user_profile.sql
 ```
 
 ### Seed bundle auto-provision (KV)
@@ -409,7 +449,7 @@ Lihat [docs/DEPLOY.md](docs/DEPLOY.md) dan [docs/ADDING-ACCOUNT.md](docs/ADDING-
 - `GET /api/search?q=` → feed 4 source (~60 item, badge multi-source)
 - `GET /api/search?q=naruto` → hasil merged
 - `GET /api/origins` → daftar origin
-- `/status` → passive health 4 source
+- `/status` → passive health 4 source (BetterStack-style: pulse dot + relative time + latency grade)
 
 ---
 

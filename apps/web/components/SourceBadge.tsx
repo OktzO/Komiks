@@ -12,7 +12,7 @@ const SOURCE_ICONS: Record<string, string> = {
   manhwaindo: '/sources/manhwaindo.png',
 };
 
-const SOURCE_LABELS: Record<string, string> = {
+export const SOURCE_LABELS: Record<string, string> = {
   komiku: 'Komiku',
   bacakomik: 'BacaKomik',
   thrive: 'Thrive',
