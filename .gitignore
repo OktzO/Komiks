@@ -11,3 +11,9 @@ coverage/
 .superpowers/
 *.png
 .env
+
+# build artefacts
+.vercel/
+*.tsbuildinfo
+test-results/
+
