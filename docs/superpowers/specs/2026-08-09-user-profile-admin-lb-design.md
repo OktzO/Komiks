@@ -424,7 +424,9 @@ Rollback: Worker routes bisa dimatikan tanpa hapus kolom (frontend tidak pakai).
 
 | File | Aksi |
 |---|---|
-| `packages/db/migrations/0005_user_profile.sql` | NEW |
+| `packages/db/migrations/0005_user_profile.sql` | NEW (ALTER + seed LB 2 akun + 2 origin) |
+| `packages/db/migrations/0006_lb_seed.sql` | NEW (alternative — split seed ke file terpisah) |
+| `apps/api-cf/src/lib/lbAccounts.ts` atau routes/admin/lb.ts | Handle empty blob `encrypted_token` (skip decrypt untuk seeded akun) |
 | `packages/db/index.ts` | Add 4 helpers (updateUserProfile, deleteUserAccount, clearUserHistory, clearUserBookmarks) |
 | `packages/db/test/user-profile.test.mjs` | NEW |
 | `packages/shared/types.ts` | Add UserPreferences, MeResponse, SessionMeta types |
@@ -447,7 +449,45 @@ Rollback: Worker routes bisa dimatikan tanpa hapus kolom (frontend tidak pakai).
 
 ---
 
-## 10. Non-Goals (di-defer)
+## 10. LB Seed Data (default 2 akun — akun 1 + akun 2 LB origin)
+
+**Penjelasan:** LB "wadah besar" = akun CF 1 (main, R2+KV+D1) + akun CF 2 (origin LB, D1+KV saja, tanpa R2). Akun 2 bantu fetch/scrape + traffic distribution, tidak ganggu akun 1. Admin bisa tambah akun ke-3, ke-4, dst via panel (perbesar DB KV/D1, atasi limit Workers, tambah scrape paralel).
+
+**Seed INSERT di migration `0005_user_profile.sql`** (atau file terpisah `0006_lb_seed.sql` — pilih satu):
+
+```sql
+-- Idempotent guard: pakai INSERT OR IGNORE / WHERE NOT EXISTS
+-- 1. lb_settings: default 'on', implementation 'custom'
+INSERT OR IGNORE INTO lb_settings (id, mode, implementation, steering_policy, health_check_interval_sec, health_check_timeout_ms, failure_threshold)
+VALUES (1, 'on', 'custom', 'failover', 30, 3000, 2);
+
+-- 2. lb_accounts: 2 entry
+--    Akun 1: encrypted_token placeholder NULL (token di main Worker, dipakai in-process, tidak di-store)
+--    Akun 2: encrypted_token NULL (auto-provisioned, token di Worker env vars, bukan DB)
+--    Token terakhir4 disimpan untuk UI display
+INSERT OR IGNORE INTO lb_accounts (id, provider, label, account_ref, encrypted_token, token_last4, status, created_at)
+VALUES
+  ('acc_main_oktz', 'cloudflare', 'Akun 1 (main)', '4ce21aec2dd478bf380b7b59990a9165', X'', '****', 'verified', unixepoch()),
+  ('acc_origin_tzok5555', 'cloudflare', 'Akun 2 (LB origin)', '6a0bdfb8bccff744bd738a57502d0380', X'', '****', 'verified', unixepoch());
+
+-- 3. lb_origins: 2 entry (satu per akun, weight=1 default)
+INSERT OR IGNORE INTO lb_origins (id, account_id, origin_url, priority, weight, enabled, created_at)
+VALUES
+  ('ori_main', 'acc_main_oktz', 'https://manga-api.oktz.workers.dev', 0, 1, 1, unixepoch()),
+  ('ori_tzok5555', 'acc_origin_tzok5555', 'https://manga-api-2.tzok5555.workers.dev', 1, 1, 1, unixepoch());
+```
+
+**Catatan teknis:**
+- `encrypted_token` di-seed sebagai empty blob `X''` — Worker `getLbSettings()`/`listAccounts()` harus handle empty blob gracefully (skip decrypt, return `token_last4` saja). Untuk akun 1+2, token sebenarnya di **Worker env vars** (main: `CLOUDFLARE_API_TOKEN`, akun 2: di-deploy via auto-provision dengan secrets ALLOWED_ORIGINS + SCRAPE_API_KEY). DB hanya metadata.
+- Kalau auto-provision akun 2 sudah pernah jalan, `INSERT OR IGNORE` no-op. ID `acc_origin_tzok5555` constant → bisa reference ulang.
+- Akun-2 **tidak bisa R2** (akun CF tanpa CC tidak boleh R2). `ASSETS_R2` binding di Worker akun-2 di-skip saat deploy (existing behavior, lihat skill section "Gotchas — LB auto-provision").
+- Fetch/scrape load distribution: Worker `getLbSettings().mode === 'on'` → `getHealthyOrigin()` round-robin antara 2 origins. Akun 2 punya MY_BROWSER binding → bisa handle BacaKomik/ManhwaIndo scrape (CF Bot Fight). Lihat frontend `apiWithFailover` `originSupports()` (skill section "Round-robin client-side").
+
+**Front-end implication:** Panel LB langsung menampilkan 2 akun + 2 origins tanpa input manual. Tombol "Tambah Akun" / "+ Origin" tetap ada untuk ekspansi (akun 3, 4, dst).
+
+---
+
+## 11. Non-Goals (di-defer)
 
 - Email change (ikat ke Google OAuth, tidak di-allow).
 - Custom avatar upload (selalu Google picture, no R2).
