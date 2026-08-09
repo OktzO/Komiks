@@ -187,3 +187,138 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
   }
   return api<T>(path); // semua origin gagal → main API
 }
+
+// ---- Auth (Google OAuth via /api/auth/google/login) ------------------------
+import type { UserPreferences, SessionMeta, MeResponse } from '@manga-platform/shared/types';
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  role: string;
+  name: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  bio: string | null;
+  preferences: UserPreferences;
+  created_at: number;
+}
+
+export const fetchMe = async (): Promise<AuthUser | null> => {
+  try {
+    const res = await fetch(`${API_URL}/api/user/me`, {
+      credentials: 'include',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const json = await res.json() as { data: AuthUser | null };
+    return json.data ?? null;
+  } catch {
+    return null;
+  }
+};
+
+export const logout = async (): Promise<void> => {
+  try {
+    await fetch(`${API_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // logout best-effort — drop cookie client-side even on network error
+  }
+};
+
+export const patchMe = async (
+  patch: Partial<Pick<MeResponse, 'display_name' | 'bio' | 'preferences'>>
+): Promise<AuthUser> => {
+  const res = await fetch(`${API_URL}/api/user/me`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error || `PATCH /me → ${res.status}`);
+  }
+  const json = await res.json() as { data: AuthUser };
+  return json.data;
+};
+
+export const deleteMe = async (confirm: string): Promise<void> => {
+  const res = await fetch(`${API_URL}/api/user/me`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error || `DELETE /me → ${res.status}`);
+  }
+};
+
+export const listSessions = async (): Promise<SessionMeta[]> => {
+  const res = await fetch(`${API_URL}/api/user/sessions`, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`listSessions → ${res.status}`);
+  const json = await res.json() as { data: SessionMeta[] };
+  return json.data ?? [];
+};
+
+export const revokeSession = async (token: string): Promise<void> => {
+  const res = await fetch(`${API_URL}/api/user/sessions/${encodeURIComponent(token)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`revokeSession → ${res.status}`);
+};
+
+export const revokeAllSessions = async (): Promise<{ revoked: number }> => {
+  const res = await fetch(`${API_URL}/api/user/sessions/revoke-all`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`revokeAllSessions → ${res.status}`);
+  const json = await res.json() as { data: { revoked: number } };
+  return json.data;
+};
+
+export const clearHistory = async (): Promise<{ deleted: number }> => {
+  const res = await fetch(`${API_URL}/api/user/history`, {
+    method: 'DELETE',
+    credentials: 'include',
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`clearHistory → ${res.status}`);
+  const json = await res.json() as { data: { deleted: number } };
+  return json.data;
+};
+
+export const clearBookmarks = async (): Promise<{ deleted: number }> => {
+  const res = await fetch(`${API_URL}/api/user/bookmarks`, {
+    method: 'DELETE',
+    credentials: 'include',
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`clearBookmarks → ${res.status}`);
+  const json = await res.json() as { data: { deleted: number } };
+  return json.data;
+};
+
+export const getCurrentSessionToken = (): string | null => {
+  if (typeof document === 'undefined') return null;
+  const m = document.cookie.match(/(?:^|;\s*)session=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+};
