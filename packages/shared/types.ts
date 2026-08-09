@@ -216,3 +216,33 @@ export const MergeQueueItemSchema = z.object({
   created_at: z.number().int()
 });
 export type MergeQueueItem = z.infer<typeof MergeQueueItemSchema>;
+
+// ---- User profile (Task 3: plain types, no Zod schema) ----------------------
+
+export type UserSource = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo';
+
+export type UserPreferences = {
+  theme: 'dark' | 'light' | 'system';
+  language: 'id' | 'en';
+  reader_mode: 'scroll' | 'page';
+  default_source: UserSource | null;
+};
+
+export type MeResponse = {
+  id: number;
+  email: string;
+  name: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  bio: string | null;
+  preferences: UserPreferences;
+  role: UserRole;
+  created_at: number;
+};
+
+export type SessionMeta = {
+  token: string;
+  createdAt: number;
+  lastSeen: number;
+  ua: string;
+};
