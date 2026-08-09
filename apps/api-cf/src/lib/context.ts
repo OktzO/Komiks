@@ -13,8 +13,9 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   ADMIN_PASSWORD_HASH?: string;
-  ADMIN_PASSWORD?: string;
-  SCRAPE_API_KEY?: string;
+   ADMIN_PASSWORD?: string;
+   ADMIN_EMAILS?: string;
+   SCRAPE_API_KEY?: string;
   CF_ACCOUNT_ID?: string;
   R2_ACCOUNTS?: string;
   R2_RING_VNODES?: string;

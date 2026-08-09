@@ -9,7 +9,8 @@ import type {
   LbAccount,
   LbAccountSafe,
   LbOrigin,
-  ScrapeJob
+  ScrapeJob,
+  MeResponse
 } from '@manga-platform/shared/types';
 
 export { D1Database as Database };
@@ -31,6 +32,7 @@ export interface Db {
   searchSeries: (query: string) => Promise<ListResult<Series>>;
   createUser: (params: { email: string; name?: string | null; passwordHash: string; role?: string }) => Promise<Result<{ id: number }>>;
   getUserById: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string }>>;
+  getUserProfileById: (id: number) => Promise<Result<MeResponse>>;
    getUserByEmail: (email: string) => Promise<Result<{ id: number; email: string; password_hash: string | null; role: string }>>;
    updateUserProfile: (userId: number, params: { displayName?: string | null; bio?: string | null; preferences?: Record<string, unknown> }) => Promise<{ success: boolean }>;
    deleteUserAccount: (userId: number) => Promise<{ success: boolean }>;
@@ -173,6 +175,24 @@ export const db = (client: D1Database): Db => {
       fromRow<{ id: number; email: string; name: string | null; role: string }>(
         await prep('SELECT id, email, name, role FROM users WHERE id = ?1 LIMIT 1').bind(id).first<Row>()
       ),
+
+    getUserProfileById: async (id) => {
+      const row = await prep(
+        'SELECT id, email, name, role, display_name, avatar_url, bio, preferences, created_at FROM users WHERE id = ?1 LIMIT 1'
+      ).bind(id).first<Row>();
+      if (!row) return null;
+      return {
+        id: Number(row.id),
+        email: row.email as string,
+        name: row.name as string | null,
+        role: row.role as string,
+        display_name: row.display_name as string | null,
+        avatar_url: row.avatar_url as string | null,
+        bio: row.bio as string | null,
+        preferences: JSON.parse(row.preferences as string) as MeResponse['preferences'],
+        created_at: Number(row.created_at),
+      } as MeResponse;
+    },
 
      getUserByEmail: async (email) =>
        fromRow<{ id: number; email: string; password_hash: string | null; role: string }>(
