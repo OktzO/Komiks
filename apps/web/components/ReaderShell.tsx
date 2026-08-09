@@ -201,7 +201,7 @@ export function ReaderShell({
                     canonicalSlug={slug}
                     chapterNumber={chapterNumber}
                     apiUrl={apiUrl}
-                    mode="settings"
+                    mode="reader"
                   />
                   <p className="px-1 pt-2 text-[11px] text-muted">Halaman {activeIdx + 1} / {pages.length}</p>
                 </div>
