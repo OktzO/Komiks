@@ -31,8 +31,12 @@ export interface Db {
   searchSeries: (query: string) => Promise<ListResult<Series>>;
   createUser: (params: { email: string; name?: string | null; passwordHash: string; role?: string }) => Promise<Result<{ id: number }>>;
   getUserById: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string }>>;
-  getUserByEmail: (email: string) => Promise<Result<{ id: number; email: string; password_hash: string | null; role: string }>>;
-  addBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
+   getUserByEmail: (email: string) => Promise<Result<{ id: number; email: string; password_hash: string | null; role: string }>>;
+   updateUserProfile: (userId: number, params: { displayName?: string | null; bio?: string | null; preferences?: Record<string, unknown> }) => Promise<{ success: boolean }>;
+   deleteUserAccount: (userId: number) => Promise<{ success: boolean }>;
+   clearUserHistory: (userId: number) => Promise<{ success: boolean; deleted: number }>;
+   clearUserBookmarks: (userId: number) => Promise<{ success: boolean; deleted: number }>;
+   addBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
   removeBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
   listBookmarks: (userId: number) => Promise<ListResult<Series>>;
   upsertHistory: (params: { userId: number; chapterId: string; lastPage: number }) => Promise<Result<ReadingHistory>>;
@@ -170,12 +174,52 @@ export const db = (client: D1Database): Db => {
         await prep('SELECT id, email, name, role FROM users WHERE id = ?1 LIMIT 1').bind(id).first<Row>()
       ),
 
-    getUserByEmail: async (email) =>
-      fromRow<{ id: number; email: string; password_hash: string | null; role: string }>(
-        await prep('SELECT id, email, password_hash, role FROM users WHERE email = ?1 LIMIT 1').bind(email).first<Row>()
-      ),
+     getUserByEmail: async (email) =>
+       fromRow<{ id: number; email: string; password_hash: string | null; role: string }>(
+         await prep('SELECT id, email, password_hash, role FROM users WHERE email = ?1 LIMIT 1').bind(email).first<Row>()
+       ),
 
-    addBookmark: async ({ userId, seriesSlug }) => {
+     updateUserProfile: async (userId, { displayName, bio, preferences }) => {
+       const sets: string[] = [];
+       const args: unknown[] = [];
+       if (displayName !== undefined) {
+         sets.push(`display_name = COALESCE(?${args.length + 1}, display_name)`);
+         args.push(displayName);
+       }
+       if (bio !== undefined) {
+         sets.push(`bio = COALESCE(?${args.length + 1}, bio)`);
+         args.push(bio);
+       }
+       if (preferences !== undefined) {
+         sets.push(`preferences = COALESCE(?${args.length + 1}, preferences)`);
+         args.push(preferences ? JSON.stringify(preferences) : null);
+       }
+       if (sets.length === 0) return { success: true };
+       const res = await prep(`UPDATE users SET ${sets.join(', ')} WHERE id = ?${args.length + 1}`)
+         .bind(...args, userId).run();
+       return { success: res.success };
+     },
+
+     deleteUserAccount: async (userId) => {
+       const res = await prep('DELETE FROM users WHERE id = ?1').bind(userId).run();
+       return { success: res.success };
+     },
+
+     clearUserHistory: async (userId) => {
+       const countRow = await prep('SELECT COUNT(*) AS c FROM reading_history WHERE user_id = ?1').bind(userId).first<Row>();
+       const deleted = countRow ? Number(countRow.c) : 0;
+       await prep('DELETE FROM reading_history WHERE user_id = ?1').bind(userId).run();
+       return { success: true, deleted };
+     },
+
+     clearUserBookmarks: async (userId) => {
+       const countRow = await prep('SELECT COUNT(*) AS c FROM bookmarks WHERE user_id = ?1').bind(userId).first<Row>();
+       const deleted = countRow ? Number(countRow.c) : 0;
+       await prep('DELETE FROM bookmarks WHERE user_id = ?1').bind(userId).run();
+       return { success: true, deleted };
+     },
+
+     addBookmark: async ({ userId, seriesSlug }) => {
       const res = await prep('INSERT OR IGNORE INTO bookmarks (user_id, series_slug) VALUES (?1, ?2)')
         .bind(userId, seriesSlug).run();
       return { success: res.success };
