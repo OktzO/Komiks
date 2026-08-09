@@ -324,3 +324,9 @@ a:hover { color: var(--accent); }
   .anim-rise, .marquee-track { animation: none; }
   .marquee { overflow-x: auto; mask-image: none; -webkit-mask-image: none; }
 }
+
+/* ── Profile page: anchor scroll offset (nav-island height) ── */
+[id] { scroll-margin-top: 80px; }
+@media (min-width: 768px) {
+  [id] { scroll-margin-top: 100px; }
+}

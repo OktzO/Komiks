@@ -191,6 +191,8 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
 // ---- Auth (Google OAuth via /api/auth/google/login) ------------------------
 import type { UserPreferences, SessionMeta, MeResponse } from '@manga-platform/shared/types';
 
+export type { UserPreferences, SessionMeta, MeResponse };
+
 export interface AuthUser {
   id: number;
   email: string;
