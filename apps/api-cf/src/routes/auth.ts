@@ -1,44 +1,10 @@
 import { Hono } from 'hono';
 import type { Env, Context } from '../lib/context';
 import { db } from '@manga-platform/db';
-import { hashPassword, verifyPassword, createSession, getSessionUser, setSessionCookie, clearSessionCookie, isAdminEmail } from '../lib/auth';
+import { createSession, getSessionUser, setSessionCookie, clearSessionCookie, isAdminEmail } from '../lib/auth';
 import { writeWithFallback } from '../lib/dbWrite';
 
 export const router = new Hono<{ Bindings: Env }>();
-
-router.post('/register', async (c: Context) => {
-  const body = await c.req.json().catch(() => ({})) as { email?: string; password?: string };
-  const email = body.email?.trim().toLowerCase();
-  const password = body.password;
-  if (!email || !password || password.length < 8) {
-    return c.json({ error: 'email + password (min 8 chars) required' }, 400);
-  }
-  const existing = await db(c.env.DB).getUserByEmail?.(email).catch(() => null);
-  if (existing) return c.json({ error: 'email already registered' }, 409);
-  const passwordHash = await hashPassword(password);
-  const now = Math.floor(Date.now() / 1000);
-  const result = await db(c.env.DB).createUser({ email, passwordHash, role: 'user' });
-  await writeWithFallback(c, 'users', 'UPDATE users SET last_login_at = ?1 WHERE id = ?2', [now, result!.id]);
-  const token = await createSession(c, result!.id);
-  c.header('Set-Cookie', setSessionCookie(token));
-  return c.json({ data: { id: result!.id, email, role: 'user' } }, 201);
-});
-
-router.post('/login', async (c: Context) => {
-  const body = await c.req.json().catch(() => ({})) as { email?: string; password?: string };
-  const email = body.email?.trim().toLowerCase();
-  const password = body.password;
-  if (!email || !password) return c.json({ error: 'email + password required' }, 400);
-  const user = await db(c.env.DB).getUserByEmail?.(email).catch(() => null) as { id: number; email: string; password_hash: string; role: string } | null;
-  if (!user || !user.password_hash || !(await verifyPassword(password, user.password_hash))) {
-    return c.json({ error: 'invalid credentials' }, 401);
-  }
-  const now = Math.floor(Date.now() / 1000);
-  await writeWithFallback(c, 'users', 'UPDATE users SET last_login_at = ?1 WHERE id = ?2', [now, user.id]);
-  const token = await createSession(c, user.id);
-  c.header('Set-Cookie', setSessionCookie(token));
-  return c.json({ data: { id: user.id, email: user.email, role: user.role } });
-});
 
 router.post('/logout', async (c: Context) => {
   const token = c.req.header('authorization')?.replace('Bearer ', '') || parseCookie(c.req.header('cookie') || '').session;
