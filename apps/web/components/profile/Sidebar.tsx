@@ -69,7 +69,7 @@ export function Sidebar({ isAdmin }: SidebarProps) {
               href="/admin/settings"
               className="block rounded-lg px-3 py-2 text-secondary hover:text-primary hover:bg-bg-secondary/60 transition-colors"
             >
-              Load Balancing (admin)
+                Admin setting (admin)
             </Link>
           </li>
         )}

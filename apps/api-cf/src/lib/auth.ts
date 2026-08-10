@@ -162,7 +162,8 @@ export const requireAdminKey: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 };
 
 // Session-based admin gate for read-only monitoring endpoints (/api/admin/*).
-// Distinct from requireAdminKey (scrape) and requireAdminStepUp (LB mutations).
+// Distinct from requireAdminKey (scrape). LB + merge mutations now use
+// requireAdminSession too (step-up password removed).
 // Verifies session cookie/Bearer against KV session store + users.role === 'admin'.
 export const requireAdminSession: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const user = await getSessionUser(c);

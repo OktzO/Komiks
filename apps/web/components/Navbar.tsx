@@ -45,7 +45,11 @@ export function Navbar() {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
   }, [open]);
 
   const handleLogout = async () => {
@@ -87,7 +91,7 @@ export function Navbar() {
             <>
               {isAdmin && (
                 <Link href="/admin/settings" className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">
-                  Load Balancing
+                  Admin setting
                 </Link>
               )}
               <Link href="/profile" className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">

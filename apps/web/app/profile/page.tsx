@@ -8,7 +8,6 @@ import { ProfileSection } from '@/components/profile/ProfileSection';
 import { AccountSection } from '@/components/profile/AccountSection';
 import { PreferencesSection } from '@/components/profile/PreferencesSection';
 import { PrivacySection } from '@/components/profile/PrivacySection';
-import { SessionsSection } from '@/components/profile/SessionsSection';
 import { AdminSection } from '@/components/profile/AdminSection';
 
 export default function ProfilePage() {
@@ -54,7 +53,6 @@ export default function ProfilePage() {
           <AccountSection user={user} />
           <PreferencesSection user={user} onUpdate={setUser} />
           <PrivacySection />
-          <SessionsSection />
           {user.role === 'admin' && <AdminSection />}
         </div>
       </div>

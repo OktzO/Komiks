@@ -1,9 +1,9 @@
-// QA checklist (spec Section 6):
-// 1. Login Google non-oktzoffc@gmail.com → GET /api/admin/overview → 403 (not redirect, data not visible)
+// QA checklist:
+// 1. Login Google non-oktzoffc@gmail.com → GET /api/admin/overview → 403
 // 2. Login oktzoffc@gmail.com → GET /api/admin/overview → 200 + numbers
 // 3. Delete session cookie → GET /api/admin/overview → 403
-// 4. Admin session + wrong x-admin-stepup → GET /api/admin/overview → 200 (read doesn't need step-up)
-// 5. Admin session, no x-admin-stepup → PUT /api/admin/lb/settings → 401 (write still needs step-up)
+// 4. Non-admin session → GET /api/admin/overview → 403 (data not visible)
+// 5. Admin session → PUT /api/admin/lb/settings → 200 (session role, no step-up password)
 import { Hono } from 'hono';
 import type { Context, Env } from '../../lib/context';
 import { json, getDb } from '../../lib/context';

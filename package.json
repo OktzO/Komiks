@@ -11,6 +11,7 @@
     "node": ">=18"
   },
   "scripts": {
+    "vercel-build": "next build",
     "dev:api": "turbo run dev:api",
     "dev:web": "turbo run dev:web"
   },

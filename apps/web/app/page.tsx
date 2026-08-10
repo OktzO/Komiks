@@ -1,6 +1,7 @@
 import { searchMerged, getSourceStatus } from '@/lib/api';
 import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
+import { TypeBadge } from '@/components/TypeBadge';
 import { SourceBadge, sourceLabel, SOURCE_ORDER } from '@/components/SourceBadge';
 import Link from 'next/link';
 
@@ -13,7 +14,6 @@ const itemOf = (m: any) => m.data ?? m;
 
 export default async function Home() {
   let manga: any[] = [];
-  let sourcesQueried: string[] = [];
   let statuses: any[] = [];
   let error: string | null = null;
   try {
@@ -22,18 +22,9 @@ export default async function Home() {
       getSourceStatus().catch(() => ({ data: [] })),
     ]);
     manga = res.data;
-    sourcesQueried = res.sources_queried;
     statuses = st.data;
   } catch (e: unknown) {
     error = e instanceof Error ? e.message : String(e);
-  }
-
-  const typeCounts: Record<string, number> = {};
-  const srcCounts: Record<string, number> = {};
-  for (const m of manga) {
-    const it = itemOf(m);
-    typeCounts[it.type ?? 'manga'] = (typeCounts[it.type ?? 'manga'] ?? 0) + 1;
-    srcCounts[it.source] = (srcCounts[it.source] ?? 0) + 1;
   }
 
   const popular = manga.slice(0, 10);
@@ -42,11 +33,11 @@ export default async function Home() {
   const healthOf = (s: string) => statuses.find((st) => st.source === s);
 
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-16">
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-16 overflow-x-hidden">
       {error && <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>}
 
       {/* ============ Hero ============ */}
-      <section className="relative overflow-hidden pt-14 pb-12 md:pt-20 md:pb-14 text-center">
+      <section className="relative overflow-hidden pt-14 pb-10 md:pt-20 md:pb-14 text-center">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-x-0 -top-28 mx-auto h-72 w-72 rounded-full bg-[radial-gradient(closest-side,oklch(98%_0_0/0.07),transparent)] md:h-96 md:w-96"
@@ -83,11 +74,11 @@ export default async function Home() {
 
       {/* ============ Ticker update terbaru ============ */}
       {updates.length > 0 && (
-        <section aria-label="Judul terbaru" className="marquee relative mb-12 overflow-hidden border-y border-border-subtle py-3">
+        <section aria-label="Judul terbaru" className="marquee relative mb-10 overflow-hidden border-y border-border-subtle py-3">
           <div className="marquee-track">
             {[0, 1].map((copy) => (
               <div key={copy} className="flex shrink-0 items-center" aria-hidden={copy === 1}>
-                {updates.map((m) => {
+                {updates.slice(0, 8).map((m) => {
                   const it = itemOf(m);
                   return (
                     <span key={`${copy}-${it.slug}`} className="flex items-center shrink-0">
@@ -102,35 +93,24 @@ export default async function Home() {
         </section>
       )}
 
-      {/* ============ Status sumber ============ */}
-      <section className="mb-14" aria-label="Status sumber bacaan">
+      {/* ============ Status sumber — single line compact ============ */}
+      <section className="mb-12" aria-label="Status sumber bacaan">
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-card/60 px-3.5 py-1.5 text-xs text-secondary backdrop-blur">
-            {healthyCount}/{statuses.length || '?'} sumber online
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-3 py-1.5 text-xs text-secondary backdrop-blur">
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${healthyCount === (statuses.length || 1) ? 'bg-success' : 'bg-error'}`} />
+            {healthyCount}/{statuses.length || '?'} online
           </span>
-          <span className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-card/60 px-3.5 py-1.5 text-xs text-secondary backdrop-blur">
-            {manga.length} judul dimuat
-          </span>
-          {Object.entries(typeCounts)
-            .filter(([, n]) => n > 0)
-            .map(([t, n]) => (
-              <span key={t} className="hidden sm:inline-flex items-center gap-2 rounded-full border border-border-subtle bg-card/60 px-3.5 py-1.5 text-xs text-secondary backdrop-blur">
-                {n} {t}
-              </span>
-            ))}
-          {SOURCE_ORDER.filter((s) => sourcesQueried.includes(s)).map((s) => {
+          {SOURCE_ORDER.map((s) => {
             const h = healthOf(s);
             return (
               <Link
                 key={s}
                 href="/status"
                 prefetch={false}
-                className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-card/60 px-3 py-1.5 text-xs text-secondary backdrop-blur hover:text-primary hover:border-border-default transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-3 py-1.5 text-xs text-secondary backdrop-blur hover:text-primary hover:border-border-default transition-colors"
                 title={`Status ${sourceLabel(s)}`}
               >
                 <SourceBadge sources={[s]} size="sm" />
-                {sourceLabel(s)}
-                <span className="text-muted">{srcCounts[s] ?? 0} judul</span>
                 <span className={`inline-block h-1.5 w-1.5 rounded-full ${h ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
               </Link>
             );
@@ -139,8 +119,8 @@ export default async function Home() {
       </section>
 
       {/* ============ Populer Hari Ini ============ */}
-      <section className="mb-14">
-        <div className="flex items-baseline justify-between mb-6">
+      <section className="mb-12">
+        <div className="flex items-baseline justify-between mb-5">
           <h2 className="font-display text-2xl tracking-tight">Populer Hari Ini</h2>
           <Link href="/search" prefetch={false} className="text-sm text-secondary hover:text-accent">
             Semua →
@@ -155,10 +135,10 @@ export default async function Home() {
                 key={`${item.source}-${item.slug}`}
                 href={`/${source}/s/${item.slug}?id=${item.slug}`}
                 prefetch={false}
-                className="group relative shrink-0 snap-start w-40 transition-transform duration-200 hover:-translate-y-1"
+                className="group relative shrink-0 snap-start w-36 sm:w-40 transition-transform duration-200 hover:-translate-y-1"
               >
                 <span
-                  className={`absolute -top-3 -left-1 z-10 font-display text-6xl font-light leading-none select-none ${
+                  className={`absolute -top-3 -left-1 z-10 font-display text-5xl sm:text-6xl font-light leading-none select-none ${
                     i < 3 ? 'text-primary/25' : 'text-primary/10'
                   }`}
                   aria-hidden="true"
@@ -170,15 +150,12 @@ export default async function Home() {
                   <div className="absolute top-1.5 right-1.5 z-10">
                     <SourceBadge sources={(item.sources as string[]) || [item.source]} size="sm" />
                   </div>
-                  {item.status && (
-                    <span className="absolute bottom-1.5 left-1.5 z-10 rounded-full bg-base/70 px-2 py-0.5 text-[10px] capitalize text-secondary backdrop-blur">
-                      {item.status}
-                    </span>
-                  )}
+                  <div className="absolute bottom-1.5 left-1.5 z-10">
+                    <TypeBadge type={item.type} />
+                  </div>
                 </div>
                 <div className="mt-2">
-                  <div className="text-sm text-primary line-clamp-2 group-hover:text-accent transition-colors">{item.title}</div>
-                  <div className="text-[11px] text-muted mt-0.5 capitalize">{item.type}</div>
+                  <div className="text-xs sm:text-sm text-primary line-clamp-2 group-hover:text-accent transition-colors">{item.title}</div>
                 </div>
               </Link>
             );
@@ -187,7 +164,7 @@ export default async function Home() {
       </section>
 
       {/* ============ Genre ============ */}
-      <section className="mb-14">
+      <section className="mb-12">
         <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted mb-3">Jelajah genre</p>
         <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }} aria-label="Filter genre">
           {GENRES.map((g) => (
@@ -205,8 +182,8 @@ export default async function Home() {
 
       {/* ============ Update Terbaru ============ */}
       {updates.length > 0 && (
-        <section className="mb-14">
-          <div className="flex items-baseline justify-between mb-6">
+        <section className="mb-12">
+          <div className="flex items-baseline justify-between mb-5">
             <h2 className="font-display text-2xl tracking-tight">Update Terbaru</h2>
             <Link href="/search" prefetch={false} className="text-sm text-secondary hover:text-primary">
               semua →
@@ -221,16 +198,16 @@ export default async function Home() {
                   key={`${item.source}-${item.slug}`}
                   href={`/${source}/s/${item.slug}?id=${item.slug}`}
                   prefetch={false}
-                  className="flex items-center gap-4 py-3 border-b border-border-subtle group"
+                  className="flex items-center gap-3 py-3 border-b border-border-subtle group"
                 >
-                  <div className="w-12 h-16 shrink-0 overflow-hidden rounded border border-border-subtle bg-card">
+                  <div className="w-11 h-14 shrink-0 overflow-hidden rounded border border-border-subtle bg-card">
                     <CoverImage src={item.cover_image} alt="" title={item.title} className="h-full w-full" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm text-primary truncate group-hover:text-accent transition-colors">{item.title}</div>
-                    <div className="text-xs text-muted mt-0.5 capitalize">
-                      {item.type}
-                      {item.status ? ` · ${item.status}` : ''}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <TypeBadge type={item.type} />
+                      {item.status && <span className="text-[11px] text-muted capitalize">{item.status}</span>}
                     </div>
                   </div>
                   <SourceBadge sources={(item.sources as string[]) || [item.source]} size="sm" />
@@ -240,31 +217,6 @@ export default async function Home() {
           </div>
         </section>
       )}
-
-      {/* ============ Semua Komik ============ */}
-      <section>
-        <div className="flex items-baseline justify-between mb-4">
-          <h2 className="font-display text-2xl tracking-tight">Semua Komik</h2>
-          <Link href="/search" prefetch={false} className="text-sm text-secondary hover:text-accent">
-            Lihat semua →
-          </Link>
-        </div>
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-x-4 gap-y-6">
-          {manga.map((m) => {
-            const item = itemOf(m);
-            const source = item.sources?.includes('komiku') ? 'komiku' : item.source;
-            return (
-              <MangaCard
-                key={`${item.source}-${item.slug}`}
-                manga={{ id: item.slug, title: item.title, cover: item.cover_image, slug: item.slug }}
-                source={source}
-                sources={(item.sources as string[]) || [item.source]}
-                status={item.type}
-              />
-            );
-          })}
-        </div>
-      </section>
 
       {/* ============ Footer ============ */}
       <footer className="border-t border-border-subtle mt-16 pt-8 text-sm text-muted">

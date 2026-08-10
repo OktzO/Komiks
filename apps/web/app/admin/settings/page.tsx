@@ -1,12 +1,13 @@
 'use client';
-export const runtime = 'edge';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { fetchMe, apiGet, roleLabel, type AuthUser } from '@/lib/api';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 
-export default function LbAdminPage() {
-  const [stepup, setStepup] = useState('');
-  const [authed, setAuthed] = useState(false);
+export default function AdminSettingsPage() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [settings, setSettings] = useState<any>(null);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [origins, setOrigins] = useState<any[]>([]);
@@ -16,32 +17,41 @@ export default function LbAdminPage() {
   const [provisionStatus, setProvisionStatus] = useState<any>(null);
   const [provisioning, setProvisioning] = useState(false);
   const provisionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const router = useRouter();
 
-  const headers = () => ({ 'Content-Type': 'application/json', 'x-admin-stepup': stepup });
+  const headers = () => ({ 'Content-Type': 'application/json' });
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     try {
       const [s, a, o, st] = await Promise.all([
-        fetch(`${API_URL}/api/admin/lb/settings`, { headers: headers() }),
-        fetch(`${API_URL}/api/admin/lb/accounts`, { headers: headers() }),
-        fetch(`${API_URL}/api/admin/lb/origins`, { headers: headers() }),
-        fetch(`${API_URL}/api/admin/lb/status`, { headers: headers() }),
+        apiGet<{ data: any }>(`${API_URL}/api/admin/lb/settings`),
+        apiGet<{ data: any[] }>(`${API_URL}/api/admin/lb/accounts`),
+        apiGet<{ data: any[] }>(`${API_URL}/api/admin/lb/origins`),
+        apiGet<{ data: any }>(`${API_URL}/api/admin/lb/status`),
       ]);
-      if (s.ok) setSettings((await s.json()).data);
-      if (a.ok) setAccounts((await a.json()).data || []);
-      if (o.ok) setOrigins((await o.json()).data || []);
-      if (st.ok) setStatus((await st.json()).data);
-      if (!s.ok && s.status === 401) { setAuthed(false); setError('Step-up password salah'); }
-      else { setAuthed(true); setError(null); }
-    } catch (e) { setError(String(e)); }
-  };
+      setSettings(s.data);
+      setAccounts(a.data || []);
+      setOrigins(o.data || []);
+      setStatus(st.data);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
 
-  useEffect(() => { if (authed) loadAll(); }, [authed, tab]);
+  useEffect(() => {
+    fetchMe().then((u) => {
+      setUser(u);
+      setAuthLoading(false);
+      if (!u || u.role !== 'admin') router.replace('/');
+    });
+  }, [router]);
 
-  const login = () => { setAuthed(true); loadAll(); };
+  useEffect(() => {
+    if (user?.role === 'admin') loadAll();
+  }, [user, loadAll]);
 
   const updateSettings = async (updates: any) => {
-    await fetch(`${API_URL}/api/admin/lb/settings`, { method: 'PUT', headers: headers(), body: JSON.stringify(updates) });
+    await fetch(`${API_URL}/api/admin/lb/settings`, { method: 'PUT', headers: headers(), credentials: 'include', body: JSON.stringify(updates) });
     loadAll();
   };
 
@@ -49,7 +59,7 @@ export default function LbAdminPage() {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     await fetch(`${API_URL}/api/admin/lb/accounts`, {
-      method: 'POST', headers: headers(),
+      method: 'POST', headers: headers(), credentials: 'include',
       body: JSON.stringify({ label: f.get('label'), provider: f.get('provider'), account_ref: f.get('account_ref'), rawToken: f.get('rawToken'), token_last4: (f.get('rawToken') as string).slice(-4) })
     });
     loadAll();
@@ -65,7 +75,7 @@ export default function LbAdminPage() {
     setProvisionStatus(null);
     try {
       const res = await fetch(`${API_URL}/api/admin/lb/accounts/provision`, {
-        method: 'POST', headers: headers(),
+        method: 'POST', headers: headers(), credentials: 'include',
         body: JSON.stringify({ label, cfApiToken: token, workerName }),
       });
       const j = await res.json() as any;
@@ -73,16 +83,13 @@ export default function LbAdminPage() {
       if (!jobId) throw new Error('no job_id returned');
       const poll = setInterval(async () => {
         try {
-          const st = await fetch(`${API_URL}/api/admin/lb/accounts/${jobId}/provision-status`, { headers: headers() });
-          if (st.ok) {
-            const sj = await st.json() as any;
-            setProvisionStatus(sj.data);
-            if (sj.data?.status === 'completed' || sj.data?.status === 'failed') {
-              clearInterval(poll);
-              provisionPollRef.current = null;
-              setProvisioning(false);
-              loadAll();
-            }
+          const st = await apiGet<{ data: any }>(`${API_URL}/api/admin/lb/accounts/${jobId}/provision-status`);
+          setProvisionStatus(st.data);
+          if (st.data?.status === 'completed' || st.data?.status === 'failed') {
+            clearInterval(poll);
+            provisionPollRef.current = null;
+            setProvisioning(false);
+            loadAll();
           }
         } catch {}
       }, 3000);
@@ -90,8 +97,6 @@ export default function LbAdminPage() {
     } catch (e) { setProvisioning(false); setError(String(e)); }
   };
 
-  // Cleanup any pending provision poll interval on unmount — earlier code
-  // leaked the interval, continuing to fire fetches to a dead Worker.
   useEffect(() => {
     return () => {
       if (provisionPollRef.current) clearInterval(provisionPollRef.current);
@@ -102,27 +107,33 @@ export default function LbAdminPage() {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     await fetch(`${API_URL}/api/admin/lb/origins`, {
-      method: 'POST', headers: headers(),
+      method: 'POST', headers: headers(), credentials: 'include',
       body: JSON.stringify({ account_id: f.get('account_id') || null, origin_url: f.get('origin_url'), priority: Number(f.get('priority') || 0), weight: Number(f.get('weight') || 1), enabled: 1 })
     });
     loadAll();
   };
 
-  if (!authed) {
+  if (authLoading) {
     return (
       <main className="max-w-md mx-auto px-4 py-12">
-        <h1 className="text-xl font-semibold mb-4">Admin Load Balancing</h1>
-        <p className="text-secondary text-sm mb-4">Masukkan password admin untuk akses.</p>
-        <input type="password" placeholder="Admin password" value={stepup} onChange={(e) => setStepup(e.target.value)} className="w-full bg-card border border-border-default rounded px-3 py-2 mb-3 text-primary" />
-        <button onClick={login} className="w-full px-4 py-2 border border-border-default rounded text-sm hover:bg-elevated">Masuk</button>
-        {error && <div className="text-error text-sm mt-3">{error}</div>}
+        <div className="animate-pulse space-y-3">
+          <div className="h-8 w-48 rounded bg-card" />
+          <div className="h-32 w-full rounded bg-card" />
+        </div>
       </main>
     );
   }
 
+  if (!user || user.role !== 'admin') return null;
+
   return (
     <main className="max-w-4xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-semibold mb-4">Load Balancing</h1><p className="text-sm text-muted mb-4">Akun 1 (main) + Akun 2 (origin) sudah terhubung — atur traffic distribution di bawah.</p>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-primary">Admin setting</h1>
+          <p className="text-sm text-muted mt-1">Load balancer · akun · origin · status. {user.email} · {roleLabel(user.role)}.</p>
+        </div>
+      </div>
       {error && <div className="text-error text-sm mb-4">{error}</div>}
       <div className="flex gap-2 mb-6 border-b border-subtle">
         {(['settings', 'accounts', 'origins', 'status'] as const).map((t) => (

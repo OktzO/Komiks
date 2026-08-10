@@ -1,26 +1,15 @@
 import { Hono } from 'hono';
-import type { MiddlewareHandler } from 'hono';
 import type { Env, Context } from '../../lib/context';
 import { getDb, json } from '../../lib/context';
-import { requireAdminKey, constantTimeEqualStr } from '../../lib/auth';
+import { requireAdminKey, requireAdminSession } from '../../lib/auth';
 import { rateLimitAdmin } from '../../lib/rateLimit';
 
 export const router = new Hono<{ Bindings: Env }>();
 
-// Step-up re-auth: every merge mutation requires the admin password hash
-// echoed back via x-admin-stepup (constant-time compare, mirrors lb.ts).
-const requireAdminStepUp: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  const supplied = c.req.header('x-admin-stepup');
-  const expected = c.env.ADMIN_PASSWORD_HASH || c.env.ADMIN_PASSWORD;
-  if (!expected || !supplied || !constantTimeEqualStr(supplied, expected)) {
-    return json(c, { error: 'step-up auth required' }, 401);
-  }
-  await next();
-};
-
+// Merge mutations: require admin session role (OAuth). Step-up password removed.
 router.use('*', requireAdminKey);
 router.use('*', rateLimitAdmin);
-router.use('*', requireAdminStepUp);
+router.use('*', requireAdminSession);
 
 // GET /api/admin/merge/queue?status=pending
 router.get('/queue', async (c: Context) => {

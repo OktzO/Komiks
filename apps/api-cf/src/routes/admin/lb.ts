@@ -1,29 +1,18 @@
 import { Hono } from 'hono';
-import type { MiddlewareHandler } from 'hono';
-import { Env, getDb, json } from '../../lib/context';
-import { constantTimeEqualStr } from '../../lib/auth';
+import type { Env, Context } from '../../lib/context';
+import { getDb, json } from '../../lib/context';
+import { requireAdminSession } from '../../lib/auth';
 import { createAccount, listAccountsSafe, testAccount } from '@manga-platform/lb/accounts';
 import { provisionAccount, checkProvisionStatus } from '@manga-platform/lb/provision';
 
 export const router = new Hono<{ Bindings: Env }>();
 
-// Step-up re-auth: every LB admin mutation requires the admin password hash
-// echoed back via x-admin-stepup. Compares against env.ADMIN_PASSWORD_HASH
-// (or ADMIN_PASSWORD for the renamed variant) using a constant-time compare
-// to avoid timing side-channels.
-const requireAdminStepUp: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  const supplied = c.req.header('x-admin-stepup');
-  const expected = c.env.ADMIN_PASSWORD_HASH || c.env.ADMIN_PASSWORD;
-  if (!expected || !supplied || !constantTimeEqualStr(supplied, expected)) {
-    return json(c, { error: 'step-up auth required' }, 401);
-  }
-  await next();
-};
-
-router.use('*', requireAdminStepUp);
+// LB admin mutations: require admin session role (same as monitoring endpoints).
+// Step-up password removed — OAuth admin session is the sole auth path.
+router.use('*', requireAdminSession);
 
 // ---- settings -------------------------------------------------------------
-router.get('/settings', async (c) => {
+router.get('/settings', async (c: Context) => {
   const settings = await getDb(c).getLbSettings();
   return json(c, settings ?? { mode: 'off' });
 });
