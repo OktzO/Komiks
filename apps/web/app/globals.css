@@ -330,3 +330,53 @@ a:hover { color: var(--accent); }
 @media (min-width: 768px) {
   [id] { scroll-margin-top: 100px; }
 }
+
+/* ── Admin dashboard tokens (0006 monitoring) ── */
+:root {
+  --radius-admin: 6px;
+  --radius-admin-sm: 4px;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  --bg-admin-panel: oklch(14% 0 0);
+}
+
+.font-mono { font-family: var(--font-mono); }
+.tabular { font-variant-numeric: tabular-nums; }
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-soft { animation: pulse-soft 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .pulse-soft { animation: none; }
+}
+
+.num-refresh { transition: opacity 0.18s ease; }
+.num-refresh.refreshing { opacity: 0.5; }
+
+.admin-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-admin);
+  background: var(--bg-admin-panel);
+}
+
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  display: inline-block;
+}
+.status-dot.healthy { background: var(--success); }
+.status-dot.degraded { background: oklch(70% 0.12 75); }
+.status-dot.down { background: var(--error); }
+.status-dot.unknown { background: var(--text-muted); }
+.status-dot.live { animation: pulse-soft 1.8s ease-in-out infinite; }
+
+.quota-bar {
+  height: 2px; border-radius: 1px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+.quota-bar > span {
+  display: block; height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}

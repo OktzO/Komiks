@@ -12,7 +12,7 @@ export function AdminSection() {
           menu hamburger <span className="text-primary font-medium">Load Balancing</span>, atau klik tombol di bawah.
         </p>
         <Link
-          href="/admin/load-balancing"
+          href="/admin/settings"
           className="mt-3 inline-block px-4 py-2 text-sm font-medium text-accent border border-accent/30 rounded-lg hover:bg-accent/10 transition-colors"
         >
           Buka Load Balancing

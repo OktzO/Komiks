@@ -86,7 +86,7 @@ export function Navbar() {
           {user ? (
             <>
               {isAdmin && (
-                <Link href="/admin/load-balancing" className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">
+                <Link href="/admin/settings" className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">
                   Load Balancing
                 </Link>
               )}

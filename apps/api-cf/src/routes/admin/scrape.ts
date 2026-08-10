@@ -35,8 +35,11 @@ router.post('/scrape', async (c: Context) => {
 
   // Run async
   c.executionCtx.waitUntil((async () => {
+    const startedAt = Math.floor(Date.now() / 1000);
     try {
       await db.updateScrapeJob(jobId, { status: 'running', seriesSlug: null, error: null, completedAt: null });
+      // TODO(admin-monitoring): call db.upsertProviderAccount({ provider: body.source, label: body.source, status: 'healthy' }) + logScrapeJob start
+      // TODO(admin-monitoring): resolve provider_account_id from lb_accounts if linked
 
       // Check robots.txt for URL-based scrape
       if (body.url && adapter.checkRobots) {
@@ -175,6 +178,7 @@ router.post('/scrape', async (c: Context) => {
         error: null,
         completedAt: Math.floor(Date.now() / 1000),
       });
+      // TODO(admin-monitoring): call db.logScrapeJob({ source: body.source, providerAccountId, status: 'success', itemsScraped: result.chapters.length, durationMs: Date.now() - startedAt*1000, startedAt, finishedAt: Math.floor(Date.now()/1000) })
     } catch (e) {
       await db.updateScrapeJob(jobId, {
         status: 'failed',
@@ -182,6 +186,7 @@ router.post('/scrape', async (c: Context) => {
         error: String(e).slice(0, 500),
         completedAt: Math.floor(Date.now() / 1000),
       });
+      // TODO(admin-monitoring): call db.logScrapeJob({ source: body.source, providerAccountId, status: 'failed', errorMessage: String(e).slice(0,200), startedAt, finishedAt: Math.floor(Date.now()/1000) })
     }
   })());
 

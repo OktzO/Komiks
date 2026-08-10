@@ -324,3 +324,18 @@ export const getCurrentSessionToken = (): string | null => {
   const m = document.cookie.match(/(?:^|;\s*)session=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : null;
 };
+
+// ── Admin dashboard helpers ──
+
+export const roleLabel = (role: string): string => (role === 'admin' ? 'Admin' : 'Member');
+
+// Cookie auth GET for admin monitoring endpoints (read-only, session.role===admin enforced server-side).
+export async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    credentials: 'include',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`apiGet ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}

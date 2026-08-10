@@ -16,7 +16,9 @@ router.post('/register', async (c: Context) => {
   const existing = await db(c.env.DB).getUserByEmail?.(email).catch(() => null);
   if (existing) return c.json({ error: 'email already registered' }, 409);
   const passwordHash = await hashPassword(password);
+  const now = Math.floor(Date.now() / 1000);
   const result = await db(c.env.DB).createUser({ email, passwordHash, role: 'user' });
+  await writeWithFallback(c, 'users', 'UPDATE users SET last_login_at = ?1 WHERE id = ?2', [now, result!.id]);
   const token = await createSession(c, result!.id);
   c.header('Set-Cookie', setSessionCookie(token));
   return c.json({ data: { id: result!.id, email, role: 'user' } }, 201);
@@ -31,6 +33,8 @@ router.post('/login', async (c: Context) => {
   if (!user || !user.password_hash || !(await verifyPassword(password, user.password_hash))) {
     return c.json({ error: 'invalid credentials' }, 401);
   }
+  const now = Math.floor(Date.now() / 1000);
+  await writeWithFallback(c, 'users', 'UPDATE users SET last_login_at = ?1 WHERE id = ?2', [now, user.id]);
   const token = await createSession(c, user.id);
   c.header('Set-Cookie', setSessionCookie(token));
   return c.json({ data: { id: user.id, email: user.email, role: user.role } });
@@ -167,6 +171,7 @@ router.get('/google/callback', async (c: Context) => {
   }
   const token = await createSession(c, userId);
   c.header('Set-Cookie', setSessionCookie(token));
+  await writeWithFallback(c, 'users', 'UPDATE users SET last_login_at = ?1 WHERE id = ?2', [Math.floor(Date.now() / 1000), userId]);
 
   // Redirect to frontend (session cookie set).
   const redirectTarget = c.env.ALLOWED_ORIGINS?.split(',')[0]?.trim() ?? '/';

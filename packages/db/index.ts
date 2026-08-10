@@ -72,6 +72,20 @@ export interface Db {
   addMergeQueue: (params: { source: string; sourceSlug: string; title: string; candidateIds: number[]; confidence: number }) => Promise<Result<{ id: number }>>;
   resolveMergeQueue: (id: number, action: 'merge' | 'reject', targetMangaId?: number) => Promise<{ success: boolean }>;
   mergeSeries: (targetSlug: string, sourceSlug: string) => Promise<{ success: boolean }>;
+
+  // ── Admin monitoring (0006) ──
+  upsertProviderAccount: (params: { provider: string; label: string; status?: string; lastSuccessAt?: number | null; lastFailureAt?: number | null; lastError?: string | null; requests24h?: number; failures24h?: number; quotaUsedBytes?: number | null; quotaLimitBytes?: number | null }) => Promise<{ id: string }>;
+  listProviderAccounts: () => Promise<ListResult<{ id: string; provider: string; label: string; status: string; last_success_at: number | null; last_failure_at: number | null; last_error: string | null; requests_24h: number; failures_24h: number; quota_used_bytes: number | null; quota_limit_bytes: number | null; updated_at: number }>>;
+  getProviderAccount: (id: string) => Promise<Result<{ id: string; provider: string; label: string; status: string; last_success_at: number | null; last_failure_at: number | null; last_error: string | null; requests_24h: number; failures_24h: number; quota_used_bytes: number | null; quota_limit_bytes: number | null; updated_at: number }>>;
+  logScrapeJob: (params: { source: string; providerAccountId?: string | null; status: string; itemsScraped?: number; durationMs?: number | null; errorMessage?: string | null; startedAt: number; finishedAt?: number | null }) => Promise<{ id: string }>;
+  listScrapeJobsLog: (params: { source?: string; status?: string; from?: number; to?: number; page?: number; limit?: number }) => Promise<{ data: Array<{ id: string; source: string; provider_account_id: string | null; status: string; items_scraped: number; duration_ms: number | null; error_message: string | null; started_at: number; finished_at: number | null }>; total: number; page: number }>;
+  insertDbUsageSnapshot: (params: { dbName: string; rowsOrObjects?: number | null; sizeBytes?: number | null }) => Promise<{ id: string }>;
+  getDbUsageTrend: (days?: number) => Promise<Array<{ db_name: string; points: Array<{ ts: number; size_bytes: number | null; rows_or_objects: number | null }> }>>;
+  getAdminOverview: () => Promise<{ usersTotal: number; bookmarksTotal: number; scrape24h: { success: number; failed: number }; providers: { healthy: number; degraded: number; down: number } }>;
+  listUsersAdmin: (params: { q?: string; page?: number; limit?: number }) => Promise<{ data: Array<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>; total: number; page: number }>;
+  getUserDetail: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>>;
+  listUserBookmarksAdmin: (userId: number, params: { page?: number; limit?: number }) => Promise<{ data: Array<{ series_slug: string; title: string | null; cover_image: string | null; added_at: number }>; total: number; page: number }>;
+  getProviderHealthBuckets: (providerAccountId: string, hours: number) => Promise<Array<{ started_at: number; status: string; items_scraped: number; duration_ms: number | null }>>;
 }
 
 export const db = (client: D1Database): Db => {
@@ -514,6 +528,173 @@ export const db = (client: D1Database): Db => {
       await prep('UPDATE chapters SET series_slug = ?1 WHERE series_slug = ?2').bind(targetSlug, sourceSlug).run();
       await prep('DELETE FROM series WHERE id = ?1').bind(source.id).run();
       return { success: true };
+    },
+
+    // ── Admin monitoring (0006) ──
+
+    upsertProviderAccount: async (p) => {
+      const id = crypto.randomUUID();
+      const row = await prep(
+        `INSERT INTO provider_accounts (id, provider, label, status, last_success_at, last_failure_at, last_error, requests_24h, failures_24h, quota_used_bytes, quota_limit_bytes, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, unixepoch())
+         ON CONFLICT(provider, label) DO UPDATE SET
+           status = excluded.status,
+           last_success_at = COALESCE(excluded.last_success_at, provider_accounts.last_success_at),
+           last_failure_at = COALESCE(excluded.last_failure_at, provider_accounts.last_failure_at),
+           last_error = COALESCE(excluded.last_error, provider_accounts.last_error),
+           requests_24h = excluded.requests_24h,
+           failures_24h = excluded.failures_24h,
+           quota_used_bytes = COALESCE(excluded.quota_used_bytes, provider_accounts.quota_used_bytes),
+           quota_limit_bytes = COALESCE(excluded.quota_limit_bytes, provider_accounts.quota_limit_bytes),
+           updated_at = unixepoch()
+         RETURNING id`
+      ).bind(id, p.provider, p.label, p.status ?? 'unknown', p.lastSuccessAt ?? null, p.lastFailureAt ?? null, p.lastError ?? null, p.requests24h ?? 0, p.failures24h ?? 0, p.quotaUsedBytes ?? null, p.quotaLimitBytes ?? null).first<Row>();
+      return { id: (row?.id as string) ?? id };
+    },
+
+    listProviderAccounts: async () => {
+      const { results } = await prep('SELECT * FROM provider_accounts ORDER BY updated_at DESC').all<Row>();
+      return (results ?? []) as unknown as ListResult<{ id: string; provider: string; label: string; status: string; last_success_at: number | null; last_failure_at: number | null; last_error: string | null; requests_24h: number; failures_24h: number; quota_used_bytes: number | null; quota_limit_bytes: number | null; updated_at: number }>;
+    },
+
+    getProviderAccount: async (id) => {
+      const row = await prep('SELECT * FROM provider_accounts WHERE id = ?1 LIMIT 1').bind(id).first<Row>();
+      return fromRow(row as Row | null);
+    },
+
+    logScrapeJob: async (p) => {
+      const id = crypto.randomUUID();
+      // Insert log row.
+      await prep(
+        `INSERT INTO scrape_jobs_log (id, source, provider_account_id, status, items_scraped, duration_ms, error_message, started_at, finished_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+      ).bind(id, p.source, p.providerAccountId ?? null, p.status, p.itemsScraped ?? 0, p.durationMs ?? null, p.errorMessage ?? null, p.startedAt, p.finishedAt ?? null).run();
+      // Bump provider_accounts counters if linked.
+      if (p.providerAccountId) {
+        const now = Math.floor(Date.now() / 1000);
+        if (p.status === 'success') {
+          await prep('UPDATE provider_accounts SET requests_24h = requests_24h + 1, last_success_at = ?1, status = ?2, updated_at = unixepoch() WHERE id = ?3')
+            .bind(now, 'healthy', p.providerAccountId).run();
+        } else if (p.status === 'failed' || p.status === 'partial') {
+          await prep('UPDATE provider_accounts SET requests_24h = requests_24h + 1, failures_24h = failures_24h + 1, last_failure_at = ?1, last_error = ?2, status = ?3, updated_at = unixepoch() WHERE id = ?4')
+            .bind(now, (p.errorMessage ?? '').slice(0, 200), p.status === 'partial' ? 'degraded' : 'down', p.providerAccountId).run();
+        }
+      }
+      return { id };
+    },
+
+    listScrapeJobsLog: async (p) => {
+      const page = p.page ?? 1;
+      const limit = p.limit ?? 20;
+      const offset = (page - 1) * limit;
+      const where: string[] = [];
+      const args: unknown[] = [];
+      if (p.source) { where.push(`source = ?${args.length + 1}`); args.push(p.source); }
+      if (p.status) { where.push(`status = ?${args.length + 1}`); args.push(p.status); }
+      if (p.from) { where.push(`started_at >= ?${args.length + 1}`); args.push(p.from); }
+      if (p.to) { where.push(`started_at <= ?${args.length + 1}`); args.push(p.to); }
+      const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+      const countRow = await prep(`SELECT COUNT(*) AS c FROM scrape_jobs_log ${clause}`).bind(...args).first<Row>();
+      const total = countRow ? Number(countRow.c) : 0;
+      const { results } = await prep(`SELECT * FROM scrape_jobs_log ${clause} ORDER BY started_at DESC LIMIT ?${args.length + 1} OFFSET ?${args.length + 2}`).bind(...args, limit, offset).all<Row>();
+      return {
+        data: (results ?? []) as unknown as Array<{ id: string; source: string; provider_account_id: string | null; status: string; items_scraped: number; duration_ms: number | null; error_message: string | null; started_at: number; finished_at: number | null }>,
+        total,
+        page,
+      };
+    },
+
+    insertDbUsageSnapshot: async (p) => {
+      const id = crypto.randomUUID();
+      await prep('INSERT INTO db_usage_snapshot (id, db_name, rows_or_objects, size_bytes, captured_at) VALUES (?1, ?2, ?3, ?4, unixepoch())')
+        .bind(id, p.dbName, p.rowsOrObjects ?? null, p.sizeBytes ?? null).run();
+      return { id };
+    },
+
+    getDbUsageTrend: async (days = 7) => {
+      const since = Math.floor(Date.now() / 1000) - days * 86400;
+      const { results } = await prep('SELECT db_name, captured_at AS ts, size_bytes, rows_or_objects FROM db_usage_snapshot WHERE captured_at >= ?1 ORDER BY db_name, captured_at ASC').bind(since).all<Row>();
+      const byDb = new Map<string, Array<{ ts: number; size_bytes: number | null; rows_or_objects: number | null }>>();
+      for (const r of results ?? []) {
+        const name = r.db_name as string;
+        if (!byDb.has(name)) byDb.set(name, []);
+        byDb.get(name)!.push({ ts: Number(r.captured_at), size_bytes: r.size_bytes as number | null, rows_or_objects: r.rows_or_objects as number | null });
+      }
+      return Array.from(byDb.entries()).map(([db_name, points]) => ({ db_name, points }));
+    },
+
+    getAdminOverview: async () => {
+      const usersRow = await prep('SELECT COUNT(*) AS c FROM users').first<Row>();
+      const bookmarksRow = await prep('SELECT COUNT(*) AS c FROM bookmarks').first<Row>();
+      const dayAgo = Math.floor(Date.now() / 1000) - 86400;
+      const successRow = await prep('SELECT COUNT(*) AS c FROM scrape_jobs_log WHERE status = ?1 AND started_at >= ?2').bind('success', dayAgo).first<Row>();
+      const failedRow = await prep('SELECT COUNT(*) AS c FROM scrape_jobs_log WHERE status IN (?1, ?2) AND started_at >= ?3').bind('failed', 'partial', dayAgo).first<Row>();
+      const healthyRow = await prep("SELECT COUNT(*) AS c FROM provider_accounts WHERE status = 'healthy'").first<Row>();
+      const degradedRow = await prep("SELECT COUNT(*) AS c FROM provider_accounts WHERE status = 'degraded'").first<Row>();
+      const downRow = await prep("SELECT COUNT(*) AS c FROM provider_accounts WHERE status = 'down'").first<Row>();
+      return {
+        usersTotal: Number(usersRow?.c ?? 0),
+        bookmarksTotal: Number(bookmarksRow?.c ?? 0),
+        scrape24h: { success: Number(successRow?.c ?? 0), failed: Number(failedRow?.c ?? 0) },
+        providers: { healthy: Number(healthyRow?.c ?? 0), degraded: Number(degradedRow?.c ?? 0), down: Number(downRow?.c ?? 0) },
+      };
+    },
+
+    listUsersAdmin: async (p) => {
+      const page = p.page ?? 1;
+      const limit = p.limit ?? 20;
+      const offset = (page - 1) * limit;
+      const where = p.q ? `WHERE u.email LIKE ?1 OR u.name LIKE ?1` : '';
+      const like = p.q ? `%${p.q.replace(/%/g, '\\%').replace(/_/g, '\\_')}%` : null;
+      const args = where ? [like] : [];
+      const countRow = await prep(`SELECT COUNT(*) AS c FROM users u ${where}`).bind(...args).first<Row>();
+      const total = countRow ? Number(countRow.c) : 0;
+      const { results } = await prep(
+        `SELECT u.id, u.email, u.name, u.role, u.created_at, u.last_login_at,
+          (SELECT COUNT(*) FROM bookmarks b WHERE b.user_id = u.id) AS bookmark_count
+         FROM users u ${where}
+         ORDER BY u.created_at DESC LIMIT ?${args.length + 1} OFFSET ?${args.length + 2}`
+      ).bind(...args, limit, offset).all<Row>();
+      return {
+        data: (results ?? []) as unknown as Array<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>,
+        total,
+        page,
+      };
+    },
+
+    getUserDetail: async (id) => {
+      const row = await prep(
+        `SELECT u.id, u.email, u.name, u.role, u.created_at, u.last_login_at,
+          (SELECT COUNT(*) FROM bookmarks b WHERE b.user_id = u.id) AS bookmark_count
+         FROM users u WHERE u.id = ?1 LIMIT 1`
+      ).bind(id).first<Row>();
+      return fromRow(row as Row | null);
+    },
+
+    listUserBookmarksAdmin: async (userId, p) => {
+      const page = p.page ?? 1;
+      const limit = p.limit ?? 20;
+      const offset = (page - 1) * limit;
+      const countRow = await prep('SELECT COUNT(*) AS c FROM bookmarks WHERE user_id = ?1').bind(userId).first<Row>();
+      const total = countRow ? Number(countRow.c) : 0;
+      const { results } = await prep(
+        `SELECT b.series_slug, s.title, s.cover_image, b.created_at AS added_at
+         FROM bookmarks b LEFT JOIN series s ON s.slug = b.series_slug
+         WHERE b.user_id = ?1 ORDER BY b.created_at DESC LIMIT ?2 OFFSET ?3`
+      ).bind(userId, limit, offset).all<Row>();
+      return {
+        data: (results ?? []) as unknown as Array<{ series_slug: string; title: string | null; cover_image: string | null; added_at: number }>,
+        total,
+        page,
+      };
+    },
+
+    getProviderHealthBuckets: async (providerAccountId, hours) => {
+      const since = Math.floor(Date.now() / 1000) - hours * 3600;
+      const { results } = await prep(
+        'SELECT started_at, status, items_scraped, duration_ms FROM scrape_jobs_log WHERE provider_account_id = ?1 AND started_at >= ?2 ORDER BY started_at ASC'
+      ).bind(providerAccountId, since).all<Row>();
+      return (results ?? []) as unknown as Array<{ started_at: number; status: string; items_scraped: number; duration_ms: number | null }>;
     }
   };
 };

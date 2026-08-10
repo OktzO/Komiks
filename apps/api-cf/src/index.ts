@@ -10,6 +10,7 @@ import { router as sourceStatusRouter } from './routes/sourceStatus';
 import { router as originsRouter } from './routes/origins';
 import { router as identifyRouter } from './routes/identify';
 import { router as lbAdminRouter } from './routes/admin/lb';
+import { router as monitoringAdminRouter } from './routes/admin/monitoring';
 import { router as scrapeRouter } from './routes/admin/scrape';
 import { router as mergeAdminRouter } from './routes/admin/merge';
 import { router as readerRouter } from './routes/reader';
@@ -61,6 +62,10 @@ app.route('/api', sourceStatusRouter);
 app.route('/api', originsRouter);
 app.route('/api/admin/lb', lbAdminRouter);
 app.route('/api/admin/merge', mergeAdminRouter);
+// Admin monitoring: read-only endpoints (overview, providers, scrape-jobs, db-usage, users).
+// requireAdminSession (session.role===admin) enforced inside router. rateLimitAdmin applies to all /api/admin/*.
+app.use('/api/admin', rateLimitAdmin);
+app.route('/api/admin', monitoringAdminRouter);
 app.route('/api/reader', readerRouter);
 app.route('/api/auth', authRouter);
 app.route('/api/user', userRouter);

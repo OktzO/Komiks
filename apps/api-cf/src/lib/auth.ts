@@ -160,3 +160,16 @@ export const requireAdminKey: MiddlewareHandler<{ Bindings: Env }> = async (c, n
   }
   await next();
 };
+
+// Session-based admin gate for read-only monitoring endpoints (/api/admin/*).
+// Distinct from requireAdminKey (scrape) and requireAdminStepUp (LB mutations).
+// Verifies session cookie/Bearer against KV session store + users.role === 'admin'.
+export const requireAdminSession: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const user = await getSessionUser(c);
+  if (!user || user.role !== 'admin') {
+    return c.json({ error: 'admin required' }, 403);
+  }
+  // Hono's c.set typing is strict; cast to satisfy the generic key constraint.
+  (c as unknown as { set: (k: string, v: unknown) => void }).set('user', user);
+  await next();
+};
