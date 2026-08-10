@@ -7,10 +7,12 @@ import { retryUpstream } from '../../lib/retry';
 
 export const router = new Hono<{ Bindings: Env }>();
 
-// All scrape endpoints require admin key
-router.use('*', requireAdminKey);
+// All scrape endpoints require admin key (applied per-route below).
+// Previously used router.use('*', requireAdminKey) but the wildcard matched
+// unrelated paths under the mount point — scrape is mounted at /api so the
+// middleware ran for /api/admin/* too. Per-route is precise.
 
-router.post('/scrape', async (c: Context) => {
+router.post('/scrape', requireAdminKey, async (c: Context) => {
   const body = await c.req.json().catch(() => null) as {
     source: 'komiku';
     url?: string;
@@ -193,13 +195,13 @@ router.post('/scrape', async (c: Context) => {
   return json(c, { job_id: jobId, status: 'running' });
 });
 
-router.get('/scrape/:job_id', async (c: Context) => {
+router.get('/scrape/:job_id', requireAdminKey, async (c: Context) => {
   const job = await getDb(c).getScrapeJob(c.req.param('job_id'));
   if (!job) return json(c, { error: 'job not found' }, 404);
   return json(c, { data: job });
 });
 
-router.get('/scrape', async (c: Context) => {
+router.get('/scrape', requireAdminKey, async (c: Context) => {
   const jobs = await getDb(c).listScrapeJobs(50);
   return json(c, { data: jobs });
 });
