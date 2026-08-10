@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getAdapter } from '@manga-platform/sources';
+import { getAdapter, type AdapterEnv } from '@manga-platform/sources';
 import type { Env, Context } from '../lib/context';
 import { getDb, json } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
@@ -33,7 +33,7 @@ const fetchHomepageFromSources = async (c: Context): Promise<{ data: any[]; sour
   const settled = await Promise.allSettled(
     sourceDefs.map(({ key, start }) =>
       retryUpstream(async () => {
-        const a = getAdapter(key, c.env);
+        const a = getAdapter(key, c.env as unknown as AdapterEnv);
         if (!a) throw new Error(`${key} adapter unavailable`);
         return { key, start, results: await a.search({ q: '', limit: 24 }) };
       })

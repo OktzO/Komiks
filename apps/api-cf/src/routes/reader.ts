@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getAdapter } from '@manga-platform/sources';
+import { getAdapter, type AdapterEnv } from '@manga-platform/sources';
 import { buildRing, accountFor } from '@manga-platform/shared/r2-routing';
 import { drainResponse } from '@manga-platform/shared/http';
 import { getDb } from '../lib/context';
@@ -97,7 +97,7 @@ const fetchPageUrlsWithCache = async (
   const cached = await cacheGet<{ url: string; proxyHeaders?: Record<string, string> }[]>(c, cacheKey);
   if (cached) return cached;
 
-  const adapter = getAdapter(source, c.env);
+  const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) throw new Error('unknown source');
 
   const pages = await retryUpstream(() => adapter.fetchPageUrls(chapterId));
@@ -169,7 +169,7 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
     return c.json(cached);
   }
 
-  const adapter = getAdapter(source, c.env);
+  const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
   const start = Date.now();
   try {
@@ -195,7 +195,7 @@ router.get('/:source/series/:sourceId', async (c: Context) => {
   const cached = await cacheGet<{ data: unknown }>(c, cacheKey);
   if (cached) return c.json(cached);
 
-  const adapter = getAdapter(source, c.env);
+  const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
   const start = Date.now();
   try {
@@ -217,7 +217,7 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
   const cached = await cacheGet<{ data: unknown[] }>(c, cacheKey);
   if (cached) return c.json(cached);
 
-  const adapter = getAdapter(source, c.env);
+  const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
   const start = Date.now();
   try {
@@ -265,7 +265,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
     // 2. Live-resolve when aggregation is empty (or missing current source).
     const hasCurrent = links.some((l) => l.source === source);
     if (links.length === 0 || !hasCurrent) {
-      const adapter = getAdapter(source, c.env);
+      const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
       if (adapter) {
         const series = await adapter.getSeries(sourceId).catch(() => null);
         if (series?.title) {
@@ -275,7 +275,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
             (['komiku', 'bacakomik', 'manhwaindo', 'thrive'] as const)
               .filter((s) => s !== source)
               .map(async (s) => {
-                const a = getAdapter(s, c.env);
+                const a = getAdapter(s, c.env as unknown as AdapterEnv);
                 if (!a) return null;
                 const results = await a.search({ q: series!.title.slice(0, 60), limit: 10 }).catch(() => []);
                 // Prefer exact normalized title match; fallback to prefix match.
@@ -374,7 +374,7 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
   const cached = await cacheGet<{ data: unknown }>(c, cacheKey);
   if (cached) return c.json(cached);
 
-  const adapter = getAdapter(source, c.env);
+  const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
   const start = Date.now();
   try {
@@ -400,7 +400,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   const n = Number(pageNo);
   if (!Number.isInteger(n) || n < 1 || n > 10000) return c.json({ error: 'bad page number' }, 400);
 
-  const adapter = getAdapter(source, c.env);
+  const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
 
   let pages: { url: string; proxyHeaders?: Record<string, string> }[];
@@ -422,7 +422,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   // and reduces Worker execution cost.
   let cachedImg: Response | null = null;
   if (typeof caches !== 'undefined') {
-    const cache = caches.default;
+    const cache = (caches as unknown as { default: Cache }).default;
     cachedImg = (await cache.match(c.req.raw)) ?? null;
   }
   if (cachedImg) {
@@ -494,7 +494,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
 
   // Store in Cloudflare edge cache for subsequent requests
   if (typeof caches !== 'undefined') {
-    const cache = caches.default;
+    const cache = (caches as unknown as { default: Cache }).default;
     c.executionCtx.waitUntil(cache.put(c.req.raw, response.clone()).catch(() => {}));
   }
 

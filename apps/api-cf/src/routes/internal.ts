@@ -44,10 +44,10 @@ router.post('/db/exec', async (c: Context) => {
   let isPrimary = false;
   let isMirror = false;
 
-  if (forwardKey && c.env.DB_FORWARD_KEY && constantTimeEqualStr(forwardKey, c.env.DB_FORWARD_KEY)) {
+  if (forwardKey && c.env.DB_FORWARD_KEY && constantTimeEqualStr(forwardKey, c.env.DB_FORWARD_KEY as string)) {
     isPrimary = true;
   } else if (
-    mirrorKey && c.env.DB_MIRROR_KEY && constantTimeEqualStr(mirrorKey, c.env.DB_MIRROR_KEY) && isMirrorHeader
+    mirrorKey && c.env.DB_MIRROR_KEY && constantTimeEqualStr(mirrorKey, c.env.DB_MIRROR_KEY as string) && isMirrorHeader
   ) {
     isMirror = true;
   }

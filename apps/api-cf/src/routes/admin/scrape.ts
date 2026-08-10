@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getAdapter } from '@manga-platform/sources';
+import { getAdapter, type AdapterEnv } from '@manga-platform/sources';
 import type { Env, Context } from '../../lib/context';
 import { getDb, json } from '../../lib/context';
 import { requireAdminKey } from '../../lib/auth';
@@ -22,7 +22,7 @@ router.post('/scrape', requireAdminKey, async (c: Context) => {
     return json(c, { error: 'source required (komiku), plus url or query' }, 400);
   }
 
-  const adapter = getAdapter(body.source, c.env);
+  const adapter = getAdapter(body.source, c.env as unknown as AdapterEnv);
   if (!adapter) return json(c, { error: 'unknown source' }, 400);
 
   // Create job

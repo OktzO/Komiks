@@ -23,7 +23,7 @@ export const encryptToken = async (
 ): Promise<Uint8Array> => {
   const key = await deriveKey(encKey);
   const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
-  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, asBytes(plaintext));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as unknown as BufferSource }, key, asBytes(plaintext) as unknown as BufferSource);
   const out = new Uint8Array(IV_LEN + ct.byteLength);
   out.set(iv, 0);
   out.set(new Uint8Array(ct), IV_LEN);

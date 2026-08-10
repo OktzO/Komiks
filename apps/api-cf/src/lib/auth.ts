@@ -26,8 +26,8 @@ export async function verifyPassword(password: string, stored: string): Promise<
 }
 
 async function deriveKey(password: string, salt: Uint8Array, iter = PBKDF2_ITER): Promise<CryptoKey> {
-  const baseKey = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, baseKey, KEY_LEN * 8);
+  const baseKey = await crypto.subtle.importKey('raw', new TextEncoder().encode(password) as unknown as BufferSource, 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations: iter, hash: 'SHA-256' }, baseKey, KEY_LEN * 8);
   return crypto.subtle.importKey('raw', bits, 'HMAC', false, ['sign']);
 }
 
