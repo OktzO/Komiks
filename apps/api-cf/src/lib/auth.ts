@@ -93,15 +93,14 @@ function parseCookie(header: string): Record<string, string> {
 }
 
 export function setSessionCookie(token: string): string {
-  // Secure flag ensures the cookie is only sent over HTTPS in production.
-  // Local dev over HTTP must tolerate this — browsers will simply not persist
-  // the cookie over http, which is acceptable for local testing (use wrangler
-  // dev which serves HTTPS, or set a separate non-Secure cookie for localhost).
-  return `session=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${SESSION_TTL}`;
+  // SameSite=None + Secure required for cross-origin cookie (frontend on
+  // oktz.qzz.io, API on manga-api.oktz.workers.dev). Lax would block XHR
+  // cross-origin, leaving frontend unable to read the session.
+  return `session=${token}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${SESSION_TTL}`;
 }
 
 export function clearSessionCookie(): string {
-  return `session=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`;
+  return `session=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`;
 }
 
 export async function listSessionsForUser(env: Env, userId: number): Promise<SessionMeta[]> {
