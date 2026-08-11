@@ -64,11 +64,12 @@ a:hover { color: var(--accent); }
   right: 0;
   z-index: 50;
   padding-top: 0;
-  /* contain: animasi width/padding di-isolate — tidak memicu reflow/repaint
-     halaman di luar navbar (sumber lag sebelumnya) */
-  contain: layout paint;
+  /* contain layout+style: animasi width di-isolate (tidak reflow halaman);
+     TANPA contain:paint — itu memotong dropdown #nav-menu */
+  contain: layout style;
   transition: padding-top 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
+#navbar.navbar-scrolled { padding-top: 10px; }
 
 #navbar .nav-island {
   width: var(--nav-width-rest);
@@ -81,16 +82,10 @@ a:hover { color: var(--accent); }
               background-color 0.2s,
               border-color 0.2s;
 }
-
-/* Shape-change (biasa → island pill) HANYA di md+ (desktop).
-   Mobile: flat full-width di semua state — zero layout animation, no lag. */
-@media (min-width: 768px) {
-  #navbar.navbar-scrolled { padding-top: 10px; }
-  #navbar.navbar-scrolled .nav-island {
-    width: var(--nav-width-active);
-    max-width: var(--nav-width-active);
-    border-radius: 9999px;
-  }
+#navbar.navbar-scrolled .nav-island {
+  width: var(--nav-width-active);
+  max-width: var(--nav-width-active);
+  border-radius: 9999px;
 }
 
 /* Hamburger 2-garis → menyilang (oktz-style: inline transform override) */

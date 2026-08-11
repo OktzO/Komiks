@@ -1,4 +1,4 @@
-import { searchMerged, getSourceStatus } from '@/lib/api';
+import { searchMerged } from '@/lib/api';
 import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
 import { TypeBadge } from '@/components/TypeBadge';
@@ -14,23 +14,16 @@ const itemOf = (m: any) => m.data ?? m;
 
 export default async function Home() {
   let manga: any[] = [];
-  let statuses: any[] = [];
   let error: string | null = null;
   try {
-    const [res, st] = await Promise.all([
-      searchMerged(''),
-      getSourceStatus().catch(() => ({ data: [] })),
-    ]);
+    const res = await searchMerged('');
     manga = res.data;
-    statuses = st.data;
   } catch (e: unknown) {
     error = e instanceof Error ? e.message : String(e);
   }
 
   const popular = manga.slice(0, 10);
   const updates = manga.slice(0, 12);
-  const healthyCount = statuses.filter((s) => s.healthy).length;
-  const healthOf = (s: string) => statuses.find((st) => st.source === s);
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-16 overflow-x-hidden">
@@ -194,27 +187,19 @@ export default async function Home() {
           </div>
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-secondary mb-2">Sumber</p>
-            <p className="flex items-center gap-1.5 text-xs text-secondary mb-2">
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${healthyCount === (statuses.length || 1) ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
-              {healthyCount}/{statuses.length || '?'} online
-            </p>
             <div className="flex flex-col">
-              {SOURCE_ORDER.map((s) => {
-                const h = healthOf(s);
-                return (
-                  <Link
-                    key={s}
-                    href="/status"
-                    prefetch={false}
-                    className="flex items-center gap-2 py-1 text-xs text-secondary hover:text-primary transition-colors"
-                    title={`Status ${sourceLabel(s)}`}
-                  >
-                    <SourceBadge sources={[s]} size="sm" />
-                    <span>{sourceLabel(s)}</span>
-                    <span className={`ml-auto inline-block h-1.5 w-1.5 rounded-full ${h ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
-                  </Link>
-                );
-              })}
+              {SOURCE_ORDER.map((s) => (
+                <Link
+                  key={s}
+                  href="/status"
+                  prefetch={false}
+                  className="flex items-center gap-2 py-1 text-xs text-secondary hover:text-primary transition-colors"
+                  title={`Status ${sourceLabel(s)}`}
+                >
+                  <SourceBadge sources={[s]} size="sm" />
+                  <span>{sourceLabel(s)}</span>
+                </Link>
+              ))}
             </div>
           </div>
           <div>
