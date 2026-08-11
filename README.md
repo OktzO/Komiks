@@ -31,10 +31,11 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 - ✅ Next-chapter prefetch
 
 ### Discovery
-- ✅ Home page live feed: hero + search, marquee ticker, source status pills, **Populer Hari Ini** (rank + type badge), genre chips, **Update Terbaru** 2-col list, footer
+- ✅ Home page live feed: hero (tanpa mention jumlah source) + search, marquee ticker, **Populer Hari Ini** (type badge flag+glow di pojok kanan-bawah cover), genre chips, **Update Terbaru** 2-col list, source status di footer (badge per source + counter online)
 - ✅ Search multi-source, merge by normalized title (levenshtein + Jaro-Winkler)
-- ✅ Series detail: cover, synopsis, author, genres, chapter list, source switcher (dropdown + sticky di reader)
-- ✅ Badge multi-source (ikon 4 source, overflow +N) + **TypeBadge** (manga/manhwa/manhua pill)
+- ✅ Series detail: poster + info split (md+), **Detail Info** (Type flag/Status/Source badge/Author/Genre — pola doujin.desu.xxx, fallback N/A, genre+author aggregate lintas source), toolbox island (bookmark toggle + **Mulai Baca** → chapter 1), synopsis, chapter list (sort numeric, default Akhir→Awal), source switcher (dropdown + sticky di reader)
+- ✅ SEO: generateMetadata per manga (title/description/canonical/OG image) + JSON-LD `Book`, sitemap.xml + robots.txt dari `NEXT_PUBLIC_SITE_URL`
+- ✅ Badge multi-source (ikon 4 source, overflow +N) + **TypeBadge** (flag 🇯🇵🇰🇷🇨🇳, border hitam, text putih bercahaya)
 - ✅ Aggregation: 1 manga canonical (series) dari banyak source link, auto-index dari aktivitas user
 - ✅ Passive health: `source_health` dicatat saat user search/reader (tanpa cron)
 
@@ -337,7 +338,7 @@ GOOGLE_CLIENT_SECRET=<from-google-console>
 LB_ENCRYPTION_KEY     # AES-GCM key token LB
 ADMIN_EMAILS          # comma-separated; auto-role admin saat Google OAuth login
 SCRAPE_API_KEY        # admin key /api/scrape
-ALLOWED_ORIGINS       # comma-separated, contoh: https://oktzz.xyz,https://www.oktzz.xyz,https://manga-web-d32.pages.dev,http://localhost:3000
+ALLOWED_ORIGINS       # comma-separated; dukung wildcard subdomain `https://*.manga-web-d32.pages.dev` (CF Pages preview). Contoh: https://manga-web-d32.pages.dev,https://*.manga-web-d32.pages.dev,http://localhost:3000
 R2_ACCOUNTS           # JSON: [{"account_id","access_key_id","secret_access_key","public_domain","bucket?"}]
                        # urutan = index akun (identitas hash ring), 1 secret untuk semua akun
 GOOGLE_CLIENT_ID      # OAuth
@@ -351,6 +352,7 @@ Env tambahan (wrangler.toml / default): `R2_RING_VNODES` (default 32), `R2_EVICT
 ```env
 NEXT_PUBLIC_API_URL=https://manga-api.oktz.workers.dev
 NEXT_PUBLIC_DATA_API_URL=https://manga-api.oktz.workers.dev
+NEXT_PUBLIC_SITE_URL=https://manga-web-d32.pages.dev  # dipakai sitemap.xml + robots.txt + canonical + OG (metadataBase)
 NEXT_PUBLIC_R2_DOMAINS=https://cdn1.oktz.qzz.io   # urutan = index akun, sama dengan R2_ACCOUNTS
 NEXT_PUBLIC_R2_VNODES=32
 ```

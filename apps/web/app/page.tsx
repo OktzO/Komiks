@@ -43,13 +43,13 @@ export default async function Home() {
           className="pointer-events-none absolute inset-x-0 -top-28 mx-auto h-72 w-72 rounded-full bg-[radial-gradient(closest-side,oklch(98%_0_0/0.07),transparent)] md:h-96 md:w-96"
         />
         <div className="relative">
-          <p className="anim-rise font-mono text-[11px] uppercase tracking-[0.28em] text-muted mb-4">Baca manga bahasa Indonesia</p>
+          <p className="anim-rise font-mono text-[11px] uppercase tracking-[0.28em] text-muted mb-4">Koleksi komik Indonesia</p>
           <h1 className="anim-rise font-display text-4xl md:text-6xl tracking-tight text-primary leading-[1.05] text-balance" style={{ animationDelay: '60ms' }}>
-            Komik yang <span className="text-glow">baru terbit</span>,
-            <br /> tanpa ribet.
+            Baca manga, manhwa,
+            <br /> dan manhua. Satu tempat.
           </h1>
           <p className="anim-rise mt-5 text-secondary max-w-xl mx-auto text-balance" style={{ animationDelay: '120ms' }}>
-            Empat sumber terjemahan Indonesia, digabung jadi satu. Rapi, cepat, dan ringan.
+            Ribuan judul terjemahan Indonesia, dikemas rapi dan ringan. Cepat, nyaman, tanpa ribet.
           </p>
           <form action="/search" method="get" className="anim-rise mt-8 max-w-xl mx-auto" style={{ animationDelay: '180ms' }}>
             <div className="flex items-center gap-2 rounded-full border border-border-default bg-card/60 px-4 py-2 backdrop-blur focus-within:border-border-default">
@@ -93,31 +93,6 @@ export default async function Home() {
         </section>
       )}
 
-      {/* ============ Status sumber — single line compact ============ */}
-      <section className="mb-12" aria-label="Status sumber bacaan">
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-3 py-1.5 text-xs text-secondary backdrop-blur">
-            <span className={`inline-block h-1.5 w-1.5 rounded-full ${healthyCount === (statuses.length || 1) ? 'bg-success' : 'bg-error'}`} />
-            {healthyCount}/{statuses.length || '?'} online
-          </span>
-          {SOURCE_ORDER.map((s) => {
-            const h = healthOf(s);
-            return (
-              <Link
-                key={s}
-                href="/status"
-                prefetch={false}
-                className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-3 py-1.5 text-xs text-secondary backdrop-blur hover:text-primary hover:border-border-default transition-colors"
-                title={`Status ${sourceLabel(s)}`}
-              >
-                <SourceBadge sources={[s]} size="sm" />
-                <span className={`inline-block h-1.5 w-1.5 rounded-full ${h ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
-              </Link>
-            );
-          })}
-        </div>
-      </section>
-
       {/* ============ Populer Hari Ini ============ */}
       <section className="mb-12">
         <div className="flex items-baseline justify-between mb-5">
@@ -127,9 +102,9 @@ export default async function Home() {
           </Link>
         </div>
         <div className="flex gap-4 overflow-x-auto pb-4 snap-x" style={{ scrollbarWidth: 'thin' }} aria-label="Judul populer">
-          {popular.map((m, i) => {
+          {popular.map((m) => {
             const item = itemOf(m);
-            const source = item.sources?.includes('komiku') ? 'komiku' : item.source;
+            const source = (m.sources?.includes('komiku') ?? item.sources?.includes('komiku')) ? 'komiku' : item.source;
             return (
               <Link
                 key={`${item.source}-${item.slug}`}
@@ -137,20 +112,12 @@ export default async function Home() {
                 prefetch={false}
                 className="group relative shrink-0 snap-start w-36 sm:w-40 transition-transform duration-200 hover:-translate-y-1"
               >
-                <span
-                  className={`absolute -top-3 -left-1 z-10 font-display text-5xl sm:text-6xl font-light leading-none select-none ${
-                    i < 3 ? 'text-primary/25' : 'text-primary/10'
-                  }`}
-                  aria-hidden="true"
-                >
-                  {i + 1}
-                </span>
                 <div className="aspect-[3/4] w-full overflow-hidden rounded-xl border border-border-subtle bg-card relative">
                   <CoverImage src={item.cover_image} alt={item.title} title={item.title} className="h-full w-full" zoom />
                   <div className="absolute top-1.5 right-1.5 z-10">
-                    <SourceBadge sources={(item.sources as string[]) || [item.source]} size="sm" />
+                    <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
                   </div>
-                  <div className="absolute bottom-1.5 left-1.5 z-10">
+                  <div className="absolute bottom-1.5 right-1.5 z-10">
                     <TypeBadge type={item.type} />
                   </div>
                 </div>
@@ -192,7 +159,7 @@ export default async function Home() {
           <div className="grid md:grid-cols-2 md:gap-x-8">
             {updates.map((m) => {
               const item = itemOf(m);
-              const source = item.sources?.includes('komiku') ? 'komiku' : item.source;
+              const source = (m.sources?.includes('komiku') ?? item.sources?.includes('komiku')) ? 'komiku' : item.source;
               return (
                 <Link
                   key={`${item.source}-${item.slug}`}
@@ -210,7 +177,7 @@ export default async function Home() {
                       {item.status && <span className="text-[11px] text-muted capitalize">{item.status}</span>}
                     </div>
                   </div>
-                  <SourceBadge sources={(item.sources as string[]) || [item.source]} size="sm" />
+                  <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
                 </Link>
               );
             })}
@@ -227,9 +194,29 @@ export default async function Home() {
           </div>
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-secondary mb-2">Sumber</p>
-            {['komiku.org', 'bacakomik.my', 'thrive.moe', 'manhwaindo.my'].map((d) => (
-              <p key={d} className="text-xs py-0.5">{d}</p>
-            ))}
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-2.5 py-1 text-xs text-secondary backdrop-blur">
+                <span className={`inline-block h-1.5 w-1.5 rounded-full ${healthyCount === (statuses.length || 1) ? 'bg-success' : 'bg-error'}`} />
+                {healthyCount}/{statuses.length || '?'} online
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {SOURCE_ORDER.map((s) => {
+                const h = healthOf(s);
+                return (
+                  <Link
+                    key={s}
+                    href="/status"
+                    prefetch={false}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-2.5 py-1 text-xs text-secondary backdrop-blur hover:text-primary hover:border-border-default transition-colors"
+                    title={`Status ${sourceLabel(s)}`}
+                  >
+                    <SourceBadge sources={[s]} size="sm" />
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${h ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
+                  </Link>
+                );
+              })}
+            </div>
           </div>
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-secondary mb-2">Navigasi</p>

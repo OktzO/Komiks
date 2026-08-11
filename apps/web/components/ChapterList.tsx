@@ -7,10 +7,13 @@ interface Ch { id: string; chapter_number: number; title?: string | null }
 export function ChapterList({ chapters, source, slug }: { chapters: Ch[]; source: string; slug: string }) {
   const [open, setOpen] = useState(false);
   const [rendered, setRendered] = useState(false);
-  const [asc, setAsc] = useState(true);
+  // Default "Akhir → Awal": chapter 1 paling akhir. Sort numeric — data API
+  // dari beberapa source tidak urut.
+  const [asc, setAsc] = useState(false);
 
-  const ordered = asc ? [...chapters] : [...chapters].reverse();
-  const first = chapters[0]?.chapter_number ?? 0;
+  const byNum = [...chapters].sort((a, b) => (a.chapter_number ?? 0) - (b.chapter_number ?? 0));
+  const ordered = asc ? byNum : [...byNum].reverse();
+  const first = chapters.reduce((m, c) => Math.max(m, c.chapter_number ?? 0), 0);
 
   const openSheet = () => {
     setRendered(true);

@@ -67,7 +67,12 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
   const statusRaw = findVal(/^Status:/i);
   const status = statusRaw ? (statusRaw.toLowerCase().includes('end') ? 'completed' : 'ongoing') : 'ongoing';
   const typeRaw = findVal(/^Tipe:/i);
-  const type = typeRaw ? typeRaw.toLowerCase() : 'manga';
+  // Komiku baris Tipe: sering noise double-label "<td>Tipe:</td><td>Tema:</td>" —
+  // hanya terima value yang eksplisit manga/manhwa/manhua. Fallback: cover
+  // horizontal komiku mengandung tipe ("manga_img_horizontal-Manhua-...").
+  const typeMatch = typeRaw?.trim().match(/^(manga|manhwa|manhua)$/i)?.[1]
+    ?? html.match(/manga_img_horizontal-(manhua|manhwa|manga)/i)?.[1];
+  const type = (typeMatch ?? 'manga').toLowerCase();
   const genres = Array.from(html.matchAll(/<a[^>]*href="[^"]*\/genre\/[^"]*"[^>]*>([^<]+)<\/a>/g)).map((m) => m[1].trim()).filter(Boolean);
   return { title, synopsis, cover_image: cover, author, status, type, genres };
 };

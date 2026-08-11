@@ -94,7 +94,10 @@ export function SourceSwitcher({
       router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?id=${encodeURIComponent(link.sourceSlug)}`);
     } else {
       if (source === currentSource) return;
-      router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?ch=${chapterNumber || 1}`);
+      // Bawa ke chapter yang sama di source lain. Kalau tidak ada chapter
+      // number (detail flow), mendarat di halaman detail source tersebut.
+      const base = `/${source}/s/${encodeURIComponent(link.sourceSlug)}`;
+      router.push(chapterNumber > 0 ? `${base}/${encodeURIComponent(link.sourceSlug)}-chapter-${chapterNumber}?id=${encodeURIComponent(link.sourceSlug)}` : `${base}?id=${encodeURIComponent(link.sourceSlug)}`);
     }
   };
 

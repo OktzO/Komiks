@@ -47,8 +47,8 @@ export default async function SearchPage({ searchParams }: { searchParams: { q?:
         <div className="flex flex-col gap-2">
           {results.map((m: any) => {
             const item = m.data || m;
-            const source = item.sources?.includes('komiku') ? 'komiku' : item.source;
-            const sources = (item.sources as string[]) || [item.source];
+            const source = (m.sources?.includes('komiku') ?? item.sources?.includes('komiku')) ? 'komiku' : item.source;
+            const sources = (m.sources as string[]) || (item.sources as string[]) || [item.source];
             return (
               <Link
                 key={`${item.source}-${item.slug}`}

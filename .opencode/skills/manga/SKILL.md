@@ -128,8 +128,8 @@ manga-platform/
 │   └── web/                              # Frontend Next.js 14
 │       ├── app/                          # App Router
 │       │   ├── layout.tsx                # Root layout (nav-island, dark theme, fixed header)
-│       │   ├── page.tsx                  # Home (hero + marquee + source pills + populer carousel + genre + updates; revalidate 300s, overflow-x-hidden)
-│       │   ├── globals.css               # OKLCH dark palette + .nav-island style + .marquee + admin tokens + mobile menu fix
+│       │   ├── page.tsx                  # Home (hero v2 tanpa mention sumber + marquee + populer carousel + genre + updates; revalidate 300s; source status di footer)
+│       │   ├── globals.css               # OKLCH dark palette + .nav-island style + .marquee + .type-badge-glow + admin tokens + mobile menu fix
 │       │   ├── search/page.tsx           # runtime=edge, revalidate 60s, searchMerged
 │       │   ├── login/page.tsx            # OAuth-only (Google button)
 │       │   ├── bookmark/page.tsx
@@ -143,13 +143,14 @@ manga-platform/
 │       │   ├── admin/settings/page.tsx   # LB + auto-provision (session guard, NO password step-up; renamed dari /admin/load-balancing)
 │       │   ├── admin/load-balancing/page.tsx # legacy redirect → /admin/settings
 │       │   └── [source]/s/[slug]/
-│       │       ├── page.tsx              # Series detail (runtime=edge) + SourceSwitcher dropdown
+│       │       ├── page.tsx              # Series detail (runtime=edge): Detail Info pola doujin.desu.xxx (Type flag/Status/Source badge/Author/Genre N/A fallback), genre+author aggregate lintas source (timeout 2s), toolbox island (BookmarkButton + Mulai Baca → chapter 1), generateMetadata + JSON-LD Book, SourceSwitcher dropdown; md+ split poster-kiri (pola komikomi.net)
 │       │       ├── loading.tsx           # skeleton
-│       │       └── [chapterId]/page.tsx # Reader (scroll + page mode) + SourceSwitcher sticky
+│       │       └── [chapterId]/page.tsx # Reader (scroll + page mode) + SourceSwitcher sticky (switch source → chapter yang sama + ?id)
 │       ├── components/
 │       │   ├── MangaCard.tsx             # multi-source detection + TypeBadge + SourceBadge in cover
-│       │   ├── TypeBadge.tsx             # manga/manhwa/manhua pill component (OKLCH colors)
-│       │   ├── ChapterList.tsx
+│       │   ├── TypeBadge.tsx             # manga/manhwa/manhua badge: flag 🇯🇵🇰🇷🇨🇳 + border hitam + text putih bercahaya (.type-badge-glow); export TYPE_META
+│       │   ├── BookmarkButton.tsx        # toggle bookmark kotak (border putih bg hitam, 44px); cek /api/user/me dulu, guest → /login
+│       │   ├── ChapterList.tsx           # sort numeric by chapter_number; default Akhir→Awal (ch1 paling akhir)
 │       │   ├── Reader.tsx                # lazy image + skeleton slot + next-chapter prefetch
 │       │   ├── ReaderShell.tsx           # Reader wrapper (mode='reader') — fixes pre-existing type error
 │       │   ├── AuthForm.tsx              # OAuth-only (single Google button)
@@ -506,7 +507,7 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0004_agg
 ## 8. Security
 
 - **Rate limiting:** public 60/min, identify 10/min, scrape 600/min, admin 600/min. Per-IP via KV counter.
-- **CORS:** allowlist `ALLOWED_ORIGINS`. Preflight handle OPTIONS. Allow headers: `Content-Type, X-Admin-Api-Key` (NO `x-admin-stepup` — removed).
+- **CORS:** allowlist `ALLOWED_ORIGINS` — support wildcard subdomain `https://*.manga-web-d32.pages.dev` (CF Pages preview/hash domain). Match logic di `lib/context.ts` `allowedOriginFor` + `originMatches` (entry `://*.`). **Worker 500/exception → response tanpa CORS header → browser menampilkan "TypeError: Failed to fetch"** (bukan 5xx). Kalau user lihat error ini di halaman client-fetch (admin, reader), cek dulu origin domain ≠ allowlist.
 - **Admin auth = session role.** `requireAdminSession` cek session KV + D1 `users.role==='admin'`. TIDAK ada password step-up. `ADMIN_PASSWORD_HASH` secret tetap di wrangler tapi unused (jangan pakai).
 - **Admin key (scrape):** `x-admin-api-key` === `SCRAPE_API_KEY`. Constant-time compare. PER-ROUTE middleware (bukan `router.use('*')` — wildcard match semua subroute dan blok endpoint lain).
 - **Token encryption:** AES-GCM 256. Layout BLOB: `[12-byte iv | ciphertext+tag]`.
@@ -576,7 +577,7 @@ cd apps/web && npx next build && npx next-on-pages
 - **1 Worker, bukan 2.** `apps/data-api` sudah dihapus, digabung ke `apps/api-cf`. Tidak ada cron.
 - **Dead routes (intentional, jangan mount).** `apps/api-cf/src/routes/homepage.ts` dan `internal.ts` ada di disk tapi **tidak di-mount** di `index.ts`. Homepage feed served via `search.ts` (`q=""`). Internal untuk hook admin-only via CF API langsung. Kalau mau aktifkan: tambah `app.route('/api/homepage', homepageRouter)` di `index.ts`.
 - **Komiku no Puppeteer.** Adapter pakai fetch HTML + regex. Domain `komiku.org` (bukan `.id`). Search via `api.komiku.org`. Image butuh Referer header.
-- **Komiku type detection.** Type dari `.tpe1_inf > b` (manga/manhwa/manhua). Cache KV 120s per query.
+- **Komiku type detection.** Search: `.tpe1_inf > b` (manga/manhwa/manhua). Detail: row `Tipe:` sering noise double-label `<td>Tipe:</td><td>Tema:</td>` → parser hanya terima value eksplisit manga/manhwa/manhua + fallback regex cover horizontal `manga_img_horizontal-{Type}-` (mis. `...-Manhua-Magic-Emperor.png`). Detail page komiku TIDAK selalu punya tipe yang benar (solo-leveling → fallback 'manga').
 - **Status page v2** (`apps/web/app/status/page.tsx`): BetterStack-style — pulse dot + relative time + latency grade (good<1500ms, mid<3500ms, bad≥3500ms) + chevron. `revalidate=30s` (sebelumnya 60s). Stale detection: relative time >1 jam → label merah.
 - **Passive health.** `source_health` dicatat saat user search/reader. No cron, no dedicated ping. `last_checked_at` = aktivitas terakhir.
 - **LB auto-provision.** Admin input CF API token → auto-create D1+KV+Worker + R2 bucket `ASSETS_R2` (optional, via CF API). **R2 storage multi-account (`manga-images` + S3 token) TIDAK bisa auto-provision** — R2 S3 API token cuma dari dashboard → setup manual via `scripts/setup-r2-account.mjs`. Worker bundle dibaca dari KV `worker-bundle:latest`. Subdomain `workers.dev` auto-enable via API.
@@ -592,7 +593,7 @@ cd apps/web && npx next build && npx next-on-pages
 - **Quota LB di D1 (`lb_usage`)** — KV cuma 1.000 writes/day, tidak cukup buat hit counter per origin.
 - **Dark theme OKLCH.** Palette: bg `oklch(8%)`, card `oklch(12%)`, border putih 8-14%. Nav-island: fixed, blur 18px saturate 1.8. **At-rest mobile = tepel full-width, scrolled desktop (md+) = pill island.** Lihat gotcha mobile shape-change.
 - **`next-on-pages` butuh `runtime = 'edge'`.** Dynamic pages (search, series detail) butuh `export const runtime = 'edge'` + `revalidate`. Jangan pakai `force-dynamic` (konflik).
-- **`ALLOWED_ORIGINS` penting.** Frontend client-side fetch butuh CORS. Set include domain Pages.
+- **`ALLOWED_ORIGINS` penting.** Frontend client-side fetch butuh CORS. Set include domain Pages + wildcard `*.manga-web-d32.pages.dev` (preview URL per deploy). Kalau lupa: admin page → "TypeError: Failed to fetch".
 - **Worker bundle size.** ~65KB minified. Seed ke KV manual setelah build.
 - **Deploy helper `scripts/deploy-worker-api.sh`** (commit ff5759c): build bundle + `wrangler deploy --env akun1|akun2`. Token harus punya scope `Workers Scripts:Edit` — account-scoped token (role Super Admin) bisa wrangler deploy, tapi user-scoped token (template `Edit Cloudflare Workers`) perlu script:edit permission. Token di script hardcode — rotasi dulu kalau di-share.
 - **Google OAuth.** Worker verify token via Google tokeninfo endpoint (no client_secret needed untuk verify). Avatar_url disave ke `users.avatar_url` di callback. Config secret: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`.
@@ -650,7 +651,10 @@ cd apps/web && npx next build && npx next-on-pages
 | Admin merge queue | `apps/api-cf/src/routes/admin/merge.ts` |
 | Source badge icons | `apps/web/public/sources/*.png` |
 | Source badge component | `apps/web/components/SourceBadge.tsx` |
-| Type badge (manga/manhwa/manhua pill) | `apps/web/components/TypeBadge.tsx` |
+| Type badge (flag + glow, border hitam) | `apps/web/components/TypeBadge.tsx` + `.type-badge-glow` di `globals.css` |
+| Bookmark toggle (toolbox) | `apps/web/components/BookmarkButton.tsx` |
+| Detail Info + toolbox island (detail page) | `apps/web/app/[source]/s/[slug]/page.tsx` |
+| Chapter list (sort numeric) | `apps/web/components/ChapterList.tsx` |
 | Source switcher (dropdown/sticky) | `apps/web/components/SourceSwitcher.tsx` |
 | Skeleton loading | `apps/web/components/Skeleton.tsx` + `app/**/loading.tsx` |
 | LB token encrypt | `packages/lb/crypto.ts` |

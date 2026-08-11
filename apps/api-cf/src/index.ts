@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
-import { Env, json, parseAllowedOrigins } from './lib/context';
+import { Env, json, allowedOriginFor } from './lib/context';
 import { rateLimit, rateLimitIdentify, rateLimitAdmin } from './lib/rateLimit';
 import { router as healthRouter } from './routes/health';
 import { router as seriesRouter } from './routes/series';
@@ -21,9 +21,8 @@ import { router as userRouter } from './routes/user';
 // Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
 // credentials header is emitted.
 const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  const allowed = parseAllowedOrigins(c.env);
   const origin = c.req.header('origin');
-  if (origin && allowed.includes(origin)) {
+  if (origin && allowedOriginFor(c.env, origin)) {
     c.res.headers.set('Access-Control-Allow-Origin', origin);
     c.res.headers.set('Access-Control-Allow-Credentials', 'true');
     c.res.headers.set('Vary', 'Origin');

@@ -321,6 +321,15 @@ a:hover { color: var(--accent); }
   text-shadow: 0 0 24px oklch(98% 0 0 / 0.25);
 }
 
+/* ── Type badge: border hitam, text putih bercahaya ── */
+.type-badge-glow {
+  background: oklch(0% 0 0 / 0.65);
+  border: 1px solid oklch(0% 0 0 / 0.9);
+  color: oklch(98% 0 0);
+  text-shadow: 0 0 8px oklch(98% 0 0 / 0.55), 0 0 2px oklch(98% 0 0 / 0.8);
+  backdrop-filter: blur(4px);
+}
+
 /* ── Home: rise-in reveal (hero stack) ── */
 @keyframes riseIn {
   from { opacity: 0; transform: translateY(14px); }
