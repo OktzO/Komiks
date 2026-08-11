@@ -39,8 +39,9 @@ export interface Db {
    clearUserHistory: (userId: number) => Promise<{ success: boolean; deleted: number }>;
    clearUserBookmarks: (userId: number) => Promise<{ success: boolean; deleted: number }>;
    addBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
-  removeBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
-  listBookmarks: (userId: number) => Promise<ListResult<Series>>;
+   removeBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
+   isBookmarked: (params: { userId: number; seriesSlug: string }) => Promise<boolean>;
+   listBookmarks: (userId: number) => Promise<ListResult<Series>>;
   upsertHistory: (params: { userId: number; chapterId: string; lastPage: number }) => Promise<Result<ReadingHistory>>;
   listHistory: (userId: number, limit?: number) => Promise<ListResult<Chapter>>;
   getLbSettings: () => Promise<Result<LbSettings>>;
@@ -268,6 +269,12 @@ export const db = (client: D1Database): Db => {
       const res = await prep('DELETE FROM bookmarks WHERE user_id = ?1 AND series_slug = ?2')
         .bind(userId, seriesSlug).run();
       return { success: res.success };
+    },
+
+    isBookmarked: async ({ userId, seriesSlug }) => {
+      const row = await prep('SELECT 1 FROM bookmarks WHERE user_id = ?1 AND series_slug = ?2')
+        .bind(userId, seriesSlug).first<Row>();
+      return !!row;
     },
 
     listBookmarks: async (userId) => {

@@ -1,27 +1,59 @@
-export const runtime = 'edge';
-export const revalidate = 60;
-import { API_URL, type Series } from '@/lib/api';
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { MangaCard } from '@/components/MangaCard';
 
-export default async function BookmarksPage() {
-  let series: Series[] = [];
-  let error: string | null = null;
-  try {
-    const res = await fetch(`${API_URL}/api/user/bookmarks`, { next: { revalidate: 60 }, credentials: 'include' });
-    if (res.status === 401) error = 'Masuk untuk lihat bookmark.';
-    else if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    else series = (await res.json()).data || [];
-  } catch (e) { error = String(e); }
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
+
+type BookmarkRow = { slug: string; title: string | null; cover_image: string | null; external_id: string | null };
+
+export default function BookmarksPage() {
+  const [items, setItems] = useState<BookmarkRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/api/user/bookmarks`, { credentials: 'include', signal: AbortSignal.timeout(8000) });
+        if (r.status === 401) { if (alive) setError('guest'); return; }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const j = await r.json();
+        if (alive) setItems(j.data || []);
+      } catch (e) { if (alive) setError(String(e)); }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-semibold mb-4">Bookmark</h1>
-      {error && <div className="text-secondary text-sm">{error}</div>}
-      {series.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {series.map((m) => <MangaCard key={m.slug} manga={{ id: m.external_id || m.slug, title: m.title, cover: m.cover_image || null, slug: m.slug }} />)}
+      {error === 'guest' && (
+        <div className="text-secondary text-sm">
+          Masuk untuk lihat bookmark.{' '}
+          <Link href="/login" prefetch={false} className="text-accent hover:underline">Masuk sekarang</Link>
         </div>
-      ) : !error ? <p className="text-muted text-sm">Belum ada bookmark.</p> : null}
+      )}
+      {error && error !== 'guest' && <div className="text-error text-sm">{error}</div>}
+      {items === null && !error && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="aspect-[3/4] animate-pulse rounded border border-subtle bg-card" />
+          ))}
+        </div>
+      )}
+      {items && items.length > 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {items.map((m) => (
+            <MangaCard key={m.slug} manga={{ id: m.external_id || m.slug, title: m.title ?? '', cover: m.cover_image || null, slug: m.slug }} />
+          ))}
+        </div>
+      ) : items && items.length === 0 && !error ? (
+        <p className="text-muted text-sm">
+          Belum ada bookmark.{' '}
+          <Link href="/search" prefetch={false} className="text-accent hover:underline">Cari manga</Link>
+        </p>
+      ) : null}
     </main>
   );
 }

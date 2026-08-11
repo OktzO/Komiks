@@ -92,6 +92,12 @@ router.delete('/bookmark/:slug', async (c: Context) => {
   return c.json({ data: { ok: true } });
 });
 
+router.get('/bookmark/:slug', async (c: Context) => {
+  const user = getSessionUserFromContext(c);
+  const bookmarked = await db(c.env.DB).isBookmarked({ userId: user.id, seriesSlug: c.req.param('slug') });
+  return c.json({ data: { bookmarked } });
+});
+
 router.get('/bookmarks', async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const results = await db(c.env.DB).listBookmarks(user.id);
