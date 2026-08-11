@@ -3,6 +3,8 @@ import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
 import { TypeBadge } from '@/components/TypeBadge';
 import { SourceBadge, sourceLabel, SOURCE_ORDER } from '@/components/SourceBadge';
+import { HomeSkeleton } from '@/components/Skeleton';
+import { Suspense } from 'react';
 import Link from 'next/link';
 
 export const runtime = 'edge';
@@ -12,7 +14,9 @@ const GENRES = ['Action', 'Adventure', 'Comedy', 'Fantasy', 'Romance', 'School L
 
 const itemOf = (m: any) => m.data ?? m;
 
-export default async function Home() {
+// Data fetch berjalan di background (streaming) — user langsung lihat
+// skeleton, bukan blank/loading lama yang terkesan macet.
+async function HomeFeed() {
   let manga: any[] = [];
   let error: string | null = null;
   try {
@@ -25,46 +29,12 @@ export default async function Home() {
   const popular = manga.slice(0, 10);
   const updates = manga.slice(0, 12);
 
+  if (error) {
+    return <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>;
+  }
+
   return (
-    <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-16 overflow-x-hidden">
-      {error && <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>}
-
-      {/* ============ Hero ============ */}
-      <section className="relative overflow-hidden pt-14 pb-10 md:pt-20 md:pb-14 text-center">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 -top-28 mx-auto h-72 w-72 rounded-full bg-[radial-gradient(closest-side,oklch(98%_0_0/0.07),transparent)] md:h-96 md:w-96"
-        />
-        <div className="relative">
-          <p className="anim-rise font-mono text-[11px] uppercase tracking-[0.28em] text-muted mb-4">Koleksi komik Indonesia</p>
-          <h1 className="anim-rise font-display text-4xl md:text-6xl tracking-tight text-primary leading-[1.05] text-balance" style={{ animationDelay: '60ms' }}>
-            Baca manga, manhwa,
-            <br /> dan manhua. Satu tempat.
-          </h1>
-          <p className="anim-rise mt-5 text-secondary max-w-xl mx-auto text-balance" style={{ animationDelay: '120ms' }}>
-            Ribuan judul terjemahan Indonesia, dikemas rapi dan ringan. Cepat, nyaman, tanpa ribet.
-          </p>
-          <form action="/search" method="get" className="anim-rise mt-8 max-w-xl mx-auto" style={{ animationDelay: '180ms' }}>
-            <div className="flex items-center gap-2 rounded-full border border-border-default bg-card/60 px-4 py-2 backdrop-blur focus-within:border-border-default">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted shrink-0" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                name="q"
-                type="search"
-                placeholder="Cari judul manga…"
-                className="w-full bg-transparent text-primary placeholder:text-muted outline-none py-1.5"
-                aria-label="Cari manga"
-              />
-              <button type="submit" className="shrink-0 rounded-full bg-accent text-zinc-950 px-4 py-1.5 text-sm font-medium hover:opacity-90 transition-opacity">
-                Cari
-              </button>
-            </div>
-          </form>
-        </div>
-      </section>
-
+    <>
       {/* ============ Ticker update terbaru ============ */}
       {updates.length > 0 && (
         <section aria-label="Judul terbaru" className="marquee relative mb-10 overflow-hidden border-y border-border-subtle py-3">
@@ -123,23 +93,6 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* ============ Genre ============ */}
-      <section className="mb-12">
-        <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted mb-3">Jelajah genre</p>
-        <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }} aria-label="Filter genre">
-          {GENRES.map((g) => (
-            <Link
-              key={g}
-              href={`/search?genre=${encodeURIComponent(g)}`}
-              prefetch={false}
-              className="shrink-0 rounded-full border border-border-subtle px-3.5 py-1.5 text-xs text-secondary hover:text-primary hover:border-border-default hover:bg-bg-secondary/60 transition-colors"
-            >
-              {g}
-            </Link>
-          ))}
-        </div>
-      </section>
-
       {/* ============ Update Terbaru ============ */}
       {updates.length > 0 && (
         <section className="mb-12">
@@ -177,6 +130,70 @@ export default async function Home() {
           </div>
         </section>
       )}
+    </>
+  );
+}
+
+export default function Home() {
+  return (
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-16 overflow-x-hidden">
+      {/* ============ Hero ============ */}
+      <section className="relative overflow-hidden pt-14 pb-10 md:pt-20 md:pb-14 text-center">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 -top-28 mx-auto h-72 w-72 rounded-full bg-[radial-gradient(closest-side,oklch(98%_0_0/0.07),transparent)] md:h-96 md:w-96"
+        />
+        <div className="relative">
+          <p className="anim-rise font-mono text-[11px] uppercase tracking-[0.28em] text-muted mb-4">Koleksi komik Indonesia</p>
+          <h1 className="anim-rise font-display text-4xl md:text-6xl tracking-tight text-primary leading-[1.05] text-balance" style={{ animationDelay: '60ms' }}>
+            Baca manga, manhwa,
+            <br /> dan manhua. Satu tempat.
+          </h1>
+          <p className="anim-rise mt-5 text-secondary max-w-xl mx-auto text-balance" style={{ animationDelay: '120ms' }}>
+            Ribuan judul terjemahan Indonesia, dikemas rapi dan ringan. Cepat, nyaman, tanpa ribet.
+          </p>
+          <form action="/search" method="get" className="anim-rise mt-8 max-w-xl mx-auto" style={{ animationDelay: '180ms' }}>
+            <div className="flex items-center gap-2 rounded-full border border-border-default bg-card/60 px-4 py-2 backdrop-blur focus-within:border-border-default">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted shrink-0" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <input
+                name="q"
+                type="search"
+                placeholder="Cari judul manga…"
+                className="w-full bg-transparent text-primary placeholder:text-muted outline-none py-1.5"
+                aria-label="Cari manga"
+              />
+              <button type="submit" className="shrink-0 rounded-full bg-accent text-zinc-950 px-4 py-1.5 text-sm font-medium hover:opacity-90 transition-opacity">
+                Cari
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      {/* ============ Genre (statis, instan) ============ */}
+      <section className="mb-12">
+        <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted mb-3">Jelajah genre</p>
+        <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }} aria-label="Filter genre">
+          {GENRES.map((g) => (
+            <Link
+              key={g}
+              href={`/search?genre=${encodeURIComponent(g)}`}
+              prefetch={false}
+              className="shrink-0 rounded-full border border-border-subtle px-3.5 py-1.5 text-xs text-secondary hover:text-primary hover:border-border-default hover:bg-bg-secondary/60 transition-colors"
+            >
+              {g}
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* ============ Feed (ticker + popular + updates) — skeleton instan, fetch background ============ */}
+      <Suspense fallback={<HomeSkeleton />}>
+        <HomeFeed />
+      </Suspense>
 
       {/* ============ Footer ============ */}
       <footer className="border-t border-border-subtle mt-16 pt-8 text-sm text-muted">

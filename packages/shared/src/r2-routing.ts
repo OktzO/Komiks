@@ -83,6 +83,13 @@ export function accountFor(key: string, ring: RingNode[]): number {
   return ring[found === -1 ? 0 : found].accountIndex;
 }
 
+// Key deterministik per source: {source}/{slug}/{chapterId}/{pageNo}.
+// Format komiku lama (`komiku/{slug}/...`) identik — kompatibel penuh,
+// key R2 existing tetap valid. Hash ring tetap dari slug (akun mapping
+// per series tidak berubah saat source bertambah).
+export const r2KeyFor = (source: string, slug: string, chapterId: string, pageNo: number): string =>
+  `${source}/${slug}/${chapterId}/${pageNo}`;
+
 // Utilitas migrasi manual: daftar key yang pindah akun saat jumlah akun
 // berubah. Jalankan offline (script), bukan runtime. Key yang pindah akan
 // di-re-fetch otomatis via cache-aside — tidak perlu aksi manual.

@@ -5,7 +5,8 @@ import { SourceBadge, SOURCE_LABELS } from '@/components/SourceBadge';
 import { TYPE_META, TypeBadge } from '@/components/TypeBadge';
 import { BookmarkButton } from '@/components/BookmarkButton';
 import { SourceSwitcher } from '@/components/SourceSwitcher';
-import { cache } from 'react';
+import { DetailSkeleton } from '@/components/Skeleton';
+import { Suspense, cache } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
@@ -46,7 +47,7 @@ export async function generateMetadata({ params, searchParams }: { params: { sou
   }
 }
 
-export default async function SeriesDetail({ params, searchParams }: { params: { source: string; slug: string }; searchParams: { id?: string } }) {
+async function DetailContent({ params, searchParams }: { params: { source: string; slug: string }; searchParams: { id?: string } }) {
   const sourceId = searchParams.id ?? params.slug;
   if (!sourceId) return <div className="p-8 text-error">Missing ?id=mangaId</div>;
 
@@ -96,7 +97,7 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
     : null;
 
   return (
-    <main className="max-w-2xl mx-auto px-4 pb-28">
+    <>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -245,6 +246,17 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+// Shell instan: user langsung lihat skeleton, data fetch di background.
+export default function SeriesDetail({ params, searchParams }: { params: { source: string; slug: string }; searchParams: { id?: string } }) {
+  return (
+    <main className="max-w-2xl mx-auto px-4 pb-28">
+      <Suspense fallback={<DetailSkeleton />}>
+        <DetailContent params={params} searchParams={searchParams} />
+      </Suspense>
     </main>
   );
 }

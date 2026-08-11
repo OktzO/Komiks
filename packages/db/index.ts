@@ -135,6 +135,11 @@ export const db = (client: D1Database): Db => {
     },
 
     markPageR2Uploaded: async (p) => {
+      // FK guard: chapter_pages.chapter_id REFERENCES chapters(id) — chapter
+      // dari source yang belum pernah di-index D1 (mis. bacakomik) tidak ada
+      // row-nya; marker opsional, skip supaya tidak error FK.
+      const exists = await prep('SELECT 1 FROM chapters WHERE id = ?1 LIMIT 1').bind(p.chapterId).first();
+      if (!exists) return { success: false };
       await prep(`INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`)

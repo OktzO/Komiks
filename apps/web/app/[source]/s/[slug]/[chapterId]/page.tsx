@@ -1,10 +1,12 @@
 export const runtime = 'edge';
 import { getChapter, getSeries, API_URL, r2UrlFor } from '@/lib/api';
 import { ReaderShell } from '@/components/ReaderShell';
+import { ReaderSkeleton } from '@/components/Skeleton';
+import { Suspense } from 'react';
 
 export const revalidate = 300;
 
-export default async function ChapterReader({ params }: { params: { source: string; slug: string; chapterId: string } }) {
+async function ChapterContent({ params }: { params: { source: string; slug: string; chapterId: string } }) {
   let chapter;
   try {
     chapter = await getChapter(params.source, params.chapterId);
@@ -31,7 +33,7 @@ export default async function ChapterReader({ params }: { params: { source: stri
   // dengan sisi Worker). null saat R2 belum dikonfigurasi → proxy-only.
   const r2Pages = pages.map((p, i) => ({
     ...p,
-    r2Url: r2UrlFor(params.slug, params.chapterId, i + 1),
+    r2Url: r2UrlFor(params.source, params.slug, params.chapterId, i + 1),
   }));
 
   return (
@@ -47,5 +49,14 @@ export default async function ChapterReader({ params }: { params: { source: stri
       apiUrl={API_URL}
       nextChapterUrl={nextChapterUrl}
     />
+  );
+}
+
+// Shell instan: toolbar skeleton langsung tampil, data fetch background.
+export default function ChapterReader({ params }: { params: { source: string; slug: string; chapterId: string } }) {
+  return (
+    <Suspense fallback={<ReaderSkeleton pageCount={2} />}>
+      <ChapterContent params={params} />
+    </Suspense>
   );
 }

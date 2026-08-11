@@ -109,12 +109,12 @@ export const R2_DOMAINS = (process.env.NEXT_PUBLIC_R2_DOMAINS || '').split(',').
 const R2_VNODES = Number(process.env.NEXT_PUBLIC_R2_VNODES) || 32;
 const r2Ring = R2_DOMAINS.length > 0 ? buildRing(R2_DOMAINS, R2_VNODES) : null;
 
-// Key deterministik: komiku/{slug}/{chapterId}/{pageNo} (tanpa ext — sama
+// Key deterministik: {source}/{slug}/{chapterId}/{pageNo} (tanpa ext — sama
 // dengan sisi Worker). null saat R2 belum dikonfigurasi → proxy-only.
-export const r2UrlFor = (slug: string, chapterId: string, pageNo: number): string | null => {
+export const r2UrlFor = (source: string, slug: string, chapterId: string, pageNo: number): string | null => {
   if (!r2Ring || !slug) return null;
   const idx = accountFor(slug, r2Ring);
-  return `https://${R2_DOMAINS[idx]}/komiku/${slug}/${chapterId}/${pageNo}`;
+  return `https://${R2_DOMAINS[idx]}/${source}/${slug}/${chapterId}/${pageNo}`;
 };
 
 // ---- Round-robin origin failover (LB multi-account) --------------------

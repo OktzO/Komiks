@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getAdapter, type AdapterEnv } from '@manga-platform/sources';
-import { buildRing, accountFor } from '@manga-platform/shared/r2-routing';
+import { buildRing, accountFor, r2KeyFor } from '@manga-platform/shared/r2-routing';
 import { drainResponse } from '@manga-platform/shared/http';
 import { getDb } from '../lib/context';
 import type { Env, Context } from '../lib/context';
@@ -133,16 +133,19 @@ const r2RingFor = (c: Context): { accounts: ReturnType<typeof parseR2Accounts>; 
 
 // Upload gambar ke R2 target account (background) + catat D1. Idempoten:
 // key sama → overwrite sama. Race 2 request paralel aman (R2 1 write/s/key).
-const uploadToR2 = async (c: Context, opts: { slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream }): Promise<void> => {
+const uploadToR2 = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
   try {
     const cfg = r2RingFor(c);
     if (!cfg) return; // R2 belum dikonfigurasi → proxy-only mode (old behavior)
     const idx = accountFor(opts.slug, cfg.ring);
     const account = cfg.accounts[idx];
-    const r2Key = `komiku/${opts.slug}/${opts.chapterId}/${opts.pageNo}`;
+    const r2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
     const res = await s3PutObject(account, r2Key, opts.body, opts.contentType);
     await drainResponse(res);
-    if (!res.ok) throw new Error(`r2 upload ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`r2 upload ${res.status} ${detail.slice(0, 200)}`);
+    }
     await getDb(c).markPageR2Uploaded({
       chapterId: opts.chapterId,
       pageNumber: opts.pageNo,
@@ -151,7 +154,7 @@ const uploadToR2 = async (c: Context, opts: { slug: string; chapterId: string; p
       r2AccountIdx: idx,
     });
   } catch (e) {
-    console.error('[r2] upload failed:', String(e)); // jangan gagalkan response user
+    console.error(`[r2] upload failed [${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}]:`, String(e)); // jangan gagalkan response user
   }
 };
 
@@ -181,6 +184,15 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
     cachePut(c, cacheKey, { data }, 600);
     recordHealth(c, source, start, true);
     c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
+    // Index chapterId → slug (KV 1 jam) supaya R2 cache-aside bisa resolve
+    // slug dari chapterId (thrive pakai uuid yang tidak bisa di-parse).
+    c.executionCtx.waitUntil(
+      (async () => {
+        for (const ch of chapters) {
+          try { await cachePut(c, `slug:${ch.id}`, series.slug, 3600); } catch { /* best-effort */ }
+        }
+      })()
+    );
     return c.json({ data });
   } catch (e) {
     recordHealth(c, source, start, false, String(e));
@@ -475,18 +487,21 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   headers.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
   setCorsHeaders(c.env, headers, c.req.header('origin'));
 
-  // Cache-aside R2 (komiku rehost; sumber lain tetap 100% proxy):
+  // Cache-aside R2 (semua source — komiku + bacakomik + thrive + manhwaindo):
   // clone stream SEBELUM Response dibuat — setelah `new Response(upstream.body)`
   // stream terkunci dan clone() melempar "ReadableStream locked to a reader".
   // Upload di background; request berikutnya diserve langsung dari R2 tanpa
   // lewat Worker. Upload idempoten (key sama → overwrite).
+  // Buffer body (bukan stream): PUT stream tanpa Content-Length ditolak R2
+  // (411 Length Required) untuk sebagian upstream — gambar chapter kecil,
+  // buffer aman di limit 128MB.
+  const slug = await resolveKomikuSlug(c, chapterId);
   let r2Upload: Promise<void> | null = null;
-  if (source === 'komiku') {
-    const slug = await resolveKomikuSlug(c, chapterId);
-    const body = upstream.clone().body;
-    if (slug && body) {
-      const contentType = upstream.headers.get('content-type') || 'image/jpeg';
-      r2Upload = uploadToR2(c, { slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body }).catch(() => {});
+  if (slug) {
+    const contentType = upstream.headers.get('content-type') || 'image/jpeg';
+    const buf = await new Response(upstream.clone().body).arrayBuffer();
+    if (buf.byteLength > 0) {
+      r2Upload = uploadToR2(c, { source, slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body: buf }).catch(() => {});
     }
   }
 
