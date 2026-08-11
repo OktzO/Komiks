@@ -23,8 +23,11 @@ export function Navbar() {
   }, [pathname]);
 
   useEffect(() => {
+    // Shape-change hanya aktif di md+ — mobile skip kerja scroll sepenuhnya.
+    const mq = window.matchMedia('(min-width: 768px)');
     let ticking = false;
     const onScroll = () => {
+      if (!mq.matches) return;
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {

@@ -96,7 +96,7 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
     : null;
 
   return (
-    <main className="max-w-2xl mx-auto px-4 pb-8">
+    <main className="max-w-2xl mx-auto px-4 pb-28">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -140,25 +140,6 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
               {series.status || 'N/A'}
             </span>
             <SourceBadge sources={allSources} size="sm" />
-          </div>
-
-          {/* Toolbox island — bookmark (kotak hitam border putih) + Mulai Baca */}
-          <div className="mt-4 flex justify-center md:justify-start">
-            <div className="nav-island inline-flex items-center gap-2 rounded-xl p-2">
-              <BookmarkButton slug={params.slug} />
-              {startChapterId && (
-                <Link
-                  href={`/${params.source}/s/${params.slug}/${startChapterId}?mangaId=${params.slug.split('--').pop()}`}
-                  prefetch={false}
-                  className="inline-flex items-center justify-center gap-1.5 h-11 rounded-lg border border-white bg-white px-5 text-sm font-semibold text-black hover:opacity-90 transition-opacity"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                  Mulai Baca
-                </Link>
-              )}
-            </div>
           </div>
 
           {/* Source picker — independent source switch */}
@@ -245,6 +226,25 @@ export default async function SeriesDetail({ params, searchParams }: { params: {
 
       {/* Chapter list — toggle button + slide-up panel */}
       <ChapterList chapters={chapters} source={params.source} slug={params.slug} />
+
+      {/* Toolbox — floating bottom bar (sticky saat scroll): bookmark + Mulai Baca */}
+      {startChapterId && (
+        <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+          <div className="nav-island flex w-full max-w-md items-center gap-2 rounded-xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.45)]">
+            <BookmarkButton slug={params.slug} />
+            <Link
+              href={`/${params.source}/s/${params.slug}/${startChapterId}?mangaId=${params.slug.split('--').pop()}`}
+              prefetch={false}
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-white bg-white px-5 text-sm font-semibold text-black hover:opacity-90 transition-opacity"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              Mulai Baca
+            </Link>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

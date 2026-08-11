@@ -194,13 +194,11 @@ export default async function Home() {
           </div>
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-secondary mb-2">Sumber</p>
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-2.5 py-1 text-xs text-secondary backdrop-blur">
-                <span className={`inline-block h-1.5 w-1.5 rounded-full ${healthyCount === (statuses.length || 1) ? 'bg-success' : 'bg-error'}`} />
-                {healthyCount}/{statuses.length || '?'} online
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
+            <p className="flex items-center gap-1.5 text-xs text-secondary mb-2">
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${healthyCount === (statuses.length || 1) ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
+              {healthyCount}/{statuses.length || '?'} online
+            </p>
+            <div className="flex flex-col">
               {SOURCE_ORDER.map((s) => {
                 const h = healthOf(s);
                 return (
@@ -208,11 +206,12 @@ export default async function Home() {
                     key={s}
                     href="/status"
                     prefetch={false}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-2.5 py-1 text-xs text-secondary backdrop-blur hover:text-primary hover:border-border-default transition-colors"
+                    className="flex items-center gap-2 py-1 text-xs text-secondary hover:text-primary transition-colors"
                     title={`Status ${sourceLabel(s)}`}
                   >
                     <SourceBadge sources={[s]} size="sm" />
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${h ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
+                    <span>{sourceLabel(s)}</span>
+                    <span className={`ml-auto inline-block h-1.5 w-1.5 rounded-full ${h ? 'bg-success' : 'bg-error'}`} aria-hidden="true" />
                   </Link>
                 );
               })}
