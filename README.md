@@ -2,7 +2,7 @@
 
 Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source independen: Komiku, BacaKomik, Thrive, dan ManhwaIndo. Dibangun di Cloudflare: 1 Worker API (Hono) + Next.js (Pages) + D1 + KV + R2 + Browser binding.
 
-![Status](https://img.shields.io/badge/status-live-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Runtime](https://img.shields.io/badge/runtime-Cloudflare%20Workers-orange)
+[![Better Stack Badge](https://uptime.betterstack.com/status-badges/v1/monitor/2unt2.svg)](https://uptime.betterstack.com/?utm_source=status_badge) ![License](https://img.shields.io/badge/license-MIT-blue) ![Runtime](https://img.shields.io/badge/runtime-Cloudflare%20Workers-orange)
 
 ## 📋 Daftar Isi
 
