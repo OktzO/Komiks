@@ -17,7 +17,7 @@ export function Reader({
   onModeChange,
   onActivePage,
 }: {
-  pages: { proxyUrl: string; r2Url?: string | null }[];
+  pages: { proxyUrl: string; b2Url?: string | null; r2Url?: string | null }[];
   apiUrl: string;
   nextChapterUrl?: string | null;
   mode?: 'scroll' | 'page';
@@ -38,10 +38,10 @@ export function Reader({
     setMode(m);
   };
 
-  // R2-first: coba domain R2 langsung (hash slug). 404/error → retry logic
-  // existing mengalihkan ke proxy (yang sekaligus meng-upload ke R2 di
-  // background) → request berikutnya dari R2 lagi.
-  const urls = pages.map((p) => p.r2Url ?? `${apiUrl}${p.proxyUrl}`);
+  // Storage-first: B2 presigned (primary) → R2 direct (legacy) → proxy.
+  // Proxy sekaligus meng-upload ke storage di background → request berikutnya
+  // dapat URL langsung dari chapter detail lagi.
+  const urls = pages.map((p) => p.b2Url ?? p.r2Url ?? `${apiUrl}${p.proxyUrl}`);
   const fallbackUrls = pages.map((p) => `${apiUrl}${p.proxyUrl}`);
 
   const handleImageError = useCallback((i: number) => {

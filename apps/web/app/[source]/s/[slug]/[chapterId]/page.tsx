@@ -1,10 +1,10 @@
 export const runtime = 'edge';
-import { getChapter, getSeries, API_URL, r2UrlFor } from '@/lib/api';
+import { getChapter, getSeries, API_URL } from '@/lib/api';
 import { ReaderShell } from '@/components/ReaderShell';
 import { ReaderSkeleton } from '@/components/Skeleton';
 import { Suspense } from 'react';
 
-export const revalidate = 300;
+export const revalidate = 60;
 
 async function ChapterContent({ params }: { params: { source: string; slug: string; chapterId: string } }) {
   let chapter;
@@ -21,7 +21,6 @@ async function ChapterContent({ params }: { params: { source: string; slug: stri
     series = null;
   }
 
-  const pages = chapter.pages || [];
   const chapterNum = chapter.chapter_number ?? 0;
   // Next-chapter prefetch URL (best-effort; chapter URLs follow the
   // `<slug>-chapter-<n>` convention on most sources).
@@ -29,12 +28,10 @@ async function ChapterContent({ params }: { params: { source: string; slug: stri
     ? `/${params.source}/s/${params.slug}/${params.slug}-chapter-${chapterNum + 1}`
     : null;
 
-  // R2-first: hash slug → domain R2 untuk tiap halaman (deterministik, sama
-  // dengan sisi Worker). null saat R2 belum dikonfigurasi → proxy-only.
-  const r2Pages = pages.map((p, i) => ({
-    ...p,
-    r2Url: r2UrlFor(params.source, params.slug, params.chapterId, i + 1),
-  }));
+  // URL storage datang dari server (D1 source of truth: b2Url presigned /
+  // r2Url direct). Page baru belum di-upload → null → Reader pakai proxy
+  // (yang sekaligus meng-upload → request berikutnya dapat URL langsung).
+  const pages = (chapter.pages || []).map((p) => ({ ...p }));
 
   return (
     <ReaderShell
@@ -45,7 +42,7 @@ async function ChapterContent({ params }: { params: { source: string; slug: stri
       chapterTitle={chapter.title}
       seriesTitle={series?.title || params.slug}
       seriesType={series?.type}
-      pages={r2Pages}
+      pages={pages}
       apiUrl={API_URL}
       nextChapterUrl={nextChapterUrl}
     />

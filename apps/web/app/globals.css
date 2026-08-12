@@ -45,9 +45,23 @@ a:hover { color: var(--accent); }
 
 .nav-island {
   background: var(--glass-surface);
-  backdrop-filter: blur(18px) saturate(180%);
-  -webkit-backdrop-filter: blur(18px) saturate(180%);
   border: 1px solid var(--glass-border);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .nav-island {
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+  }
+}
+@media (max-width: 767px) {
+  /* Fixed full-width backdrop-filter = repaint seluruh layar tiap frame
+     scroll di Android Chrome. Mobile: solid semi-opaque, look sama di
+     dark theme, scroll jadi compositor-only. Blur tetap di md+. */
+  .nav-island {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: oklch(14% 0 0 / 0.92);
+  }
 }
 
 @keyframes slideUp {
@@ -330,7 +344,16 @@ a:hover { color: var(--accent); }
   border: 1px solid oklch(0% 0 0 / 0.9);
   color: oklch(98% 0 0);
   text-shadow: 0 0 8px oklch(98% 0 0 / 0.55), 0 0 2px oklch(98% 0 0 / 0.8);
-  backdrop-filter: blur(4px);
+}
+
+/* ── Below-fold: skip layout/paint sampai discroll (rendering lazy) ── */
+.cv-feed {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 720px;
+}
+.cv-footer {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px;
 }
 
 /* ── Home: rise-in reveal (hero stack) ── */
@@ -348,6 +371,8 @@ a:hover { color: var(--accent); }
 .marquee-track {
   display: flex;
   width: max-content;
+  transform: translateZ(0);
+  will-change: transform;
   animation: marquee 48s linear infinite;
 }
 .marquee:hover .marquee-track { animation-play-state: paused; }

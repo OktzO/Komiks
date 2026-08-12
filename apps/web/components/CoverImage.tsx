@@ -6,12 +6,14 @@ export function CoverImage({
   title,
   className = '',
   zoom = false,
+  priority = false,
 }: {
   src: string | null;
   alt: string;
   title?: string;
   className?: string;
   zoom?: boolean;
+  priority?: boolean;
 }) {
   if (!src) return <div className={`flex items-center justify-center bg-card p-2 text-center ${className}`}>{title ?? alt}</div>;
   return (
@@ -21,7 +23,9 @@ export function CoverImage({
       <img
         src={src}
         alt={alt}
-        loading="lazy"
+        loading={priority ? 'eager' : 'lazy'}
+        fetchPriority={priority ? 'high' : 'auto'}
+        decoding="async"
         className={`relative h-full w-full object-cover ${zoom ? 'transition-transform duration-300 group-hover:scale-[1.03]' : ''}`}
         onError={(e) => {
           e.currentTarget.style.display = 'none';

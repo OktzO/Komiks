@@ -26,14 +26,14 @@ export interface Chapter {
   language: string;
   pages_count: number;
   published_at?: number | null;
-  pages?: { proxyUrl: string }[];
+  pages?: { proxyUrl: string; b2Url?: string | null; r2Url?: string | null }[];
 }
 
 // 12s timeout prevents Cloudflare Pages Function timeout (30s) from
 // triggering a 502 when the Worker API is slow on cold KV cache.
 async function api<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
-    next: { revalidate: 300 },
+    next: { revalidate: 60 },
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
@@ -124,10 +124,10 @@ export const r2UrlFor = (source: string, slug: string, chapterId: string, pageNo
 const ORIGIN_PATH_ALLOWLIST = [
   '/api/health',
   '/api/search',
-  '/api/series',
-  '/api/manga/',
-  '/api/reader/',
   '/api/source-status',
+  // /api/reader/* tidak di-failover: butuh D1 storage lookup (chapter_pages)
+  // yang hanya ada di main D1 — origin 2 D1 terpisah. /api/series juga
+  // main-only. Reader tetap tahan: R2/B2 URL langsung serve, tanpa Worker.
 ];
 
 export const getOrigins = async (): Promise<{ url: string }[]> => {

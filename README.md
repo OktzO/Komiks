@@ -1,6 +1,6 @@
 # 📚 Manga Reader Platform
 
-Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source independen: Komiku, BacaKomik, Thrive, dan ManhwaIndo. Dibangun di Cloudflare: 1 Worker API (Hono) + Next.js (Pages) + D1 + KV + R2 + Browser binding.
+Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source independen: Komiku, BacaKomik, Thrive, dan ManhwaIndo. Dibangun di Cloudflare: 1 Worker API (Hono) + Next.js (Pages) + D1 + KV + **Backblaze B2 (primary storage)** + R2 (fallback/legacy) + Browser binding.
 
 [![Better Stack Badge](https://uptime.betterstack.com/status-badges/v1/monitor/2unt2.svg)](https://uptime.betterstack.com/?utm_source=status_badge) ![License](https://img.shields.io/badge/license-MIT-blue) ![Runtime](https://img.shields.io/badge/runtime-Cloudflare%20Workers-orange)
 
@@ -15,6 +15,7 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 - [Local Development](#-local-development)
 - [Deploy ke Production](#-deploy-ke-production)
 - [Design Tokens](#-design-tokens)
+- [Performance](#-performance)
 - [Keamanan](#-keamanan)
 - [Legal](#-legal)
 
@@ -26,12 +27,13 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 - ✅ Baca manga dari 4 source (Komiku, BacaKomik, Thrive, ManhwaIndo)
 - ✅ Mode scroll (panels menyatu tanpa gap) & mode halaman
 - ✅ Lazy load + virtualized window (hanya render viewport + buffer)
-- ✅ R2-first untuk Komiku: cache-aside, hash ring multi-account, proxy fallback self-healing
+- ✅ **Storage 2-tier**: B2 primary (presigned GET 7 hari dari `s3.us-east-005.backblazeb2.com`) → R2 multi-account fallback (public domain CDN) → Worker proxy. Server `chapter detail` return `pages[{proxyUrl, b2Url?, r2Url?}]` — frontend pakai `b2Url ?? r2Url ?? proxy`. Setelah upload sukses, `touchChapterDetailKv` update KV → next request dapat URL langsung (KV TTL 300s, `chapter:detail` revalidate 60s di frontend).
+- ✅ Cache-aside self-healing: page diproxy → upload B2 background → request berikutnya langsung B2
 - ✅ Source lain 100% proxy (tidak pernah di-rehost)
 - ✅ Next-chapter prefetch
 
 ### Discovery
-- ✅ Home page live feed: hero (tanpa mention jumlah source) + search, marquee ticker, **Populer Hari Ini** (type badge flag+glow di pojok kanan-bawah cover), genre chips, **Update Terbaru** 2-col list, source status di footer (badge per source + counter online)
+- ✅ Home page live feed: hero (tanpa mention jumlah source) + search, marquee ticker (GPU transform, pause on hover, `prefers-reduced-motion` dihormati), **Populer Hari Ini** (type badge flag+glow di pojok kanan-bawah cover), genre chips, **Update Terbaru** 2-col list. **Lazy loading terkontrol**: 3 cover pertama Populer eager + fetchpriority=high (LCP); sisanya `loading=lazy` + `decoding=async`; section Update Terbaru + footer `content-visibility:auto` (skip render offscreen). Updates = `manga.slice(10, 22)` (tidak duplikat dengan Populer `slice(0, 10)`).
 - ✅ Search multi-source, merge by normalized title (levenshtein + Jaro-Winkler)
 - ✅ Series detail: poster + info split (md+), **Detail Info** (Type flag/Status/Source badge/Author/Genre — pola doujin.desu.xxx, fallback N/A, genre+author aggregate lintas source), toolbox island (bookmark toggle + **Mulai Baca** → chapter 1), synopsis, chapter list (sort numeric, default Akhir→Awal), source switcher (dropdown + sticky di reader)
 - ✅ SEO: generateMetadata per manga (title/description/canonical/OG image) + JSON-LD `Book`, sitemap.xml + robots.txt dari `NEXT_PUBLIC_SITE_URL`
@@ -81,7 +83,8 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 | Backend | Cloudflare Workers (Hono), bundle ESM ~107 KB |
 | Database | Cloudflare D1 (SQLite, FTS5) |
 | Cache | Cloudflare KV |
-| Storage | Cloudflare R2 (multi-account, hash ring MurmurHash3) |
+| Storage primary | **Backblaze B2** private bucket `manga-oktz-assets` (region us-east-005) — SigV4 presigned GET 7 hari |
+| Storage fallback | Cloudflare R2 (multi-account, hash ring MurmurHash3) — object legacy + upload kalau B2 gagal |
 | Rendering | Browser binding (Puppeteer remote) untuk BacaKomik & ManhwaIndo (CF Bot Fight) |
 | Auth | Google OAuth-only (session KV, SameSite=None) |
 | Search | 4 source aggregation + dedup matching |
@@ -109,7 +112,8 @@ manga-platform/
 │   │   │   │   ├── rateLimit.ts         # makeLimiter factory (60/10/600 per min)
 │   │   │   │   ├── retry.ts             # retryUpstream (429 backoff)
 │   │   │   │   ├── r2Accounts.ts        # parse R2_ACCOUNTS secret (urutan = index)
-│   │   │   │   ├── s3Upload.ts          # SigV4 signed PUT ke R2 akun lain
+│   │   │   │   ├── b2Config.ts          # parse B2_CONFIG secret (bucket, keyId, appKey, region)
+│   │   │   │   ├── s3Upload.ts          # SigV4 signed PUT (R2 + B2) + b2PresignedGet
 │   │   │   │   ├── dbWrite.ts           # D1 overflow detector (KV usage tracking, threshold 400MB)
 │   │   │   │   └── komikuSlug.ts        # parse slug dari '<slug>-chapter-<num>'
 │   │   │   └── routes/
@@ -117,7 +121,7 @@ manga-platform/
 │   │   │       ├── search.ts            # GET /api/search (multi-source + cache KV)
 │   │   │       ├── series.ts            # GET /api/series, /:slug
 │   │   │       ├── manga.ts             # GET /api/manga/:id (D1 + KV)
-│   │   │       ├── reader.ts            # chapter/page + cache-aside R2 (komiku)
+│   │   │       ├── reader.ts            # chapter/page + cache-aside B2 (primary) → R2 fallback + touchChapterDetailKv
 │   │   │       ├── origins.ts           # GET /api/origins (lazy health, cache 30s)
 │   │   │       ├── sourceStatus.ts      # GET /api/source-status (D1 passive)
 │   │   │       ├── identify.ts          # POST /api/identify (phash → series)
@@ -164,7 +168,7 @@ manga-platform/
 ├── packages/
 │   ├── db/                              # D1 schema + query helpers
 │   │   ├── schema.sql                   # base: 10 tabel + FTS5 + triggers
-│   │   ├── migrations/                  # 0001 data, 0002 r2, 0003 drop mangadex, 0004 aggregation, 0005 user_profile
+│   │   ├── migrations/                  # 0001 data, 0002 r2, 0003 drop mangadex, 0004 aggregation, 0005 user_profile, 0006 admin_monitoring, 0007 relax_chapter_pages_fk
 │   │   ├── src/matching.ts              # normalize + levenshtein + jaroWinkler (pure)
 │   │   ├── test/matching.test.mjs
 │   │   └── index.ts                     # db(d1) factory + 40+ typed helpers (termasuk updateUserProfile, listUserSessions, dll)
@@ -217,8 +221,8 @@ manga-platform/
 | GET | `/api/reader/:source/series/:sourceId` | Series dari source (KV 600s) |
 | GET | `/api/reader/:source/series/:sourceId/chapters?lang=id` | Chapter list (KV 300s) |
 | GET | `/api/reader/:source/series/:sourceId/sources` | Aggregated sources: D1 link → live-resolve + auto-index persist (KV 600s) |
-| GET | `/api/reader/:source/chapter/:chapterId` | Chapter + proxy page URLs (KV 300s) |
-| GET | `/api/reader/:source/page/:chapterId/:pageNo` | Image proxy; Komiku: Referer + upload R2 background; source lain: stream |
+| GET | `/api/reader/:source/chapter/:chapterId` | Chapter + page URLs (`{proxyUrl, b2Url?, r2Url?}` — D1 lookup; KV 300s) |
+| GET | `/api/reader/:source/page/:chapterId/:pageNo` | Image proxy; upload B2 primary (`r2_account_idx=-1`) background → R2 fallback; Komiku: +Referer |
 
 ### Auth (OAuth-only, password removed)
 | Method | Path | Deskripsi |
@@ -289,14 +293,14 @@ manga-platform/
 
 ## 🗄 Database Schema (D1)
 
-Base di `packages/db/schema.sql` (10 tabel) + 6 migrasi incremental (jangan edit schema untuk kolom baru, buat migration baru).
+Base di `packages/db/schema.sql` (10 tabel) + 7 migrasi incremental (jangan edit schema untuk kolom baru, buat migration baru).
 
 ```sql
 -- Konten
 series (id, slug UNIQUE, external_id, source, title, synopsis, type manga|manhwa|manhua,
         status ongoing|completed|hiatus|cancelled, author, artist, cover_image, genres, tags, created_at, updated_at)
 chapters (id TEXT PK '<external_id>@<lang>', series_slug FK, chapter_number, volume, title, language, pages_count, published_at)
-chapter_pages (id, chapter_id, page_number, image_url, r2_key, r2_account_idx)  -- r2 via 0002
+chapter_pages (id, chapter_id, page_number, image_url, r2_key, r2_account_idx)  -- r2 via 0002 (FK ke chapters dihapus 0007 — cache-aside upload marker boleh ada walau chapter row belum ada)
 
 -- User
 users (id, email UNIQUE, password_hash, role, created_at,
@@ -338,12 +342,24 @@ GOOGLE_CLIENT_SECRET=<from-google-console>
 LB_ENCRYPTION_KEY     # AES-GCM key token LB
 ADMIN_EMAILS          # comma-separated; auto-role admin saat Google OAuth login
 SCRAPE_API_KEY        # admin key /api/scrape
-ALLOWED_ORIGINS       # comma-separated; dukung wildcard subdomain `https://*.manga-web-d32.pages.dev` (CF Pages preview). Contoh: https://manga-web-d32.pages.dev,https://*.manga-web-d32.pages.dev,http://localhost:3000
+ALLOWED_ORIGINS       # comma-separated; dukung wildcard subdomain `https://*.manga-web-d32.pages.dev` (CF Pages preview). Contoh saat ini terpasang: https://manga-web-d32.pages.dev,https://oktzz.xyz,https://oktz.xyz,https://www.oktzz.xyz,https://*.manga-web-d32.pages.dev,http://localhost:3000
 R2_ACCOUNTS           # JSON: [{"account_id","access_key_id","secret_access_key","public_domain","bucket?"}]
                        # urutan = index akun (identitas hash ring), 1 secret untuk semua akun
+B2_CONFIG             # JSON: {"bucket":"manga-oktz-assets","keyId":"...","appKey":"...","region":"us-east-005"} — Backblaze B2 primary storage. Tidak ada env frontend (URL presigned dari Worker)
 GOOGLE_CLIENT_ID      # OAuth
 GOOGLE_CLIENT_SECRET  # OAuth
 # ADMIN_PASSWORD_HASH tetap di wrangler tapi UNUSED (password auth dihapus)
+```
+
+**Set via stdin, bukan echo** (echo + pipe bisa split on whitespace):
+```bash
+printf '%s' 'https://...origins...' | npx wrangler secret put ALLOWED_ORIGINS --config apps/api-cf/wrangler.toml
+```
+
+**Set di kedua worker** (main + origin-2) kalau endpoint dipakai cross-origin (admin endpoint dipakai dari frontend = ya, kedua worker butuh):
+```bash
+CLOUDFLARE_API_TOKEN=<token-akun1> npx wrangler secret put ALLOWED_ORIGINS --config apps/api-cf/wrangler.toml
+CLOUDFLARE_API_TOKEN=<token-akun2> npx wrangler secret put ALLOWED_ORIGINS --config apps/api-cf/wrangler.origin.toml
 ```
 
 Env tambahan (wrangler.toml / default): `R2_RING_VNODES` (default 32), `R2_EVICTION_DAYS` (default 30), binding `DB`, `CACHE_KV`, `ASSETS_R2`, `MY_BROWSER` (browser binding remote).
@@ -440,6 +456,7 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0003_dro
 npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0004_aggregation.sql
 npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0005_user_profile.sql
 npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0006_admin_monitoring.sql
+npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0007_relax_chapter_pages_fk.sql
 ```
 
 ### Akun-2 (origin LB) deploy
@@ -527,11 +544,20 @@ Dark theme OKLCH (di `apps/web/app/globals.css`), referensi oktz.qzz.io:
 
 ---
 
+## ⚡ Performance
+
+- **Storage-first serve**: chapter detail return `b2Url` (presigned GET 7 hari) atau `r2Url` (R2 public CDN). Browser load image langsung dari B2/R2, **tidak lewat Worker**. Worker hanya dipanggil saat pertama kali (upload) atau jika URL expire (KV touch update).
+- **Homepage lazy terkontrol**: 3 cover pertama Populer `loading=eager fetchpriority=high`; sisanya `loading=lazy decoding=async`. Section "Update Terbaru" + footer `content-visibility:auto` (skip paint offscreen). Updates = `manga.slice(10,22)` (no duplicate dengan Populer `slice(0,10)`).
+- **Marquee GPU-only**: `transform: translateZ(0); will-change: transform` — animasi ticker pindah 100% compositor thread.
+- **Type badge zero backdrop-filter**: `.type-badge-glow` di-cover tanpa `backdrop-filter` (was 22 GPU backdrop roots, scroll repaint jank di mobile). Glow dari text-shadow saja.
+- **Navbar mobile zero layout-anim**: backdrop-filter blur(18px) hanya md+; mobile pakai solid `oklch(14% 0 0 / 0.92)` — fixed full-width blur = repaint per frame scroll di Android Chrome. Width/padding/border-radius morph animasi tetap (preserved).
+- **Hero search pill no backdrop on mobile**: `sm:backdrop-blur` (mobile none, desktop keep) — hapus 1 backdrop root di phone.
+
 ## ⚖️ Legal
 
 Konten bersumber dari 4 situs publik: Komiku, BacaKomik, Thrive, ManhwaIndo. Platform ini:
 - ✅ **Reader saja** untuk BacaKomik/Thrive/ManhwaIndo (proxy stream, tidak disimpan)
-- ✅ **Rehost** hanya untuk Komiku: R2 cache-aside dengan lifecycle eviction (30 hari)
+- ✅ **Rehost** hanya untuk Komiku (semua source sebenarnya): B2 primary cache-aside dengan SigV4 presigned GET 7 hari + R2 fallback (object legacy + upload kalau B2 gagal). Lifecycle eviction prefix `komiku/` 30 hari di kedua bucket (R2 via wrangler; B2 via dashboard).
 
 Pengguna platform bertanggung jawab atas kepatuhan hukum di yurisdiksi masing-masing.
 

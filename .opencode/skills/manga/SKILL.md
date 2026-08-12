@@ -1,29 +1,31 @@
 ---
 name: manga
-description: "Use saat kerja di project Manga Platform — baca manga Indonesia dari 4 source independen: Komiku (primary), BacaKomik.my, Thrive.moe, ManhwaIndo.my. Invoke sebelum edit kode, deploy, atau jawab pertanyaan struktur/modul/deploy. Berisi peta lengkap: 1 Worker (gabung api+data, Hono), Next.js frontend (Pages), 5 package (db/shared/sources/lb/vision), D1 schema + 6 migrations, API endpoints (public/reader/auth/user/identify/scrape/admin-monitoring/admin-lb/admin-merge), secrets, commands, LB auto-provision + multi-account, R2 multi-account (hash ring, cache-aside, komiku only), source aggregation (manga_source_link, auto-index), Google OAuth-only auth (password removed), session-based admin (SameSite=None), profile + status v2 (BetterStack-style), admin dashboard (/admin, /admin/monitoring, /admin/users, /admin/settings), design tokens OKLCH dark."
+description: "Use saat kerja di project Manga Platform — baca manga Indonesia dari 4 source independen: Komiku (primary), BacaKomik.my, Thrive.moe, ManhwaIndo.my. Invoke sebelum edit kode, deploy, atau jawab pertanyaan struktur/modul/deploy. Berisi peta lengkap: 1 Worker (gabung api+data, Hono), Next.js frontend (Pages), 5 package (db/shared/sources/lb/vision), D1 schema + 7 migrations, API endpoints (public/reader/auth/user/identify/scrape/admin-monitoring/admin-lb/admin-merge), secrets, commands, LB auto-provision + multi-account, storage 2-tier (Backblaze B2 primary presigned + R2 ring fallback cache-aside), source aggregation (manga_source_link, auto-index), Google OAuth-only auth (password removed), session-based admin (SameSite=None), profile + status v2 (BetterStack-style), admin dashboard (/admin, /admin/monitoring, /admin/users, /admin/settings), design tokens OKLCH dark, homepage lazy + content-visibility, mobile navbar zero layout-anim."
 ---
 
 # Manga Platform — Peta Lengkap untuk AI
 
-Platform baca manga/manhwa/manhua bahasa Indonesia. Sumber: Komiku (primary, scrape HTML) + BacaKomik.my (WordPress) + Thrive.moe (Next.js SSG) + ManhwaIndo.my (WordPress) — semua independen, di-aggregate ke 1 manga canonical. Dibangun di Cloudflare: 1 Worker + 1 Next.js Pages + D1 + KV + R2 + Browser rendering.
+Platform baca manga/manhwa/manhua bahasa Indonesia. Sumber: Komiku (primary, scrape HTML) + BacaKomik.my (WordPress) + Thrive.moe (Next.js SSG) + ManhwaIndo.my (WordPress) — semua independen, di-aggregate ke 1 manga canonical. Dibangun di Cloudflare: 1 Worker + 1 Next.js Pages + D1 + KV + R2 (fallback) + Backblaze B2 (primary) + Browser rendering.
 
 **Prinsip kunci:**
 - **4 source independen.** Komiku, BacaKomik, Thrive, ManhwaIndo masing-masing adapter `SourceAdapter` sendiri di `packages/sources/`. Semua di-scrape HTML (no MangaDex API — dihapus 2026-08-07). Search/home query 4 source paralel, merge by normalized title → 1 manga dengan badge multi-source.
-- **Komiku di-rehost ke R2 (keputusan user 2026-08-07).** Cache-aside: page diproxy dulu, di-upload R2 di background, request berikutnya langsung dari R2 CDN. **Source lain (BacaKomik/Thrive/ManhwaIndo) tetap 100% proxy**, tidak pernah disimpan ke R2.
-- **R2 multi-account, hash ring.** Key deterministik `komiku/{slug}/{chapterId}/{pageNo}` (tanpa ekstensi). Hash = **slug manga** (bukan chapter/page) → semua page 1 series ke 1 akun. Identitas akun = **urutan list domain** (`R2_ACCOUNTS` Worker == `NEXT_PUBLIC_R2_DOMAINS` web, wajib sama). Satu sumber kebenaran hash: `packages/shared/src/r2-routing.ts`.
+- **Storage 2-tier (B2 primary, R2 fallback).** Backblaze B2 private bucket `manga-oktz-assets` di region `us-east-005` = primary storage baru: page diproxy dulu → upload B2 background → request berikutnya dari B2 presigned URL (7 hari, SigV4 query auth). R2 multi-account ring = legacy/fallback (object lama + upload kalau B2 gagal). Tier marker: `chapter_pages.r2_account_idx = -1` (B2) atau `>=0` (R2 idx akun). Key deterministik `{source}/{slug}/{chapterId}/{pageNo}` (tanpa ekstensi). Hash ring R2 tetap dari slug (satu sumber: `packages/shared/src/r2-routing.ts`).
+- **Komiku di-rehost (B2/R2); BacaKomik/Thrive/ManhwaIndo tetap 100% proxy** (tidak pernah disimpan). Cache-aside self-healing.
 - **1 Worker gabungan.** `apps/api-cf` (name: `manga-api`) = reader + search + admin + scrape + identify + LB. Tidak ada lagi `apps/data-api` (digabung).
 - **Manga aggregation.** `series` = canonical (1 manga multi-source). `manga_source_link` (mangaId → source+source_slug). `manga_merge_queue` (ambiguous manual review). Dedup: `packages/db/src/matching.ts` (normalize + levenshtein + jaroWinkler). **Auto-index**: resolve live saat user buka manga → persist D1 background (waitUntil) → indeks terbangun dari aktivitas user tanpa scrape manual.
 - **Source switcher.** Detail page: dropdown "Source" (badge semua source). Reader: sticky bar. Default: localStorage pref → komiku → first with chapter list.
 - **CF Bot Fight pada BacaKomik & ManhwaIndo.** Plain fetch → 403; hybrid fallback ke `MY_BROWSER` (Puppeteer browser binding). Thrive bersih (UA cukup). Komiku no Puppeteer.
 - **Passive health.** Cron dihapus. `source_health` dicatat saat user aktivitas (search/reader). `last_checked_at` = aktivitas terakhir.
-- **LB auto-provision.** Admin input CF API token → sistem auto-create D1 + KV + deploy Worker baru di akun CF lain. Frontend round-robin client-side anti-SPOF. Origin akun-2 (tzok5555): D1+KV saja, **tanpa R2** (by design).
-- **Dark theme OKLCH.** Palette dari oktz.qzz.io. Nav-island style (fixed, blur, rounded). **Mobile (sm):** navbar tetap tepel flat di semua state — perubahan shape dari 100vw ke pill 720px di layar kecil terasa "hilang" ke user. Shape-change pill hanya aktif di `md+` (desktop), lihat `apps/web/app/globals.css` blok `/* ── Navbar ── */`. Mobile menu: full-width drawer, body scroll lock, 40px min touch targets, 16px font (no iOS zoom).
+- **LB auto-provision.** Admin input CF API token → sistem auto-create D1 + KV + deploy Worker baru di akun CF lain. Frontend round-robin client-side anti-SPOF. Origin akun-2 (tzok5555): D1+KV+browser, **tanpa R2 binding** (by design), tapi deploy bundle + B2_CONFIG secret sehingga serve storage URLs dari chapter detail.
+- **Dark theme OKLCH.** Palette dari oktz.qzz.io. Nav-island style: fixed, blur 18px, rounded. **Mobile (sm):** blur dimatikan (diganti solid `oklch(14% 0 0 / 0.92)`) — fixed full-width backdrop-filter = repaint per scroll frame di Android Chrome. Animasi width/padding/border-radius morph tetap sama (preserved). Lihat `apps/web/app/globals.css` blok `/* ── Navbar ── */`. Mobile menu: full-width drawer, body scroll lock, 40px min touch targets, 16px font (no iOS zoom).
 - **Google OAuth-only auth.** Password auth dihapus (was broken: `crypto.subtle.deriveBits` Worker runtime error). Endpoint `/api/auth/login` + `/register` REMOVED. `AuthForm.tsx` = single Google button. `hashPassword`/`verifyPassword` di `lib/auth.ts` tetap ada tapi unused (jangan dipakai).
 - **Session cookie cross-origin.** `Set-Cookie: session=...; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=604800`. Cookie hidup di origin Worker (`manga-api.oktz.workers.dev`), bukan frontend (`oktzz.xyz`). Frontend `req.cookies` tidak pernah lihat cookie → `apps/web/middleware.ts` adalah **no-op pass-through** (jangan pakai guard di middleware). Page guard pakai `fetch('/api/auth/me', {credentials:'include'})`.
 - **Admin auth = session role.** `requireAdminSession` middleware cek KV session + D1 `users.role==='admin'`. TIDAK ada password step-up lagi (`x-admin-stepup` header dihapus dari CORS allow-list). `ADMIN_PASSWORD_HASH` secret tetap di wrangler tapi unused.
 - **Admin role auto-assign.** Email di secret `ADMIN_EMAILS` (comma-separated) → `role='admin'` saat login/register. Display label: `user` → "Member", `admin` → "Admin" (display only, DB CHECK constraint unchanged).
 - **Admin section.** "Load Balancing" → "Admin setting" (Navbar/Sidebar/AdminSection). Path: `/admin/settings` (moved from `/admin/load-balancing`; old route redirects).
 - **Admin monitoring.** Migration `0006` + `routes/admin/monitoring.ts` (8 GET endpoints: overview/health/db/users/user-detail/usage/jobs/source-detail) — pakai session guard, mounted di `index.ts` dengan `rateLimitAdmin`. Halaman: `/admin`, `/admin/monitoring`, `/admin/users`, `/admin/users/[id]`. Semua admin pages pakai `runtime='edge'`.
+- **Chapter detail storage URLs.** Worker `routes/reader.ts` chapter endpoint query D1 `chapter_pages` → kalau `r2_account_idx=-1` return `b2Url` (presigned SigV4 GET, 7 hari), kalau `>=0` return `r2Url` (R2 public domain). Setelah upload sukses, `touchChapterDetailKv` update `chapter:detail:{source}:{chapterId}` KV agar request berikutnya dapat URL langsung (KV TTL 300s).
+- **`/api/reader/*` & `/api/series*` & `/api/manga/*` TIDAK di-failover.** `ORIGIN_PATH_ALLOWLIST` di `lib/api.ts` exclude: butuh D1 lookup yang hanya di main D1 (origin 2 D1 terpisah). Reader: failover hilang tapi storage-first (B2/R2 URL) sudah offload Worker.
 - **Skill ini sumber kebenaran.** README diupdate parallel.
 
 ---
@@ -44,13 +46,13 @@ Platform baca manga/manhwa/manhua bahasa Indonesia. Sumber: Komiku (primary, scr
    │ dark theme  │      │ port 8787       │    │ D1 terpisah     │
    └─────────────┘      └────────┬────────┘    └────────┬────────┘
                                  │                      │
-                          ┌──────┴──────┐        ┌──────┴──────┐
-                          ▼             ▼        ▼             ▼
-                    ┌─────────┐  ┌──────────┐ ┌────────┐ ┌───────────┐
-                    │ D1 DB   │  │ KV cache │ │ R2     │ │ Browser   │
-                    │ (SQLite)│  │          │ │ assets │ │ (Puppeteer│
-                    └─────────┘  └──────────┘ └────────┘ │  remote)  │
-                                                       └───────────┘
+                           ┌──────┴──────┐        ┌──────┴──────┐
+                           ▼             ▼        ▼             ▼
+                     ┌─────────┐  ┌──────────┐ ┌────────┐ ┌───────────┐
+                     │ D1 DB   │  │ KV cache │ │ R2     │ │ Browser   │
+                     │ (SQLite)│  │          │ │fallback│ │ (Puppeteer│
+                     └─────────┘  └──────────┘ └────────┘ │  remote)  │
+                                                        └───────────┘
                                   │
                            ┌──────┴──────┐
                            ▼             ▼
@@ -62,6 +64,17 @@ Platform baca manga/manhwa/manhua bahasa Indonesia. Sumber: Komiku (primary, scr
                      │ Thrive   │  │ ManhwaIndo│
                      │ (SSG)    │  │ (scrape) │
                      └──────────┘  └──────────┘
+
+                Storage 2-tier:
+                ┌─────────────────────────────┐
+                │ B2 (Backblaze) PRIMARY       │ presigned GET 7 hari,
+                │ manga-oktz-assets (private)  │ SigV4 query auth
+                │ region us-east-005           │
+                └─────────────────────────────┘
+                ┌─────────────────────────────┐
+                │ R2 (Cloudflare) FALLBACK     │ public domain direct,
+                │ multi-account, hash ring     │ hash slug → akun
+                └─────────────────────────────┘
 ```
 
 **Frontend round-robin:**
@@ -69,18 +82,21 @@ Platform baca manga/manhwa/manhua bahasa Indonesia. Sumber: Komiku (primary, scr
 User ──> Frontend
   │
   ├─ GET /api/origins (main API) → daftar origin sehat
-  ├─ Round-robin client-side ke origin
+  ├─ Round-robin client-side ke origin (HANYA allowlisted public paths)
   └─ Fallback: origin gagal → retry origin lain → main API
 ```
 
-**Reader R2-first (komiku):**
+**Reader storage-first (B2 primary → R2 fallback → proxy):**
 ```
-User ──> Frontend (hash slug → pilih domain R2)
+User ──> Frontend
   │
-  ├─ src = https://cdnN.../komiku/{slug}/{chapterId}/{pageNo}   ← R2 langsung
-  ├─ error/404 → retry → proxy /api/reader/:source/page/... (Worker)
-  │    └─ Worker: proxy upstream → serve + upload R2 di background
-  └─ request berikutnya → dari R2 lagi (cache-aside self-healing)
+  ├─ Chapter detail → pages: [{proxyUrl, b2Url?, r2Url?}] (D1 lookup)
+  ├─ Page img src = b2Url ?? r2Url ?? proxyUrl
+  │    ├─ b2Url hit  → https://s3.us-east-005.backblazeb2.com/...?X-Amz-Signature=... (langsung B2, no Worker)
+  │    ├─ r2Url hit  → https://cdnN.oktz.qzz.io/... (langsung R2 CDN)
+  │    └─ miss/error → proxy /api/reader/:source/page/... (Worker)
+  │         └─ Worker: proxy upstream → serve + upload B2 (primary, account_idx=-1) → fallback R2 ring
+  └─ Setelah upload: touchChapterDetailKv update KV → next request dapat URL langsung
 ```
 
 ---
@@ -98,12 +114,13 @@ manga-platform/
 │   │   └── src/
 │   │       ├── index.ts                  # Hono app, CORS, security headers, rateLimit, route mount
 │   │   ├── lib/
-│   │   │   ├── context.ts            # Env (DB, CACHE_KV, ASSETS_R2, MY_BROWSER, SCRAPE_API_KEY, LB_ENCRYPTION_KEY, ADMIN_PASSWORD_HASH [unused], ALLOWED_ORIGINS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, R2_ACCOUNTS, R2_RING_VNODES, R2_EVICTION_DAYS, ADMIN_EMAILS)
+│   │   │   ├── context.ts            # Env (DB, CACHE_KV, ASSETS_R2, MY_BROWSER, SCRAPE_API_KEY, LB_ENCRYPTION_KEY, ADMIN_PASSWORD_HASH [unused], ALLOWED_ORIGINS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, R2_ACCOUNTS, R2_RING_VNODES, R2_EVICTION_DAYS, B2_CONFIG, ADMIN_EMAILS)
 │   │   │   ├── auth.ts               # setSessionCookie (SameSite=None), requireSession, requireAdminKey, requireAdminSession (session-role check), Google OAuth verify, hashPassword/verifyPassword [unused]
 │   │   │   ├── rateLimit.ts          # makeLimiter factory: rateLimit(60/min), rateLimitIdentify(10/min), rateLimitAdmin(600/min)
 │   │   │   ├── retry.ts              # retryUpstream (429 backoff)
 │   │   │   ├── r2Accounts.ts         # parse R2_ACCOUNTS secret JSON (urutan = index akun)
-│   │   │   ├── s3Upload.ts           # SigV4 signed PUT ke R2 akun lain (tanpa @aws-sdk)
+│   │   │   ├── b2Config.ts           # parse B2_CONFIG secret JSON (bucket, keyId, appKey, region)
+│   │   │   ├── s3Upload.ts           # SigV4 signed PUT (R2 + B2) + b2PresignedGet (tanpa @aws-sdk)
 │   │   │   ├── dbWrite.ts            # D1 overflow detector (KV usage tracking, threshold 400MB)
 │   │   │   └── komikuSlug.ts         # parse slug dari '<slug>-chapter-<num>'
 │   │   └── routes/
@@ -169,7 +186,7 @@ manga-platform/
 │       │       ├── PreferencesSection.tsx
 │       │       ├── PrivacySection.tsx
 │       │       └── AdminSection.tsx      # link ke /admin/settings
-│       ├── lib/api.ts                    # API client + round-robin failover + getMangaSources + apiGet + roleLabel
+│       ├── lib/api.ts                    # API client + round-robin failover (reader/series/manga TIDAK di-failover — main only) + apiGet + roleLabel
 │       ├── middleware.ts                 # NO-OP pass-through (cookie di API origin, bukan frontend origin)
 │       ├── next.config.mjs               # CSP allows cloudflareinsights.com
 │       └── tailwind.config.ts            # OKLCH color tokens + font-display
@@ -183,6 +200,7 @@ manga-platform/
 │   │   ├── migrations/0004_aggregation.sql   # manga_source_link, manga_merge_queue, alt_titles
 │   │   ├── migrations/0005_user_profile.sql  # users: display_name, avatar_url, bio, preferences (commit 342090d)
 │   │   ├── migrations/0006_admin_monitoring.sql # users.last_login_at, provider_accounts, scrape_jobs_log, db_usage_snapshot
+│   │   ├── migrations/0007_relax_chapter_pages_fk.sql # drop FK chapter_pages.chapter_id → chapters(id) supaya cache-aside upload marker (B2/R2) bisa persist walau chapter row belum ada di D1 (chapters banyak yang tidak auto-index; auto-index saat ini hanya series)
 │   │   ├── src/matching.ts               # normalizeTitle + levenshtein + jaroWinkler + matchCandidate (pure)
 │   │   ├── test/matching.test.mjs
 │   │   ├── seed.sql
@@ -243,7 +261,7 @@ manga-platform/
 ### `apps/api-cf` (Worker Tunggal — manga-api)
 **Entry:** `src/index.ts`. Hono app, CORS middleware (allowlist `ALLOWED_ORIGINS`), rateLimit global, route mount `/api/*`. Export `fetch` saja (no cron).
 
-**Env (`lib/context.ts`):** `DB`, `CACHE_KV`, `ASSETS_R2`, `MY_BROWSER` (Fetcher), `LB_ENCRYPTION_KEY`, `ADMIN_PASSWORD_HASH`, `SCRAPE_API_KEY`, `ALLOWED_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `R2_ACCOUNTS` (secret JSON array), `R2_RING_VNODES` (default 32), `R2_EVICTION_DAYS` (default 30). (No `MANGADEX_API_KEY` — dihapus.) `ADMIN_EMAILS` (admin role assignment by email on login/register).
+**Env (`lib/context.ts`):** `DB`, `CACHE_KV`, `ASSETS_R2`, `MY_BROWSER` (Fetcher), `LB_ENCRYPTION_KEY`, `ADMIN_PASSWORD_HASH`, `SCRAPE_API_KEY`, `ALLOWED_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `R2_ACCOUNTS` (secret JSON array), `R2_RING_VNODES` (default 32), `R2_EVICTION_DAYS` (default 30), `B2_CONFIG` (secret JSON: bucket/keyId/appKey/region, default region `us-east-005`). (No `MANGADEX_API_KEY` — dihapus.) `ADMIN_EMAILS` (admin role assignment by email on login/register).
 
 **Lib:**
 - `context.ts` — `Env`, `getDb(c)`, `json()`, `parseAllowedOrigins()`, `sha256Hex()`.
@@ -411,10 +429,11 @@ pHash 64-bit via OffscreenCanvas. `identifyImage()` match hash → series dari D
 - `LB_ENCRYPTION_KEY` — 32-byte random, AES-GCM key
 - `ADMIN_PASSWORD_HASH` — password step-up LB admin (plaintext yang dikirim client)
 - `SCRAPE_API_KEY` — admin API key untuk `/scrape` (`x-admin-api-key` header)
-- `ALLOWED_ORIGINS` — comma-separated, contoh: `https://manga-web-d32.pages.dev,https://oktz.qzz.io,http://localhost:3000`
+- `ALLOWED_ORIGINS` — comma-separated. Saat ini terpasang: `https://manga-web-d32.pages.dev,https://oktzz.xyz,https://oktz.xyz,https://www.oktzz.xyz,https://*.manga-web-d32.pages.dev,http://localhost:3000`. Tambah domain baru kalau deploy preview / custom domain baru.
 - `R2_ACCOUNTS` — JSON array akun R2: `[{"account_id","access_key_id","secret_access_key","public_domain","bucket?"}]`. **Urutan = index akun (identitas hash)**. 1 secret untuk semua akun (bukan 3 env/akun — batas 64 env var). JANGAN commit.
 - `R2_RING_VNODES` — vnode hash ring (default 32)
 - `R2_EVICTION_DAYS` — TTL lifecycle R2 (default 30, prefix `komiku/`)
+- `B2_CONFIG` — JSON `{bucket,keyId,appKey,region}` untuk Backblaze B2 (primary storage). Region default `us-east-005` (endpoint `s3.us-east-005.backflazeb2.com`). Presign GET 7 hari via SigV4 query auth (UNSIGNED-PAYLOAD). Tidak ada env frontend — URL presigned datang dari Worker.
 - (No `MANGADEX_API_KEY` — dihapus 2026-08-07.)
 
 ### Frontend (`apps/web/.env.production`)
@@ -507,7 +526,7 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0004_agg
 ## 8. Security
 
 - **Rate limiting:** public 60/min, identify 10/min, scrape 600/min, admin 600/min. Per-IP via KV counter.
-- **CORS:** allowlist `ALLOWED_ORIGINS` — support wildcard subdomain `https://*.manga-web-d32.pages.dev` (CF Pages preview/hash domain). Match logic di `lib/context.ts` `allowedOriginFor` + `originMatches` (entry `://*.`). **Worker 500/exception → response tanpa CORS header → browser menampilkan "TypeError: Failed to fetch"** (bukan 5xx). Kalau user lihat error ini di halaman client-fetch (admin, reader), cek dulu origin domain ≠ allowlist.
+- **CORS:** allowlist `ALLOWED_ORIGINS` — support wildcard subdomain `https://*.manga-web-d32.pages.dev` (CF Pages preview/hash domain). Match logic di `lib/context.ts` `allowedOriginFor` + `originMatches` (entry `://*.`). **Worker 500/exception → response tanpa CORS header → browser menampilkan "TypeError: Failed to fetch"** (bukan 5xx). Kalau user lihat error ini di halaman client-fetch (admin, reader), cek dulu origin domain ≠ allowlist. Bug umum: domain frontend ada tapi subdomain (`www.`) atau domain lama (`oktz.xyz` vs `oktzz.xyz`) terlewat → tambah semua variant ke secret.
 - **Admin auth = session role.** `requireAdminSession` cek session KV + D1 `users.role==='admin'`. TIDAK ada password step-up. `ADMIN_PASSWORD_HASH` secret tetap di wrangler tapi unused (jangan pakai).
 - **Admin key (scrape):** `x-admin-api-key` === `SCRAPE_API_KEY`. Constant-time compare. PER-ROUTE middleware (bukan `router.use('*')` — wildcard match semua subroute dan blok endpoint lain).
 - **Token encryption:** AES-GCM 256. Layout BLOB: `[12-byte iv | ciphertext+tag]`.
@@ -516,7 +535,9 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0004_agg
 - **Image proxy:** Komiku butuh `Referer: https://komiku.org/` (CDN 403 tanpa itu). BacaKomik/ManhwaIndo image butuh Referer base-nya. Stream. SSRF guard: allowlist host per source (`img.komiku.org`, `i0-3.wp.com`, `imageainewgeneration.lol`, `himmga.lat`, `gaimgame.pics`, `komikcdn.me`, `kacu.gmbr.pro`, `upload.gmbr.pro`, `cdn.thrive.moe`, `backup.thrive.moe`, `kuma.thrive.moe`) + blokir private IP (`10.*`, `192.168.*`, `127.*`, `169.254.169.254`, localhost). **No uploads.mangadex.org** (mangadex dihapus).
 - **R2 upload (komiku saja):** SigV4 signed PUT ke bucket akun lain, tanpa @aws-sdk (bundle Worker batas 3MB gzip, dan bundle di-deploy ke banyak akun). Token R2 **Object Read & Write** cukup (bukan Admin). Kredensial hanya di secret `R2_ACCOUNTS` — jangan pernah di commit atau di env frontend. **Source lain (BacaKomik/Thrive/ManhwaIndo) 100% proxy, tidak di-rehost.**
 - **R2-first, proxy fallback:** frontend coba URL R2 langsung; error → proxy Worker (yang sekaligus upload) → self-healing, request berikutnya dari R2 lagi.
-- **Auto-provision:** CF API token di-encrypt sebelum store. Worker baru set `ALLOWED_ORIGINS` = domain frontend. Origin akun-2: D1+KV saja, R2 binding di-skip (akun tanpa R2).
+- **Auto-provision:** CF API token di-encrypt sebelum store. Worker baru set `ALLOWED_ORIGINS` = domain frontend. Origin akun-2: D1+KV saja, R2 binding di-skip (akun tanpa R2) — tapi deploy bundle + B2_CONFIG secret agar serve storage URLs dari chapter detail.
+- **B2 (Backblaze) primary storage.** Bucket private `manga-oktz-assets` region `us-east-005` (endpoint `s3.us-east-005.backblazeb2.com`). Public bucket diblokir B2 untuk akun tanpa payment history (`no_payment_history`); private bucket + SigV4 presigned GET (UNSIGNED-PAYLOAD, 7 hari) untuk serve langsung ke browser tanpa Worker. Akun B2 tanpa payment = masih boleh create private bucket + upload/download via S3 API. Lifecycle rule prefix `komiku/` 30 hari: API B2 v2/v3 untuk `b2_set_bucket_lifecycle_rules` return 404 → set manual via dashboard https://secure.backblaze.com/b2_buckets.htm (id berbeda dengan API upload).
+- **B2 upload idempotent + race aman** (key sama → overwrite). Background upload di `waitUntil` — response user tidak tunggu. Failed B2 upload → silent fallback ke R2 ring (existing behavior).
 
 ---
 
@@ -625,6 +646,7 @@ cd apps/web && npx next build && npx next-on-pages
 | D1 query helpers (12 admin monitoring helpers + 40+ base) | `packages/db/index.ts` |
 | User profile migration (avatar/bio/prefs) | `packages/db/migrations/0005_user_profile.sql` |
 | Admin monitoring migration (last_login_at, provider_accounts, scrape_jobs_log, db_usage_snapshot) | `packages/db/migrations/0006_admin_monitoring.sql` |
+| Drop FK chapter_pages → chapters (cache-aside upload marker) | `packages/db/migrations/0007_relax_chapter_pages_fk.sql` |
 | Profile page (profile, account, prefs, privacy, admin) | `apps/web/app/profile/page.tsx` |
 | Profile sub-sections (sidebar/tabs) | `apps/web/components/profile/*.tsx` |
 | Admin LB page (no password step-up) | `apps/web/app/admin/settings/page.tsx` |
@@ -632,10 +654,11 @@ cd apps/web && npx next build && npx next-on-pages
 | Status page (BetterStack-style cards) | `apps/web/app/status/page.tsx` |
 | Hash ring R2 (shared, jangan duplikasi) | `packages/shared/src/r2-routing.ts` |
 | R2 account config (secret JSON) | `apps/api-cf/src/lib/r2Accounts.ts` |
-| S3 SigV4 upload ke R2 | `apps/api-cf/src/lib/s3Upload.ts` |
+| B2 config parse (secret JSON) | `apps/api-cf/src/lib/b2Config.ts` |
+| S3 SigV4 upload (R2 + B2) + B2 presigned GET | `apps/api-cf/src/lib/s3Upload.ts` |
 | Parse slug dari chapterId | `apps/api-cf/src/lib/komikuSlug.ts` |
-| Cache-aside R2 upload (reader) | `apps/api-cf/src/routes/reader.ts` |
-| Frontend R2 URL + circuit breaker + apiGet + roleLabel | `apps/web/lib/api.ts` |
+| Cache-aside storage upload (B2 primary → R2 fallback) + touch KV | `apps/api-cf/src/routes/reader.ts` |
+| Frontend API client + round-robin (TANPA reader/series/manga failover — main only) + apiGet + roleLabel | `apps/web/lib/api.ts` |
 | Setup akun R2 baru | `scripts/setup-r2-account.mjs` + `docs/ADDING-ACCOUNT.md` |
 | Migrasi D1 (r2_key, lb_usage) | `packages/db/migrations/0002_r2_storage.sql` |
 | Shared types (Zod) | `packages/shared/types.ts` |

@@ -20,6 +20,7 @@ export interface Env {
   R2_ACCOUNTS?: string;
   R2_RING_VNODES?: string;
   R2_EVICTION_DAYS?: string;
+  B2_CONFIG?: string;
   [k: string]: unknown;
 }
 

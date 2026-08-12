@@ -8,6 +8,8 @@ import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { parseR2Accounts } from '../lib/r2Accounts.ts';
 import { s3PutObject } from '../lib/s3Upload.ts';
+import { parseB2Config, type B2Config } from '../lib/b2Config.ts';
+import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
@@ -131,15 +133,68 @@ const r2RingFor = (c: Context): { accounts: ReturnType<typeof parseR2Accounts>; 
   return { accounts, ring: buildRing(accounts.map((a) => a.public_domain), vnodes) };
 };
 
-// Upload gambar ke R2 target account (background) + catat D1. Idempoten:
-// key sama → overwrite sama. Race 2 request paralel aman (R2 1 write/s/key).
-const uploadToR2 = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
+// Update chapter:detail KV cache setelah upload sukses — biar request
+// berikutnya dapat b2Url/r2Url langsung (KV TTL 300s, tanpa refresh).
+const touchChapterDetailKv = async (
+  c: Context,
+  source: string,
+  chapterId: string,
+  pageNo: number,
+  b2: B2Config | null,
+  r2cfg: ReturnType<typeof r2RingFor>,
+  r2Key: string,
+  accountIdx: number
+): Promise<void> => {
+  const key = `chapter:detail:${source}:${chapterId}`;
+  const raw = await c.env.CACHE_KV.get(key).catch(() => null);
+  if (!raw) return;
   try {
-    const cfg = r2RingFor(c);
-    if (!cfg) return; // R2 belum dikonfigurasi → proxy-only mode (old behavior)
+    const parsed = JSON.parse(raw) as { data?: { pages?: Array<{ proxyUrl: string; b2Url?: string | null; r2Url?: string | null }> } };
+    if (!parsed.data?.pages) return;
+    const idx = pageNo - 1;
+    if (idx < 0 || idx >= parsed.data.pages.length) return;
+    if (accountIdx === -1 && b2) {
+      parsed.data.pages[idx].b2Url = await b2PresignedGet(b2, r2Key).catch(() => null);
+    } else if (accountIdx >= 0 && r2cfg && r2cfg.accounts[accountIdx]) {
+      parsed.data.pages[idx].r2Url = `https://${r2cfg.accounts[accountIdx].public_domain}/${r2Key}`;
+    }
+    await c.env.CACHE_KV.put(key, JSON.stringify(parsed), { expirationTtl: 300 }).catch(() => {});
+  } catch { /* corrupt cache → ignore, next refresh repopulates */ }
+};
+
+// Upload gambar ke storage tier (background) + catat D1. Idempoten:
+// key sama → overwrite sama. Race 2 request paralel aman.
+// Tier: B2 (primary, r2_account_idx=-1) → R2 ring (fallback, idx akun).
+// B2 gagal → R2; keduanya gagal → response user tetap jalan (proxy only).
+const uploadToStorage = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
+  const r2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
+  const b2 = parseB2Config(c.env.B2_CONFIG);
+  const cfg = r2RingFor(c);
+
+  if (b2) {
+    try {
+      const res = await b2PutObject(b2, r2Key, opts.body as ArrayBuffer, opts.contentType);
+      if (res.ok) {
+        await getDb(c).markPageR2Uploaded({
+          chapterId: opts.chapterId,
+          pageNumber: opts.pageNo,
+          imageUrl: opts.imageUrl,
+          r2Key,
+          r2AccountIdx: -1, // B2
+        });
+        await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2, cfg, r2Key, -1);
+        return;
+      }
+      console.error(`[b2] upload ${res.status} → fallback r2: ${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}`);
+    } catch (e) {
+      console.error(`[b2] upload failed → fallback r2: ${String(e)}`);
+    }
+  }
+
+  try {
+    if (!cfg) return; // tidak ada R2 juga → proxy-only mode (old behavior)
     const idx = accountFor(opts.slug, cfg.ring);
     const account = cfg.accounts[idx];
-    const r2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
     const res = await s3PutObject(account, r2Key, opts.body, opts.contentType);
     await drainResponse(res);
     if (!res.ok) {
@@ -153,6 +208,7 @@ const uploadToR2 = async (c: Context, opts: { source: string; slug: string; chap
       r2Key,
       r2AccountIdx: idx,
     });
+    await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2, cfg, r2Key, idx);
   } catch (e) {
     console.error(`[r2] upload failed [${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}]:`, String(e)); // jangan gagalkan response user
   }
@@ -393,9 +449,34 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     const chapter = await retryUpstream(() => adapter.getChapter(chapterId));
     const pages = await fetchPageUrlsWithCache(c, source, chapterId);
     const proxyBase = `/api/reader/${source}/page/${encodeURIComponent(chapterId)}`;
+    // Storage lookup: object yang sudah di-upload → URL langsung (B2 presigned
+    // atau R2 public domain) biar serve tidak lewat Worker. r2_account_idx=-1
+    // = B2, >=0 = akun R2 ring. Object new → null → frontend pakai proxy
+    // (yang sekaligus meng-upload → request berikutnya dapat URL langsung).
+    const stored = await c.env.DB.prepare(
+      'SELECT page_number, r2_key, r2_account_idx FROM chapter_pages WHERE chapter_id = ?1'
+    ).bind(chapterId).all<{ page_number: number; r2_key: string; r2_account_idx: number }>().catch(() => null);
+    const storedByPage = new Map<number, { r2Key: string; accountIdx: number }>();
+    for (const row of stored?.results ?? []) storedByPage.set(row.page_number, { r2Key: row.r2_key, accountIdx: row.r2_account_idx });
+    const b2 = c.env.B2_CONFIG ? parseB2Config(c.env.B2_CONFIG) : null;
+    const r2cfg = r2RingFor(c);
     const data = {
       ...chapter,
-      pages: pages.map((_, i) => ({ proxyUrl: `${proxyBase}/${i + 1}` }))
+      // B2 presign & R2 domain resolve per page — Promise.all biar paralel.
+      pages: await Promise.all(pages.map(async (_, i) => {
+        const pageNo = i + 1;
+        const row = storedByPage.get(pageNo);
+        let b2Url: string | null = null;
+        let r2Url: string | null = null;
+        if (row) {
+          if (row.accountIdx === -1 && b2) {
+            b2Url = await b2PresignedGet(b2, row.r2Key).catch(() => null);
+          } else if (row.accountIdx >= 0 && r2cfg && r2cfg.accounts[row.accountIdx]) {
+            r2Url = `https://${r2cfg.accounts[row.accountIdx].public_domain}/${row.r2Key}`;
+          }
+        }
+        return { proxyUrl: `${proxyBase}/${pageNo}`, b2Url, r2Url };
+      })),
     };
     cachePut(c, cacheKey, { data }, 300);
     recordHealth(c, source, start, true);
@@ -501,7 +582,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
     const contentType = upstream.headers.get('content-type') || 'image/jpeg';
     const buf = await new Response(upstream.clone().body).arrayBuffer();
     if (buf.byteLength > 0) {
-      r2Upload = uploadToR2(c, { source, slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body: buf }).catch(() => {});
+      r2Upload = uploadToStorage(c, { source, slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body: buf }).catch(() => {});
     }
   }
 

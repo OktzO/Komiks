@@ -27,7 +27,7 @@ async function HomeFeed() {
   }
 
   const popular = manga.slice(0, 10);
-  const updates = manga.slice(0, 12);
+  const updates = manga.slice(10, 22);
 
   if (error) {
     return <div className="text-error text-sm border border-border-default rounded p-3 bg-card mb-4">Gagal memuat: {error}</div>;
@@ -65,7 +65,7 @@ async function HomeFeed() {
           </Link>
         </div>
         <div className="flex gap-4 overflow-x-auto pb-4 snap-x" style={{ scrollbarWidth: 'thin' }} aria-label="Judul populer">
-          {popular.map((m) => {
+          {popular.map((m, idx) => {
             const item = itemOf(m);
             const source = (m.sources?.includes('komiku') ?? item.sources?.includes('komiku')) ? 'komiku' : item.source;
             return (
@@ -76,7 +76,7 @@ async function HomeFeed() {
                 className="group relative shrink-0 snap-start w-36 sm:w-40 transition-transform duration-200 hover:-translate-y-1"
               >
                 <div className="aspect-[3/4] w-full overflow-hidden rounded-xl border border-border-subtle bg-card relative">
-                  <CoverImage src={item.cover_image} alt={item.title} title={item.title} className="h-full w-full" zoom />
+                  <CoverImage src={item.cover_image} alt={item.title} title={item.title} className="h-full w-full" zoom priority={idx < 3} />
                   <div className="absolute top-1.5 right-1.5 z-10">
                     <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
                   </div>
@@ -95,7 +95,7 @@ async function HomeFeed() {
 
       {/* ============ Update Terbaru ============ */}
       {updates.length > 0 && (
-        <section className="mb-12">
+        <section className="cv-feed mb-12">
           <div className="flex items-baseline justify-between mb-5">
             <h2 className="font-display text-2xl tracking-tight">Update Terbaru</h2>
             <Link href="/search" prefetch={false} className="text-sm text-secondary hover:text-primary">
@@ -153,7 +153,7 @@ export default function Home() {
             Ribuan judul terjemahan Indonesia, dikemas rapi dan ringan. Cepat, nyaman, tanpa ribet.
           </p>
           <form action="/search" method="get" className="anim-rise mt-8 max-w-xl mx-auto" style={{ animationDelay: '180ms' }}>
-            <div className="flex items-center gap-2 rounded-full border border-border-default bg-card/60 px-4 py-2 backdrop-blur focus-within:border-border-default">
+            <div className="flex items-center gap-2 rounded-full border border-border-default bg-card/60 px-4 py-2 sm:backdrop-blur focus-within:border-border-default">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted shrink-0" aria-hidden="true">
                 <circle cx="11" cy="11" r="7" />
                 <path d="m21 21-4.3-4.3" />
@@ -196,7 +196,7 @@ export default function Home() {
       </Suspense>
 
       {/* ============ Footer ============ */}
-      <footer className="border-t border-border-subtle mt-16 pt-8 text-sm text-muted">
+      <footer className="cv-footer border-t border-border-subtle mt-16 pt-8 text-sm text-muted">
         <div className="grid gap-6 sm:grid-cols-3">
           <div>
             <p className="font-display text-base text-primary tracking-tight mb-1">Manga</p>
