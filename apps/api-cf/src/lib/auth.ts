@@ -3,6 +3,44 @@ import type { MiddlewareHandler } from 'hono';
 import { db } from '@manga-platform/db';
 import type { SessionMeta } from '@manga-platform/shared/types';
 
+// ── Crypto helpers (HMAC-SHA256 via WebCrypto) ──────────────────────────────
+
+const b64urlEncode = (bytes: ArrayBuffer | Uint8Array): string => {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let bin = '';
+  for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
+const b64urlDecode = (s: string): Uint8Array => {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=');
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+};
+
+const hmacSha256 = async (key: string, data: string): Promise<ArrayBuffer> => {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key) as unknown as BufferSource,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  return crypto.subtle.sign('HMAC', cryptoKey, enc.encode(data));
+};
+
+const constantTimeEqualBuf = (a: Uint8Array, b: Uint8Array): boolean => {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+};
+
+// ── Legacy password helpers (kept for any old rows, OAuth-only now) ─────────
+
 const PBKDF2_ITER = 100000;
 const SALT_LEN = 16;
 const KEY_LEN = 32;
@@ -22,7 +60,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   const expected = fromHex(parts[3]);
   const key = await deriveKey(password, salt, iter);
   const hash = await crypto.subtle.exportKey('raw', key) as ArrayBuffer;
-  return constantTimeEqual(new Uint8Array(hash), expected);
+  return constantTimeEqualBuf(new Uint8Array(hash), expected);
 }
 
 async function deriveKey(password: string, salt: Uint8Array, iter = PBKDF2_ITER): Promise<CryptoKey> {
@@ -38,50 +76,93 @@ const fromHex = (hex: string): Uint8Array => {
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return out;
 };
-const constantTimeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  return diff === 0;
+
+// ── Session config ──────────────────────────────────────────────────────────
+
+const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days, in seconds
+const SESSION_COOKIE = '__Host-session';
+const STATE_COOKIE = '__Host-oauth-state';
+const STATE_TTL = 600; // 10 min
+
+type SessionPayload = {
+  sid: string;
+  uid: number;
+  email: string;
+  role: string;
+  iat: number;
+  exp: number;
 };
 
-const SESSION_TTL = 60 * 60 * 24 * 7;
+// ── Signed token helpers (payload + HMAC sig, separated by '.') ──────────────
 
-export async function createSession(c: Context, userId: number): Promise<string> {
-  const token = crypto.randomUUID() + crypto.randomUUID();
-  const now = Date.now();
-  const ua = c.req.header('user-agent') || '';
-  const secondary = JSON.stringify({ token, createdAt: now, lastSeen: now, ua });
-  await Promise.all([
-    c.env.CACHE_KV.put(`session:${token}`, JSON.stringify({ userId, createdAt: now }), { expirationTtl: SESSION_TTL }),
-    c.env.CACHE_KV.put(`session-user:${userId}:${token}`, secondary, { expirationTtl: SESSION_TTL }),
-  ]);
+async function signToken(env: Env, payloadStr: string): Promise<string> {
+  const sig = await hmacSha256(env.LB_ENCRYPTION_KEY, payloadStr);
+  return b64urlEncode(new TextEncoder().encode(payloadStr)) + '.' + b64urlEncode(sig);
+}
+
+async function verifyToken<T>(env: Env, token: string): Promise<T | null> {
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [payloadB64, sigB64] = parts;
+  let payloadStr: string;
+  try {
+    payloadStr = new TextDecoder().decode(b64urlDecode(payloadB64));
+  } catch {
+    return null;
+  }
+  const expectedSig = await hmacSha256(env.LB_ENCRYPTION_KEY, payloadStr);
+  let providedSig: Uint8Array;
+  try {
+    providedSig = b64urlDecode(sigB64);
+  } catch {
+    return null;
+  }
+  if (!constantTimeEqualBuf(new Uint8Array(expectedSig), providedSig)) return null;
+  try {
+    return JSON.parse(payloadStr) as T;
+  } catch {
+    return null;
+  }
+}
+
+// ── Session: create (INSERT D1) + verify (lazy D1 revocation check) ─────────
+
+export async function createSession(
+  c: Context,
+  userId: number,
+  user: { email: string; role: string }
+): Promise<string> {
+  const sid = crypto.randomUUID();
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + SESSION_TTL;
+  const payload: SessionPayload = { sid, uid: userId, email: user.email, role: user.role, iat, exp };
+  const payloadStr = JSON.stringify(payload);
+  const token = await signToken(c.env, payloadStr);
+  // D1 INSERT — 1 write per login (was 2 KV.puts).
+  const ua = c.req.header('user-agent') || null;
+  const ip = c.req.header('cf-connecting-ip') || null;
+  await db(c.env.DB).insertSession({ sid, userId, createdAt: iat, expiresAt: exp, ua, ip });
   return token;
 }
 
 export async function getSessionUser(c: Context): Promise<{ id: number; email: string; role: string } | null> {
-  const token = c.req.header('authorization')?.replace('Bearer ', "") || parseCookie(c.req.header('cookie') || '').session;
+  const token = parseCookie(c.req.header('cookie') || '')[SESSION_COOKIE];
   if (!token) return null;
-  const raw = await c.env.CACHE_KV.get(`session:${token}`);
-  if (!raw) return null;
-  const { userId, createdAt } = JSON.parse(raw) as { userId: number; createdAt: number };
-  const user = await db(c.env.DB).getUserById(userId);
-  if (user) {
-    // Fire-and-forget: refresh lastSeen + TTL on the secondary index key.
-    // Must not block the response path; swallow errors.
-    const now = Date.now();
-    void c.env.CACHE_KV
-      .put(`session-user:${userId}:${token}`,
-        JSON.stringify({ token, createdAt: createdAt ?? now, lastSeen: now, ua: c.req.header('user-agent') || '' }),
-        { expirationTtl: SESSION_TTL })
-      .catch(() => undefined);
-  }
-  return user;
+  const payload = await verifyToken<SessionPayload>(c.env, token);
+  if (!payload) return null;
+  // Expiry check from cookie payload (no D1 read needed for expired sessions).
+  if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  // Lazy revocation: 1 D1 read to check sessions(sid).revoked_at.
+  const row = await db(c.env.DB).getSession(payload.sid);
+  if (!row || row.revoked_at !== null) return null;
+  return { id: payload.uid, email: payload.email, role: payload.role };
 }
 
 export function requireAuth(c: Context): { id: number; email: string; role: string } | null {
   return (c as unknown as { get: (k: string) => unknown }).get('user') as { id: number; email: string; role: string } | null;
 }
+
+// ── Cookie helpers ──────────────────────────────────────────────────────────
 
 function parseCookie(header: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -93,50 +174,68 @@ function parseCookie(header: string): Record<string, string> {
 }
 
 export function setSessionCookie(token: string): string {
-  // SameSite=None + Secure required for cross-origin cookie (frontend on
-  // oktz.qzz.io, API on manga-api.oktz.workers.dev). Lax would block XHR
-  // cross-origin, leaving frontend unable to read the session.
-  return `session=${token}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${SESSION_TTL}`;
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${SESSION_TTL}`;
 }
 
 export function clearSessionCookie(): string {
-  return `session=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`;
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`;
 }
+
+// ── OAuth state cookie (signed, nol KV) ─────────────────────────────────────
+
+type OAuthStatePayload = {
+  state: string;
+  origin: string;
+  redirect: string;
+  exp: number;
+};
+
+export async function setStateCookie(
+  c: Context,
+  data: { state: string; origin: string; redirect: string }
+): Promise<string> {
+  const payload: OAuthStatePayload = {
+    state: data.state,
+    origin: data.origin,
+    redirect: data.redirect,
+    exp: Math.floor(Date.now() / 1000) + STATE_TTL,
+  };
+  const token = await signToken(c.env, JSON.stringify(payload));
+  return `${STATE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${STATE_TTL}`;
+}
+
+export async function verifyStateCookie(c: Context): Promise<OAuthStatePayload | null> {
+  const token = parseCookie(c.req.header('cookie') || '')[STATE_COOKIE];
+  if (!token) return null;
+  const payload = await verifyToken<OAuthStatePayload>(c.env, token);
+  if (!payload) return null;
+  if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+
+export function clearStateCookie(): string {
+  return `${STATE_COOKIE}=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`;
+}
+
+// ── Sessions list/revoke (now D1-backed, no KV) ─────────────────────────────
 
 export async function listSessionsForUser(env: Env, userId: number): Promise<SessionMeta[]> {
-  const sessions: SessionMeta[] = [];
-  const prefix = `session-user:${userId}:`;
-  let cursor: string | undefined;
-  do {
-    const res = await env.CACHE_KV.list({ prefix, cursor });
-    for (const k of res.keys) {
-      const val = await env.CACHE_KV.get(k.name);
-      if (!val) continue;
-      try {
-        const m = JSON.parse(val) as Partial<SessionMeta>;
-        if (m.token && typeof m.createdAt === 'number' && typeof m.lastSeen === 'number') {
-          sessions.push({ token: m.token, createdAt: m.createdAt, lastSeen: m.lastSeen, ua: typeof m.ua === 'string' ? m.ua : '' });
-        }
-      } catch {
-        continue;
-      }
-    }
-    cursor = res.list_complete ? undefined : res.cursor;
-  } while (cursor);
-  sessions.sort((a, b) => b.lastSeen - a.lastSeen);
-  return sessions;
+  const rows = await db(env.DB).listUserSessions(userId);
+  return rows
+    .filter((r) => r.revoked_at === null)
+    .map((r) => ({
+      token: r.sid,
+      createdAt: r.created_at * 1000,
+      lastSeen: r.created_at * 1000, // D1 doesn't track lastSeen; use createdAt
+      ua: r.ua ?? '',
+    }));
 }
 
-export async function revokeSessionForUser(env: Env, userId: number, token: string): Promise<{ success: boolean }> {
-  await Promise.allSettled([
-    env.CACHE_KV.delete(`session:${token}`),
-    env.CACHE_KV.delete(`session-user:${userId}:${token}`),
-  ]);
-  return { success: true };
+export async function revokeSessionForUser(env: Env, _userId: number, sid: string): Promise<{ success: boolean }> {
+  return db(env.DB).revokeSession(sid);
 }
 
-// Constant-time string comparison — exported for use by admin step-up auth
-// to avoid timing side-channels on password/key comparisons.
+// Constant-time string comparison — exported for use by admin step-up auth.
 export const constantTimeEqualStr = (a: string, b: string): boolean => {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -144,8 +243,6 @@ export const constantTimeEqualStr = (a: string, b: string): boolean => {
   return diff === 0;
 };
 
-// Admin email allowlist (comma-separated in ADMIN_EMAILS env). Default: none.
-// Used by OAuth callback to auto-assign role='admin'.
 export const isAdminEmail = (email: string, env: Env): boolean => {
   const raw = env.ADMIN_EMAILS;
   if (!raw) return false;
@@ -161,16 +258,11 @@ export const requireAdminKey: MiddlewareHandler<{ Bindings: Env }> = async (c, n
   await next();
 };
 
-// Session-based admin gate for read-only monitoring endpoints (/api/admin/*).
-// Distinct from requireAdminKey (scrape). LB + merge mutations now use
-// requireAdminSession too (step-up password removed).
-// Verifies session cookie/Bearer against KV session store + users.role === 'admin'.
 export const requireAdminSession: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const user = await getSessionUser(c);
   if (!user || user.role !== 'admin') {
     return c.json({ error: 'admin required' }, 403);
   }
-  // Hono's c.set typing is strict; cast to satisfy the generic key constraint.
   (c as unknown as { set: (k: string, v: unknown) => void }).set('user', user);
   await next();
 };

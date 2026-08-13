@@ -22,11 +22,17 @@ function parseCookie(header: string): Record<string, string> {
   return out;
 }
 
-function getSessionToken(c: Context): string | undefined {
-  return (
-    c.req.header('authorization')?.replace('Bearer ', '') ||
-    parseCookie(c.req.header('cookie') || '').session
-  );
+function getSessionSid(c: Context): string | undefined {
+  const cookieVal = parseCookie(c.req.header('cookie') || '')['__Host-session'];
+  if (!cookieVal) return undefined;
+  const [payloadB64] = cookieVal.split('.');
+  try {
+    const payloadStr = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'));
+    const payload = JSON.parse(payloadStr) as { sid?: string };
+    return payload.sid;
+  } catch {
+    return undefined;
+  }
 }
 
 function getSessionUserFromContext(c: Context): { id: number; email: string; role: string } {
@@ -166,12 +172,9 @@ router.delete('/me', requireSession, async (c: Context) => {
 
   await db(c.env.DB).deleteUserAccount(user.id);
 
-  const token = getSessionToken(c);
-  if (token) {
-    await Promise.allSettled([
-      c.env.CACHE_KV.delete(`session:${token}`),
-      c.env.CACHE_KV.delete(`session-user:${user.id}:${token}`),
-    ]);
+  const sid = getSessionSid(c);
+  if (sid) {
+    await db(c.env.DB).revokeSession(sid).catch(() => {});
   }
 
   c.header('Set-Cookie', clearSessionCookie());
@@ -190,14 +193,13 @@ router.get('/sessions', async (c: Context) => {
 
 router.delete('/sessions/:token', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const token = c.req.param('token');
+  const sid = c.req.param('token');
 
-  // Verify ownership: the secondary KV key embeds the userId, so it only
-  // exists if this token belongs to this user.
-  const exists = await c.env.CACHE_KV.get(`session-user:${user.id}:${token}`);
-  if (!exists) return c.json({ error: 'session not found' }, 404);
+  // Verify ownership: D1 session must belong to this user.
+  const row = await db(c.env.DB).getSession(sid);
+  if (!row || row.user_id !== user.id) return c.json({ error: 'session not found' }, 404);
 
-  await revokeSessionForUser(c.env, user.id, token);
+  await revokeSessionForUser(c.env, user.id, sid);
   return c.json({ data: { revoked: true } });
 });
 
@@ -205,23 +207,10 @@ router.delete('/sessions/:token', async (c: Context) => {
 
 router.post('/sessions/revoke-all', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const currentToken = getSessionToken(c);
+  const currentSid = getSessionSid(c);
 
-  const sessions = await listSessionsForUser(c.env, user.id);
-  const toRevoke = currentToken
-    ? sessions.filter((s) => s.token !== currentToken)
-    : sessions;
-
-  await Promise.all(
-    toRevoke.map((s) =>
-      Promise.allSettled([
-        c.env.CACHE_KV.delete(`session:${s.token}`),
-        c.env.CACHE_KV.delete(`session-user:${user.id}:${s.token}`),
-      ])
-    )
-  );
-
-  return c.json({ data: { revoked: toRevoke.length } });
+  const result = await db(c.env.DB).revokeAllUserSessions(user.id, currentSid);
+  return c.json({ data: { revoked: result.revoked } });
 });
 
 // ─── History: DELETE /history (clear all) ────────────────────────────────

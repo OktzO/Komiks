@@ -1,0 +1,19 @@
+name = "manga-api-3"
+main = "./dist/worker.js"
+compatibility_date = "2024-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "ddc6f3527032c6e929fddb587f438ca4"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "manga-db"
+database_id = "160d0a4f-fcc1-4cb6-89e2-c65bcc93a340"
+
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "0412740b508240e99f9b68dd51f3fba3"
+
+[browser]
+binding = "MY_BROWSER"
+remote = true

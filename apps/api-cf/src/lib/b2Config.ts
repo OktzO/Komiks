@@ -1,7 +1,8 @@
-// Konfigurasi Backblaze B2 (secondary object storage, PRIMARY untuk upload
-// baru — R2 jadi legacy/fallback). Secret JSON tunggal (B2_CONFIG), bukan
-// beberapa env var (batas 64 env var/Worker).
-export interface B2Config {
+// Konfigurasi Backblaze B2 multi-account.
+// Secret JSON array (B2_ACCOUNTS), urutan = idx: [-1, -2, ...].
+// Backward-compat: single-object B2_CONFIG lama diconvert ke array 1-item.
+export interface B2Account {
+  name: string;
   bucket: string;
   keyId: string;
   appKey: string;
@@ -9,24 +10,51 @@ export interface B2Config {
   host: string;
 }
 
-export const parseB2Config = (raw: string | undefined): B2Config | null => {
-  if (!raw) return null;
-  let o: Record<string, unknown>;
+export const parseB2Accounts = (raw: string | undefined): B2Account[] => {
+  if (!raw) return [];
+  let arr: unknown;
   try {
-    o = JSON.parse(raw) as Record<string, unknown>;
+    arr = JSON.parse(raw);
   } catch {
-    throw new Error('invalid B2_CONFIG JSON');
+    throw new Error('invalid B2_ACCOUNTS JSON');
   }
-  if (typeof o !== 'object' || o === null) throw new Error('invalid B2_CONFIG');
-  for (const f of ['bucket', 'keyId', 'appKey'] as const) {
-    if (typeof o[f] !== 'string' || (o[f] as string).length === 0) throw new Error(`invalid B2_CONFIG: missing field ${f}`);
+  // Single-object backward-compat (old B2_CONFIG format).
+  if (!Array.isArray(arr)) {
+    arr = [arr as unknown];
   }
-  const region = typeof o.region === 'string' && o.region.length > 0 ? (o.region as string) : 'us-east-005';
-  return {
-    bucket: o.bucket as string,
-    keyId: o.keyId as string,
-    appKey: o.appKey as string,
-    region,
-    host: `s3.${region}.backblazeb2.com`,
-  };
+  const list = arr as unknown[];
+  const out: B2Account[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i] as Record<string, unknown>;
+    if (typeof o !== 'object' || o === null) throw new Error(`invalid B2_ACCOUNTS entry ${i}`);
+    for (const f of ['bucket', 'keyId', 'appKey'] as const) {
+      if (typeof o[f] !== 'string' || (o[f] as string).length === 0) throw new Error(`invalid B2_ACCOUNTS: missing field ${f} at index ${i}`);
+    }
+    const region = typeof o.region === 'string' && o.region.length > 0 ? (o.region as string) : 'us-east-005';
+    out.push({
+      name: typeof o.name === 'string' ? (o.name as string) : `b2-${i + 1}`,
+      bucket: o.bucket as string,
+      keyId: o.keyId as string,
+      appKey: o.appKey as string,
+      region,
+      host: `s3.${region}.backblazeb2.com`,
+    });
+  }
+  return out;
+};
+
+// Legacy single-config accessor — returns first account or null.
+export const parseB2Config = (raw: string | undefined): B2Account | null => {
+  const arr = parseB2Accounts(raw);
+  return arr.length > 0 ? arr[0] : null;
+};
+
+// Resolve account by r2_account_idx value from D1 chapter_pages.
+// -1 → B2-A (index 0), -2 → B2-B (index 1), etc.
+// Returns null if idx out of range.
+export const b2AccountForIdx = (accounts: B2Account[], idx: number): B2Account | null => {
+  if (idx >= 0) return null; // R2 ring, not B2
+  const arrIdx = -(idx + 1); // -1 → 0, -2 → 1
+  if (arrIdx < 0 || arrIdx >= accounts.length) return null;
+  return accounts[arrIdx];
 };

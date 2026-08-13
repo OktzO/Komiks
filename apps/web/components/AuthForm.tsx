@@ -1,9 +1,23 @@
 'use client';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
+import { useEffect, useState } from 'react';
+import { getAuthApiUrl, setAuthOrigin } from '@/lib/api';
 
 export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
-  const googleUrl = `${API_URL}/api/auth/google`;
+  const [apiUrl, setApiUrl] = useState('');
+
+  useEffect(() => {
+    getAuthApiUrl().then((url) => {
+      setApiUrl(url);
+      setAuthOrigin(url);
+    });
+  }, []);
+
+  // Build Google OAuth URL dynamically — pass origin + redirect for state cookie.
+  const googleUrl = apiUrl
+    ? `${apiUrl}/api/auth/google?origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}&redirect=${encodeURIComponent(typeof window !== 'undefined' ? window.location.pathname : '/')}`
+    : '#';
+
   return (
     <div className="max-w-sm mx-auto mt-12 space-y-4 text-center">
       <h1 className="text-xl font-semibold">
@@ -14,7 +28,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
       </p>
       <a
         href={googleUrl}
-        className="flex items-center justify-center gap-2 w-full px-4 py-2.5 border border-border-default rounded text-sm text-primary hover:bg-elevated transition-colors"
+        className={`flex items-center justify-center gap-2 w-full px-4 py-2.5 border border-border-default rounded text-sm text-primary hover:bg-elevated transition-colors ${!apiUrl ? 'pointer-events-none opacity-50' : ''}`}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M22 12.1c0-.7-.1-1.3-.2-2H12v3.8h5.7c-.2 1.3-1 2.4-2.1 3.1v2.6h3.4c2-1.8 3-4.5 3-7.5z" fill="#4285F4"/>

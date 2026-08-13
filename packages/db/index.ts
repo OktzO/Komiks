@@ -87,6 +87,17 @@ export interface Db {
   getUserDetail: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>>;
   listUserBookmarksAdmin: (userId: number, params: { page?: number; limit?: number }) => Promise<{ data: Array<{ series_slug: string; title: string | null; cover_image: string | null; added_at: number }>; total: number; page: number }>;
   getProviderHealthBuckets: (providerAccountId: string, hours: number) => Promise<Array<{ started_at: number; status: string; items_scraped: number; duration_ms: number | null }>>;
+
+  // ── Sessions (0008) — KV-free signed-cookie auth ──
+  insertSession: (params: { sid: string; userId: number; createdAt: number; expiresAt: number; ua: string | null; ip: string | null }) => Promise<{ success: boolean }>;
+  getSession: (sid: string) => Promise<Result<{ sid: string; user_id: number; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null; ip: string | null }>>;
+  revokeSession: (sid: string) => Promise<{ success: boolean }>;
+  listUserSessions: (userId: number) => Promise<Array<{ sid: string; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null }>>;
+  revokeAllUserSessions: (userId: number, exceptSid?: string) => Promise<{ revoked: number }>;
+  // ── chapter_pages.last_access (0009) — LRU eviction ──
+  touchPageLastAccess: (chapterId: string, pageNo: number) => Promise<{ success: boolean }>;
+  listStalePages: (accountIdx: number, staleBeforeTs: number, limit: number) => Promise<Array<{ chapter_id: string; page_number: number; r2_key: string; r2_account_idx: number; last_access: number | null }>>;
+  clearPageStorage: (chapterId: string, pageNo: number) => Promise<{ success: boolean }>;
 }
 
 export const db = (client: D1Database): Db => {
@@ -709,6 +720,81 @@ export const db = (client: D1Database): Db => {
         'SELECT started_at, status, items_scraped, duration_ms FROM scrape_jobs_log WHERE provider_account_id = ?1 AND started_at >= ?2 ORDER BY started_at ASC'
       ).bind(providerAccountId, since).all<Row>();
       return (results ?? []) as unknown as Array<{ started_at: number; status: string; items_scraped: number; duration_ms: number | null }>;
+    },
+
+    // ── Sessions (0008) — KV-free signed-cookie auth ──
+    insertSession: async (p) => {
+      try {
+        await prep(
+          'INSERT INTO sessions (sid, user_id, created_at, expires_at, ua, ip) VALUES (?1, ?2, ?3, ?4, ?5, ?6)'
+        ).bind(p.sid, p.userId, p.createdAt, p.expiresAt, p.ua ?? null, p.ip ?? null).run();
+        return { success: true };
+      } catch (e) {
+        console.error('[insertSession] failed:', String(e));
+        return { success: false };
+      }
+    },
+
+    getSession: async (sid) => {
+      const row = await prep(
+        'SELECT sid, user_id, created_at, expires_at, revoked_at, ua, ip FROM sessions WHERE sid = ?1 LIMIT 1'
+      ).bind(sid).first<Row>();
+      return fromRow(row as Row | null);
+    },
+
+    revokeSession: async (sid) => {
+      const res = await prep('UPDATE sessions SET revoked_at = ?1 WHERE sid = ?2 AND revoked_at IS NULL')
+        .bind(Math.floor(Date.now() / 1000), sid).run();
+      return { success: res.success };
+    },
+
+    listUserSessions: async (userId) => {
+      const { results } = await prep(
+        'SELECT sid, created_at, expires_at, revoked_at, ua FROM sessions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 50'
+      ).bind(userId).all<Row>();
+      return (results ?? []) as unknown as Array<{ sid: string; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null }>;
+    },
+
+    revokeAllUserSessions: async (userId, exceptSid) => {
+      const now = Math.floor(Date.now() / 1000);
+      let stmt;
+      if (exceptSid) {
+        stmt = prep('UPDATE sessions SET revoked_at = ?1 WHERE user_id = ?2 AND revoked_at IS NULL AND sid != ?3')
+          .bind(now, userId, exceptSid);
+      } else {
+        stmt = prep('UPDATE sessions SET revoked_at = ?1 WHERE user_id = ?2 AND revoked_at IS NULL')
+          .bind(now, userId);
+      }
+      const res = await stmt.run();
+      return { revoked: res.meta?.changes ?? 0 };
+    },
+
+    // ── chapter_pages.last_access (0009) — LRU eviction ──
+    touchPageLastAccess: async (chapterId, pageNo) => {
+      try {
+        await prep('UPDATE chapter_pages SET last_access = ?1 WHERE chapter_id = ?2 AND page_number = ?3')
+          .bind(Math.floor(Date.now() / 1000), chapterId, pageNo).run();
+        return { success: true };
+      } catch {
+        return { success: false };
+      }
+    },
+
+    listStalePages: async (accountIdx, staleBeforeTs, limit) => {
+      const { results } = await prep(
+        'SELECT chapter_id, page_number, r2_key, r2_account_idx, last_access FROM chapter_pages WHERE r2_account_idx = ?1 AND (last_access IS NULL OR last_access < ?2) ORDER BY last_access ASC NULLS FIRST LIMIT ?3'
+      ).bind(accountIdx, staleBeforeTs, limit).all<Row>();
+      return (results ?? []) as unknown as Array<{ chapter_id: string; page_number: number; r2_key: string; r2_account_idx: number; last_access: number | null }>;
+    },
+
+    clearPageStorage: async (chapterId, pageNo) => {
+      try {
+        await prep('UPDATE chapter_pages SET r2_key = NULL, r2_account_idx = NULL WHERE chapter_id = ?1 AND page_number = ?2')
+          .bind(chapterId, pageNo).run();
+        return { success: true };
+      } catch {
+        return { success: false };
+      }
     }
   };
 };

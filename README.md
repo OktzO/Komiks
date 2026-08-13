@@ -227,7 +227,6 @@ manga-platform/
 ### Auth (OAuth-only, password removed)
 | Method | Path | Deskripsi |
 |--------|------|-----------|
-| GET | `/api/auth/me` | Current user; `{data:null}` untuk guest. Set-Cookie: SameSite=None; Secure. |
 | POST | `/api/auth/logout` | Hapus session |
 | GET | `/api/auth/google` | Redirect ke Google OAuth consent |
 | GET | `/api/auth/google/callback` | OAuth callback → `avatar_url` dari `gUser.picture`; update `last_login_at`; auto-assign admin jika email di `ADMIN_EMAILS` |
@@ -495,7 +494,7 @@ Lihat [docs/DEPLOY.md](docs/DEPLOY.md) dan [docs/ADDING-ACCOUNT.md](docs/ADDING-
 - `GET /api/search?q=` → feed 4 source (~60 item, badge multi-source)
 - `GET /api/search?q=naruto` → hasil merged
 - `GET /api/origins` → daftar origin
-- `GET /api/auth/me` (dengan cookie session) → `{data:{id,email,role}}`
+- `GET /api/user/me` (dengan cookie session) → `{data:{id,email,role,...}}`
 - `GET /api/admin/overview` (admin session) → stats dashboard; tanpa session → 403
 - `/status` → passive health 4 source (BetterStack-style: pulse dot + relative time + latency grade)
 - `/admin/settings` → LB panel (session guard, no password step-up); tanpa session → redirect login

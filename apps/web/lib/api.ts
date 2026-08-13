@@ -2,6 +2,42 @@
 // fallback is only for local dev (wrangler dev on :8787).
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 
+// Auth API: primary akun-2, fallback akun-3, last resort akun-1 (main).
+// Sticky origin via sessionStorage — setelah login, semua /api/auth/* + /api/user/*
+// calls ikut origin yang dipilih (D1 split per-akun, data user harus konsisten).
+const AUTH_API_URL = process.env.NEXT_PUBLIC_AUTH_API_URL || API_URL;
+const AUTH_FALLBACK = process.env.NEXT_PUBLIC_AUTH_FALLBACK || API_URL;
+const AUTH_CACHE_KEY = 'auth_origin';
+const AUTH_CACHE_TTL = 60000; // 60s
+
+export async function getAuthApiUrl(): Promise<string> {
+  if (typeof sessionStorage !== 'undefined') {
+    const cached = sessionStorage.getItem(AUTH_CACHE_KEY);
+    if (cached) return cached;
+  }
+  const candidates = [AUTH_API_URL, AUTH_FALLBACK, API_URL].filter(Boolean) as string[];
+  for (const c of candidates) {
+    try {
+      const res = await fetch(`${c}/api/health`, { signal: AbortSignal.timeout(4000) });
+      if (res.ok) {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem(AUTH_CACHE_KEY, c);
+          setTimeout(() => sessionStorage.removeItem(AUTH_CACHE_KEY), AUTH_CACHE_TTL);
+        }
+        return c;
+      }
+    } catch {}
+  }
+  return API_URL; // last resort
+}
+
+// Set sticky origin after successful login (called by AuthForm post-callback).
+export function setAuthOrigin(origin: string): void {
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.setItem(AUTH_CACHE_KEY, origin);
+  }
+}
+
 export interface Series {
   slug: string;
   external_id: string;
@@ -207,7 +243,8 @@ export interface AuthUser {
 
 export const fetchMe = async (): Promise<AuthUser | null> => {
   try {
-    const res = await fetch(`${API_URL}/api/user/me`, {
+    const base = await getAuthApiUrl();
+    const res = await fetch(`${base}/api/user/me`, {
       credentials: 'include',
       cache: 'no-store',
       signal: AbortSignal.timeout(5000),
@@ -222,7 +259,8 @@ export const fetchMe = async (): Promise<AuthUser | null> => {
 
 export const logout = async (): Promise<void> => {
   try {
-    await fetch(`${API_URL}/api/auth/logout`, {
+    const base = await getAuthApiUrl();
+    await fetch(`${base}/api/auth/logout`, {
       method: 'POST',
       credentials: 'include',
       signal: AbortSignal.timeout(5000),
@@ -235,7 +273,8 @@ export const logout = async (): Promise<void> => {
 export const patchMe = async (
   patch: Partial<Pick<MeResponse, 'display_name' | 'bio' | 'preferences'>>
 ): Promise<AuthUser> => {
-  const res = await fetch(`${API_URL}/api/user/me`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}/api/user/me`, {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -251,7 +290,8 @@ export const patchMe = async (
 };
 
 export const deleteMe = async (confirm: string): Promise<void> => {
-  const res = await fetch(`${API_URL}/api/user/me`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}/api/user/me`, {
     method: 'DELETE',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -265,7 +305,8 @@ export const deleteMe = async (confirm: string): Promise<void> => {
 };
 
 export const listSessions = async (): Promise<SessionMeta[]> => {
-  const res = await fetch(`${API_URL}/api/user/sessions`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}/api/user/sessions`, {
     method: 'GET',
     credentials: 'include',
     cache: 'no-store',
@@ -277,7 +318,8 @@ export const listSessions = async (): Promise<SessionMeta[]> => {
 };
 
 export const revokeSession = async (token: string): Promise<void> => {
-  const res = await fetch(`${API_URL}/api/user/sessions/${encodeURIComponent(token)}`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}/api/user/sessions/${encodeURIComponent(token)}`, {
     method: 'DELETE',
     credentials: 'include',
     signal: AbortSignal.timeout(8000),
@@ -286,7 +328,8 @@ export const revokeSession = async (token: string): Promise<void> => {
 };
 
 export const revokeAllSessions = async (): Promise<{ revoked: number }> => {
-  const res = await fetch(`${API_URL}/api/user/sessions/revoke-all`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}/api/user/sessions/revoke-all`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -298,7 +341,8 @@ export const revokeAllSessions = async (): Promise<{ revoked: number }> => {
 };
 
 export const clearHistory = async (): Promise<{ deleted: number }> => {
-  const res = await fetch(`${API_URL}/api/user/history`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}/api/user/history`, {
     method: 'DELETE',
     credentials: 'include',
     signal: AbortSignal.timeout(10000),
@@ -309,7 +353,8 @@ export const clearHistory = async (): Promise<{ deleted: number }> => {
 };
 
 export const clearBookmarks = async (): Promise<{ deleted: number }> => {
-  const res = await fetch(`${API_URL}/api/user/bookmarks`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}/api/user/bookmarks`, {
     method: 'DELETE',
     credentials: 'include',
     signal: AbortSignal.timeout(10000),
@@ -321,7 +366,7 @@ export const clearBookmarks = async (): Promise<{ deleted: number }> => {
 
 export const getCurrentSessionToken = (): string | null => {
   if (typeof document === 'undefined') return null;
-  const m = document.cookie.match(/(?:^|;\s*)session=([^;]+)/);
+  const m = document.cookie.match(/(?:^|;\s*)__Host-session=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : null;
 };
 

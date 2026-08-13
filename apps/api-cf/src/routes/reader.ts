@@ -8,9 +8,10 @@ import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { parseR2Accounts } from '../lib/r2Accounts.ts';
 import { s3PutObject } from '../lib/s3Upload.ts';
-import { parseB2Config, type B2Config } from '../lib/b2Config.ts';
+import { parseB2Accounts, b2AccountForIdx, type B2Account } from '../lib/b2Config.ts';
 import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
+import { evictStaleStorage } from '../lib/storageEviction.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
 
@@ -140,7 +141,7 @@ const touchChapterDetailKv = async (
   source: string,
   chapterId: string,
   pageNo: number,
-  b2: B2Config | null,
+  b2Accounts: B2Account[],
   r2cfg: ReturnType<typeof r2RingFor>,
   r2Key: string,
   accountIdx: number
@@ -153,8 +154,9 @@ const touchChapterDetailKv = async (
     if (!parsed.data?.pages) return;
     const idx = pageNo - 1;
     if (idx < 0 || idx >= parsed.data.pages.length) return;
-    if (accountIdx === -1 && b2) {
-      parsed.data.pages[idx].b2Url = await b2PresignedGet(b2, r2Key).catch(() => null);
+    if (accountIdx < 0) {
+      const b2 = b2AccountForIdx(b2Accounts, accountIdx);
+      if (b2) parsed.data.pages[idx].b2Url = await b2PresignedGet(b2, r2Key).catch(() => null);
     } else if (accountIdx >= 0 && r2cfg && r2cfg.accounts[accountIdx]) {
       parsed.data.pages[idx].r2Url = `https://${r2cfg.accounts[accountIdx].public_domain}/${r2Key}`;
     }
@@ -164,14 +166,18 @@ const touchChapterDetailKv = async (
 
 // Upload gambar ke storage tier (background) + catat D1. Idempoten:
 // key sama → overwrite sama. Race 2 request paralel aman.
-// Tier: B2 (primary, r2_account_idx=-1) → R2 ring (fallback, idx akun).
-// B2 gagal → R2; keduanya gagal → response user tetap jalan (proxy only).
+// Tier: B2-A (idx=-1) → B2-B (idx=-2) → R2 ring (idx>=0).
+// Round-robin: coba B2-A dulu, kalau fail → B2-B, kalau fail → R2.
+// Semua gagal → response user tetap jalan (proxy only).
 const uploadToStorage = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
   const r2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
-  const b2 = parseB2Config(c.env.B2_CONFIG);
+  const b2Accounts = parseB2Accounts(c.env.B2_CONFIG ?? c.env.B2_ACCOUNTS);
   const cfg = r2RingFor(c);
 
-  if (b2) {
+  // Try B2 accounts in order (B2-A → B2-B → ...).
+  for (let i = 0; i < b2Accounts.length; i++) {
+    const b2 = b2Accounts[i];
+    const accountIdx = -(i + 1); // -1, -2, ...
     try {
       const res = await b2PutObject(b2, r2Key, opts.body as ArrayBuffer, opts.contentType);
       if (res.ok) {
@@ -180,19 +186,20 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
           pageNumber: opts.pageNo,
           imageUrl: opts.imageUrl,
           r2Key,
-          r2AccountIdx: -1, // B2
+          r2AccountIdx: accountIdx,
         });
-        await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2, cfg, r2Key, -1);
+        await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, cfg, r2Key, accountIdx);
         return;
       }
-      console.error(`[b2] upload ${res.status} → fallback r2: ${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}`);
+      console.error(`[b2:${b2.name}] upload ${res.status} → next tier: ${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}`);
     } catch (e) {
-      console.error(`[b2] upload failed → fallback r2: ${String(e)}`);
+      console.error(`[b2:${b2.name}] upload failed → next tier: ${String(e)}`);
     }
   }
 
+  // R2 ring fallback.
   try {
-    if (!cfg) return; // tidak ada R2 juga → proxy-only mode (old behavior)
+    if (!cfg) return; // tidak ada R2 juga → proxy-only mode
     const idx = accountFor(opts.slug, cfg.ring);
     const account = cfg.accounts[idx];
     const res = await s3PutObject(account, r2Key, opts.body, opts.contentType);
@@ -208,9 +215,9 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
       r2Key,
       r2AccountIdx: idx,
     });
-    await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2, cfg, r2Key, idx);
+    await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, cfg, r2Key, idx);
   } catch (e) {
-    console.error(`[r2] upload failed [${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}]:`, String(e)); // jangan gagalkan response user
+    console.error(`[r2] upload failed [${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}]:`, String(e));
   }
 };
 
@@ -458,7 +465,7 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     ).bind(chapterId).all<{ page_number: number; r2_key: string; r2_account_idx: number }>().catch(() => null);
     const storedByPage = new Map<number, { r2Key: string; accountIdx: number }>();
     for (const row of stored?.results ?? []) storedByPage.set(row.page_number, { r2Key: row.r2_key, accountIdx: row.r2_account_idx });
-    const b2 = c.env.B2_CONFIG ? parseB2Config(c.env.B2_CONFIG) : null;
+    const b2Accounts = parseB2Accounts(c.env.B2_CONFIG ?? c.env.B2_ACCOUNTS);
     const r2cfg = r2RingFor(c);
     const data = {
       ...chapter,
@@ -469,8 +476,9 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
         let b2Url: string | null = null;
         let r2Url: string | null = null;
         if (row) {
-          if (row.accountIdx === -1 && b2) {
-            b2Url = await b2PresignedGet(b2, row.r2Key).catch(() => null);
+          if (row.accountIdx < 0) {
+            const b2 = b2AccountForIdx(b2Accounts, row.accountIdx);
+            if (b2) b2Url = await b2PresignedGet(b2, row.r2Key).catch(() => null);
           } else if (row.accountIdx >= 0 && r2cfg && r2cfg.accounts[row.accountIdx]) {
             r2Url = `https://${r2cfg.accounts[row.accountIdx].public_domain}/${row.r2Key}`;
           }
@@ -478,6 +486,19 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
         return { proxyUrl: `${proxyBase}/${pageNo}`, b2Url, r2Url };
       })),
     };
+    // LRU touch: update last_access untuk pages yang diakses (background).
+    c.executionCtx.waitUntil((async () => {
+      for (let i = 0; i < pages.length; i++) {
+        await getDb(c).touchPageLastAccess(chapterId, i + 1).catch(() => {});
+      }
+      // Eviction trigger: every 100th chapter detail request, run LRU evict.
+      const tickRaw = await c.env.CACHE_KV.get('eviction:tick').catch(() => '0');
+      const tick = (Number(tickRaw) || 0) + 1;
+      c.executionCtx.waitUntil(c.env.CACHE_KV.put('eviction:tick', String(tick)).catch(() => {}));
+      if (tick % 100 === 0) {
+        c.executionCtx.waitUntil(evictStaleStorage(c.env).catch(() => {}));
+      }
+    })());
     cachePut(c, cacheKey, { data }, 300);
     recordHealth(c, source, start, true);
     return c.json({ data });
