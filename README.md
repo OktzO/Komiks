@@ -1,6 +1,6 @@
 # 📚 Manga Reader Platform
 
-Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source independen: Komiku, BacaKomik, Thrive, dan ManhwaIndo. Dibangun di Cloudflare: 1 Worker API (Hono) + Next.js (Pages) + D1 + KV + **Backblaze B2 (primary storage)** + R2 (fallback/legacy) + Browser binding.
+Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source independen: Komiku, BacaKomik, Thrive, dan ManhwaIndo. Dibangun di Cloudflare: **3 Worker round-robin** (akun-1 fallback + akun-2/3 primary, Hono) + Next.js (Pages) + D1 + KV + **Backblaze B2 multi-account (2 bucket round-robin)** + R2 (fallback/legacy) + Browser binding.
 
 [![Better Stack Badge](https://uptime.betterstack.com/status-badges/v1/monitor/2unt2.svg)](https://uptime.betterstack.com/?utm_source=status_badge) ![License](https://img.shields.io/badge/license-MIT-blue) ![Runtime](https://img.shields.io/badge/runtime-Cloudflare%20Workers-orange)
 
@@ -27,7 +27,7 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 - ✅ Baca manga dari 4 source (Komiku, BacaKomik, Thrive, ManhwaIndo)
 - ✅ Mode scroll (panels menyatu tanpa gap) & mode halaman
 - ✅ Lazy load + virtualized window (hanya render viewport + buffer)
-- ✅ **Storage 2-tier**: B2 primary (presigned GET 7 hari dari `s3.us-east-005.backblazeb2.com`) → R2 multi-account fallback (public domain CDN) → Worker proxy. Server `chapter detail` return `pages[{proxyUrl, b2Url?, r2Url?}]` — frontend pakai `b2Url ?? r2Url ?? proxy`. Setelah upload sukses, `touchChapterDetailKv` update KV → next request dapat URL langsung (KV TTL 300s, `chapter:detail` revalidate 60s di frontend).
+- ✅ **Storage 3-tier**: B2-A primary (presigned GET 7 hari) → B2-B spillover → R2 multi-account fallback (public domain CDN) → Worker proxy. Upload round-robin B2-A → B2-B → R2. LRU eviction: hapus objek `last_access > 30d` ketika quota > 80%. Server `chapter detail` return `pages[{proxyUrl, b2Url?, r2Url?}]` — frontend pakai `b2Url ?? r2Url ?? proxy`. Setelah upload sukses, `touchChapterDetailKv` update KV → next request dapat URL langsung.
 - ✅ Cache-aside self-healing: page diproxy → upload B2 background → request berikutnya langsung B2
 - ✅ Source lain 100% proxy (tidak pernah di-rehost)
 - ✅ Next-chapter prefetch
@@ -42,8 +42,8 @@ Platform baca manga/manhwa/manhua bahasa Indonesia yang menggabungkan 4 source i
 - ✅ Passive health: `source_health` dicatat saat user search/reader (tanpa cron)
 
 ### User (Auth: Google OAuth-only)
-- ✅ **Google OAuth-only** (password auth dihapus — sebelumnya broken karena `crypto.subtle.deriveBits` di Worker runtime). Login via tombol Google di `/login`.
-- ✅ Session di KV (TTL 7 hari, HttpOnly + SameSite=None + Secure — cross-origin workers.dev ↔ oktzz.xyz)
+- ✅ **Google OAuth-only** (password auth dihapus). Login via tombol Google di `/login`, dynamic URL via `getAuthApiUrl()` (health-check round-robin akun-2 → akun-3 → akun-1).
+- ✅ **KV-free auth**: signed HMAC cookie untuk OAuth state (nol KV.put) + signed HMAC session cookie + D1 `sessions` tabel untuk revocation. Cookie `__Host-session` HttpOnly + SameSite=None + Secure — cross-origin workers.dev ↔ oktzz.xyz. Sticky `sessionStorage('auth_origin')` setelah login.
 - ✅ Avatar dari `gUser.picture`
 - ✅ Auto-role admin via secret `ADMIN_EMAILS` (comma-separated)
 - ✅ Bookmark series + Reading history (auto-save posisi halaman)
