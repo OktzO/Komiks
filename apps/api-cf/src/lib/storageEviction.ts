@@ -8,7 +8,7 @@
 // tidak butuh Worker-side evict).
 import type { Env } from './context';
 import { db } from '@manga-platform/db';
-import { parseB2Accounts, b2AccountForIdx } from './b2Config';
+import { parseB2Accounts, b2AccountForIdx, resolveB2Accounts } from './b2Config';
 import { b2PresignedGet } from './s3Upload';
 
 const B2_QUOTA_BYTES = 10 * 1024 * 1024 * 1024; // 10GB free tier
@@ -57,7 +57,7 @@ const b2DeleteObject = async (
 export const evictStaleStorage = async (env: Env): Promise<{ evicted: number }> => {
   const evictDays = Number(env.B2_EVICTION_DAYS) || DEFAULT_EVICT_DAYS;
   const staleBeforeTs = Math.floor(Date.now() / 1000) - evictDays * 86400;
-  const b2Accounts = parseB2Accounts(env.B2_CONFIG ?? env.B2_ACCOUNTS);
+  const b2Accounts = resolveB2Accounts(env.B2_CONFIG, env.B2_ACCOUNTS);
   let totalEvicted = 0;
 
   for (let i = 0; i < b2Accounts.length; i++) {

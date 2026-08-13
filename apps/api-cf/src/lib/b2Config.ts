@@ -58,3 +58,24 @@ export const b2AccountForIdx = (accounts: B2Account[], idx: number): B2Account |
   if (arrIdx < 0 || arrIdx >= accounts.length) return null;
   return accounts[arrIdx];
 };
+
+// Merge B2_CONFIG (legacy single) + B2_ACCOUNTS (new array) into one array.
+// Dedup by keyId (B2_CONFIG entry first if not already in B2_ACCOUNTS).
+// This ensures backward-compat: akun-1 yang punya B2_CONFIG (B2 akun-1) +
+// B2_ACCOUNTS (B2 akun-2) → round-robin kedua B2 accounts.
+export const resolveB2Accounts = (
+  b2ConfigRaw: string | undefined,
+  b2AccountsRaw: string | undefined
+): B2Account[] => {
+  const configAccounts = parseB2Accounts(b2ConfigRaw); // B2_CONFIG (single → 1-item array)
+  const arrayAccounts = parseB2Accounts(b2AccountsRaw); // B2_ACCOUNTS (array)
+  // Merge: B2_CONFIG first, then B2_ACCOUNTS (skip dup by keyId).
+  const seen = new Set<string>();
+  const out: B2Account[] = [];
+  for (const a of [...configAccounts, ...arrayAccounts]) {
+    if (seen.has(a.keyId)) continue;
+    seen.add(a.keyId);
+    out.push(a);
+  }
+  return out;
+};

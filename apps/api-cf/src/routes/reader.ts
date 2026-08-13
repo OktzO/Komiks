@@ -8,7 +8,7 @@ import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { parseR2Accounts } from '../lib/r2Accounts.ts';
 import { s3PutObject } from '../lib/s3Upload.ts';
-import { parseB2Accounts, b2AccountForIdx, type B2Account } from '../lib/b2Config.ts';
+import { parseB2Accounts, b2AccountForIdx, resolveB2Accounts, type B2Account } from '../lib/b2Config.ts';
 import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
@@ -171,7 +171,7 @@ const touchChapterDetailKv = async (
 // Semua gagal → response user tetap jalan (proxy only).
 const uploadToStorage = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
   const r2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
-  const b2Accounts = parseB2Accounts(c.env.B2_CONFIG ?? c.env.B2_ACCOUNTS);
+  const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
   const cfg = r2RingFor(c);
 
   // Try B2 accounts in order (B2-A → B2-B → ...).
@@ -465,7 +465,7 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     ).bind(chapterId).all<{ page_number: number; r2_key: string; r2_account_idx: number }>().catch(() => null);
     const storedByPage = new Map<number, { r2Key: string; accountIdx: number }>();
     for (const row of stored?.results ?? []) storedByPage.set(row.page_number, { r2Key: row.r2_key, accountIdx: row.r2_account_idx });
-    const b2Accounts = parseB2Accounts(c.env.B2_CONFIG ?? c.env.B2_ACCOUNTS);
+    const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
     const r2cfg = r2RingFor(c);
     const data = {
       ...chapter,
