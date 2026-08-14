@@ -375,8 +375,12 @@ export const getCurrentSessionToken = (): string | null => {
 export const roleLabel = (role: string): string => (role === 'admin' ? 'Admin' : 'Member');
 
 // Cookie auth GET for admin monitoring endpoints (read-only, session.role===admin enforced server-side).
+// Uses getAuthApiUrl() so the session cookie is sent to the auth origin —
+// without this, admin endpoints can fail with 403/CORS when the main API_URL
+// differs from the origin that set the session cookie.
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}${path}`, {
     credentials: 'include',
     cache: 'no-store',
     signal: AbortSignal.timeout(10000),

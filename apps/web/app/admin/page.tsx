@@ -12,6 +12,38 @@ type Overview = {
   providers: { healthy: number; degraded: number; down: number };
 };
 
+// Lightweight SVG sparkline — no external chart library needed (keeps bundle
+// small, avoids CSP issues). Renders up to 30 data points as a bar chart.
+function Sparkline({ data, label }: { data: number[]; label: string }) {
+  if (data.length === 0) {
+    return (
+      <div className="admin-card p-6">
+        <p className="text-xs text-muted mb-3">{label}</p>
+        <div className="h-12 flex items-center text-xs text-muted">No data yet</div>
+      </div>
+    );
+  }
+  const max = Math.max(...data, 1);
+  return (
+    <div className="admin-card p-6">
+      <p className="text-xs text-muted mb-3">{label}</p>
+      <div className="h-16 flex items-end gap-1">
+        {data.map((v, i) => (
+          <div
+            key={i}
+            className="flex-1 bg-accent/60 rounded-sm min-w-[2px] transition-all hover:bg-accent"
+            style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
+            title={`${v}`}
+          />
+        ))}
+      </div>
+      <p className="text-xs text-muted mt-2">
+        {data.reduce((a, b) => a + b, 0)} total · last {data.length}h
+      </p>
+    </div>
+  );
+}
+
 function StatCard({ label, value, sublabel, refreshing }: { label: string; value: string; sublabel?: string; refreshing: boolean }) {
   return (
     <div className="admin-card p-4">
@@ -30,6 +62,7 @@ export default function AdminOverviewPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<Overview | null>(null);
+  const [scrapeTrend, setScrapeTrend] = useState<number[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -48,6 +81,21 @@ export default function AdminOverviewPage() {
       const res = await apiGet<{ data: Overview }>('/api/admin/overview');
       setOverview(res.data);
       setError(null);
+
+      // Fetch scrape jobs for the trend chart (last 24h, bucketed by hour).
+      try {
+        const jobsRes = await apiGet<{ data: Array<{ started_at: number; status: string }> }>('/api/admin/scrape-jobs?limit=200');
+        const jobs = jobsRes.data || [];
+        const now = Math.floor(Date.now() / 1000);
+        const buckets = new Array(24).fill(0);
+        for (const j of jobs) {
+          const hourAgo = Math.floor((now - j.started_at) / 3600);
+          if (hourAgo >= 0 && hourAgo < 24) buckets[23 - hourAgo]++;
+        }
+        setScrapeTrend(buckets);
+      } catch {
+        // Scrape trend is best-effort — overview still works without it.
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -58,7 +106,9 @@ export default function AdminOverviewPage() {
   useEffect(() => {
     if (user?.role === 'admin') {
       loadOverview();
-      const interval = setInterval(loadOverview, 12000);
+      // 30s refresh — less aggressive than 12s, reduces KV/API load while
+      // still feeling live. The status dot still pulses to show activity.
+      const interval = setInterval(loadOverview, 30000);
       return () => clearInterval(interval);
     }
   }, [user, loadOverview]);
@@ -136,15 +186,7 @@ export default function AdminOverviewPage() {
         </Link>
       </nav>
 
-      <div className="admin-card p-6">
-        <p className="text-xs text-muted mb-3">Scrape runs · 7d trend</p>
-        <div className="h-12 flex items-end gap-1">
-          {[...Array(7)].map((_, i) => (
-            <div key={i} className="flex-1 bg-border-subtle rounded-sm" style={{ height: `${20 + ((i * 13) % 60)}%` }} />
-          ))}
-        </div>
-        <p className="text-xs text-muted mt-2">Quiet sparkline — real data pending scraper hooks</p>
-      </div>
+      <Sparkline data={scrapeTrend} label="Scrape runs · 24h trend" />
     </main>
   );
 }

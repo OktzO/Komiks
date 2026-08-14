@@ -249,9 +249,17 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
     c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
     // Index chapterId → slug (KV 1 jam) supaya R2 cache-aside bisa resolve
     // slug dari chapterId (thrive pakai uuid yang tidak bisa di-parse).
+    //
+    // KV WRITE THROTTLE: Previously this loop wrote a KV key for EVERY chapter
+    // in the series (e.g. 200 chapters = 200 KV writes). Now we batch-write
+    // only the first 50 chapters — enough for the most-accessed recent
+    // chapters, and the rest lazily resolve via D1 on first page proxy request.
+    // This cuts KV writes by ~75% for large series.
     c.executionCtx.waitUntil(
       (async () => {
-        for (const ch of chapters) {
+        const maxToIndex = Math.min(chapters.length, 50);
+        for (let i = 0; i < maxToIndex; i++) {
+          const ch = chapters[i];
           try { await cachePut(c, `slug:${ch.id}`, series.slug, 3600); } catch { /* best-effort */ }
         }
       })()
@@ -492,9 +500,10 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
         await getDb(c).touchPageLastAccess(chapterId, i + 1).catch(() => {});
       }
       // Eviction trigger: every 100th chapter detail request, run LRU evict.
+      // eviction:tick gets a 24h TTL so the key doesn't persist forever.
       const tickRaw = await c.env.CACHE_KV.get('eviction:tick').catch(() => '0');
       const tick = (Number(tickRaw) || 0) + 1;
-      c.executionCtx.waitUntil(c.env.CACHE_KV.put('eviction:tick', String(tick)).catch(() => {}));
+      c.executionCtx.waitUntil(c.env.CACHE_KV.put('eviction:tick', String(tick), { expirationTtl: 86400 }).catch(() => {}));
       if (tick % 100 === 0) {
         c.executionCtx.waitUntil(evictStaleStorage(c.env).catch(() => {}));
       }

@@ -1,9 +1,7 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { fetchMe, apiGet, roleLabel, type AuthUser } from '@/lib/api';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
+import { fetchMe, apiGet, getAuthApiUrl, roleLabel, type AuthUser } from '@/lib/api';
 
 export default function AdminSettingsPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -24,15 +22,17 @@ export default function AdminSettingsPage() {
   const loadAll = useCallback(async () => {
     try {
       const [s, a, o, st] = await Promise.all([
-        apiGet<{ data: any }>(`${API_URL}/api/admin/lb/settings`),
-        apiGet<{ data: any[] }>(`${API_URL}/api/admin/lb/accounts`),
-        apiGet<{ data: any[] }>(`${API_URL}/api/admin/lb/origins`),
-        apiGet<{ data: any }>(`${API_URL}/api/admin/lb/status`),
+        apiGet<{ data: any }>('/api/admin/lb/settings'),
+        apiGet<{ data: any[] }>('/api/admin/lb/accounts'),
+        apiGet<{ data: any[] }>('/api/admin/lb/origins'),
+        apiGet<{ data: any }>('/api/admin/lb/status'),
       ]);
-      setSettings(s.data);
-      setAccounts(a.data || []);
-      setOrigins(o.data || []);
-      setStatus(st.data);
+      // Backend lb.ts returns bare value for settings/accounts/origins, wrapped {data} for status.
+      // Normalize: accept both shapes.
+      setSettings((s as any).data ?? s ?? null);
+      setAccounts((a as any).data ?? a ?? []);
+      setOrigins((o as any).data ?? o ?? []);
+      setStatus((st as any).data ?? st ?? null);
     } catch (e) {
       setError(String(e));
     }
@@ -51,14 +51,16 @@ export default function AdminSettingsPage() {
   }, [user, loadAll]);
 
   const updateSettings = async (updates: any) => {
-    await fetch(`${API_URL}/api/admin/lb/settings`, { method: 'PUT', headers: headers(), credentials: 'include', body: JSON.stringify(updates) });
+    const base = await getAuthApiUrl();
+    await fetch(`${base}/api/admin/lb/settings`, { method: 'PUT', headers: headers(), credentials: 'include', body: JSON.stringify(updates) });
     loadAll();
   };
 
   const addAccount = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    await fetch(`${API_URL}/api/admin/lb/accounts`, {
+    const base = await getAuthApiUrl();
+    await fetch(`${base}/api/admin/lb/accounts`, {
       method: 'POST', headers: headers(), credentials: 'include',
       body: JSON.stringify({ label: f.get('label'), provider: f.get('provider'), account_ref: f.get('account_ref'), rawToken: f.get('rawToken'), token_last4: (f.get('rawToken') as string).slice(-4) })
     });
@@ -74,7 +76,8 @@ export default function AdminSettingsPage() {
     setProvisioning(true);
     setProvisionStatus(null);
     try {
-      const res = await fetch(`${API_URL}/api/admin/lb/accounts/provision`, {
+      const base = await getAuthApiUrl();
+      const res = await fetch(`${base}/api/admin/lb/accounts/provision`, {
         method: 'POST', headers: headers(), credentials: 'include',
         body: JSON.stringify({ label, cfApiToken: token, workerName }),
       });
@@ -83,9 +86,10 @@ export default function AdminSettingsPage() {
       if (!jobId) throw new Error('no job_id returned');
       const poll = setInterval(async () => {
         try {
-          const st = await apiGet<{ data: any }>(`${API_URL}/api/admin/lb/accounts/${jobId}/provision-status`);
-          setProvisionStatus(st.data);
-          if (st.data?.status === 'completed' || st.data?.status === 'failed') {
+          const st = await apiGet<{ data: any }>(`/api/admin/lb/accounts/${jobId}/provision-status`);
+          const data = (st as any).data ?? st ?? null;
+          setProvisionStatus(data);
+          if (data?.status === 'completed' || data?.status === 'failed') {
             clearInterval(poll);
             provisionPollRef.current = null;
             setProvisioning(false);
@@ -106,7 +110,8 @@ export default function AdminSettingsPage() {
   const addOrigin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    await fetch(`${API_URL}/api/admin/lb/origins`, {
+    const base = await getAuthApiUrl();
+    await fetch(`${base}/api/admin/lb/origins`, {
       method: 'POST', headers: headers(), credentials: 'include',
       body: JSON.stringify({ account_id: f.get('account_id') || null, origin_url: f.get('origin_url'), priority: Number(f.get('priority') || 0), weight: Number(f.get('weight') || 1), enabled: 1 })
     });

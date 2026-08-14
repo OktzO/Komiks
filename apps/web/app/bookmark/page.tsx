@@ -2,8 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MangaCard } from '@/components/MangaCard';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
+import { getAuthApiUrl } from '@/lib/api';
 
 type BookmarkRow = { slug: string; title: string | null; cover_image: string | null; external_id: string | null };
 
@@ -15,7 +14,8 @@ export default function BookmarksPage() {
     let alive = true;
     (async () => {
       try {
-        const r = await fetch(`${API_URL}/api/user/bookmarks`, { credentials: 'include', signal: AbortSignal.timeout(8000) });
+        const base = await getAuthApiUrl();
+        const r = await fetch(`${base}/api/user/bookmarks`, { credentials: 'include', signal: AbortSignal.timeout(8000) });
         if (r.status === 401) { if (alive) setError('guest'); return; }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = await r.json();

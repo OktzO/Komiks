@@ -96,7 +96,8 @@ export default function AdminMonitoringPage() {
   useEffect(() => {
     if (user?.role === 'admin') {
       loadAll();
-      const interval = setInterval(loadAll, 12000);
+      // 30s refresh — less aggressive than 12s, reduces API/KV load.
+      const interval = setInterval(loadAll, 30000);
       return () => clearInterval(interval);
     }
   }, [user, loadAll]);

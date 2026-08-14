@@ -24,9 +24,11 @@ export const trackWriteSize = async (
     const perTable = current?.per_table ?? {};
     perTable[table] = (perTable[table] ?? 0) + bytes;
     const overflow = bytes0 > OVERFLOW_THRESHOLD_BYTES;
-    await c.env.CACHE_KV.put(USAGE_KEY, JSON.stringify({ bytes: bytes0, per_table: perTable }));
+    // TTL 7 days — usage data is advisory, no need to persist forever.
+    await c.env.CACHE_KV.put(USAGE_KEY, JSON.stringify({ bytes: bytes0, per_table: perTable }), { expirationTtl: 604800 });
     if (overflow) {
-      await c.env.CACHE_KV.put(OVERFLOW_FLAG_KEY, JSON.stringify({ at: Date.now(), bytes: bytes0 }));
+      // TTL 7 days for overflow flag as well.
+      await c.env.CACHE_KV.put(OVERFLOW_FLAG_KEY, JSON.stringify({ at: Date.now(), bytes: bytes0 }), { expirationTtl: 604800 });
     }
     return { overflow, total: bytes0 };
   } catch {
