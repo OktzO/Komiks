@@ -134,23 +134,8 @@ export const provisionAccount = async (env: ProvisionEnv, input: ProvisionInput)
     });
     const kvId = kvRes.result.id;
 
-    // 7. Create R2 bucket (optional — skip if R2 not enabled on account)
-    let r2BucketName: string | null = null;
-    await setJob(env, jobId, { status: 'creating_r2', step: 'create R2', accountId, databaseId, kvId });
-    try {
-      r2BucketName = `manga-assets-${crypto.randomUUID().slice(0, 8)}`;
-      await cfFetch(input.cfApiToken, `/accounts/${accountId}/r2/buckets/${r2BucketName}`, {
-        method: 'PUT',
-      });
-    } catch (r2Err) {
-      // R2 not enabled — skip, Worker can run without R2 (identify/scrape cover optional)
-      r2BucketName = null;
-      console.log('[provision] R2 skipped:', String(r2Err));
-    }
-
-    // 8. Deploy Worker — upload bundle (ESM module + metadata).
-    // Bindings now include ASSETS_R2 + MY_BROWSER so auto-provisioned workers
-    // can run /api/identify (R2) and reader image-proxy paths.
+    // 7. Deploy Worker — upload bundle (ESM module + metadata).
+    // Bindings include D1 + CACHE_KV + MY_BROWSER.
     await setJob(env, jobId, { status: 'deploying', step: 'upload worker', accountId, databaseId, kvId });
     const workerBundle = await getWorkerBundle(env);
     const bindings: Array<Record<string, unknown>> = [
@@ -160,9 +145,6 @@ export const provisionAccount = async (env: ProvisionEnv, input: ProvisionInput)
       // any code path that touches MY_BROWSER does not crash with undefined binding.
       { type: 'browser', name: 'MY_BROWSER' },
     ];
-    if (r2BucketName) {
-      bindings.push({ type: 'r2_bucket', name: 'ASSETS_R2', bucket_name: r2BucketName });
-    }
     const metadata = {
       main_module: 'index.js',
       bindings,
