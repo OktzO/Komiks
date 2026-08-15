@@ -75,8 +75,9 @@ async function requireSession(c: Context, next: () => Promise<void>) {
   await next();
 }
 
-router.use('/bookmark', requireSession, rateLimitMutate);
-router.use('/bookmark/:slug', requireSession, rateLimitMutate);
+router.post('/bookmark', requireSession, rateLimitMutate);
+router.get('/bookmark/:slug', requireSession);
+router.delete('/bookmark/:slug', requireSession, rateLimitMutate);
 router.get('/bookmarks', requireSession);
 router.delete('/bookmarks', requireSession, rateLimitMutate);
 router.use('/history', requireSession);
