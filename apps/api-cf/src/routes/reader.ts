@@ -178,12 +178,12 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
     try {
       const res = await b2PutObject(b2, b2Key, opts.body as ArrayBuffer, opts.contentType);
       if (res.ok) {
-        await getDb(c).markPageR2Uploaded({
+        await getDb(c).markPageB2Uploaded({
           chapterId: opts.chapterId,
           pageNumber: opts.pageNo,
           imageUrl: opts.imageUrl,
-          r2Key: b2Key,
-          r2AccountIdx: accountIdx,
+          b2Key,
+          b2AccountIdx: accountIdx,
         });
         await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, b2Key, accountIdx);
         return;

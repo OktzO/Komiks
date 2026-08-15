@@ -25,8 +25,7 @@ export interface Db {
   listSeries: (params: { genre?: string; page?: number; limit?: number }) => Promise<ListResult<Series>>;
   getChapter: (chapterId: string) => Promise<Result<Chapter>>;
   listChapterPages: (chapterId: string) => Promise<ListResult<ChapterPage>>;
-  markPageR2Uploaded: (params: { chapterId: string; pageNumber: number; imageUrl: string; r2Key: string; r2AccountIdx: number }) => Promise<{ success: boolean }>;
-  touchLastAccess: (params: { r2Keys: string[]; accountIdx: number }) => Promise<{ success: boolean }>;
+  markPageB2Uploaded: (params: { chapterId: string; pageNumber: number; imageUrl: string; b2Key: string; b2AccountIdx: number }) => Promise<{ success: boolean }>;
   incrementLbUsage: (params: { originUrl: string; dateKey: string }) => Promise<{ success: boolean }>;
   listLbUsage: (dateKey: string) => Promise<Array<{ origin_url: string; req_count: number }>>;
   searchSeries: (query: string) => Promise<ListResult<Series>>;
@@ -146,30 +145,19 @@ export const db = (client: D1Database): Db => {
       return (results ?? []) as unknown as ListResult<ChapterPage>;
     },
 
-    markPageR2Uploaded: async (p) => {
+    markPageB2Uploaded: async (p) => {
       // chapter_id FK di-relax (migration 0007) — cache-aside upload marker
       // boleh ada walau chapter row belum ada di D1 chapters.
       try {
         await prep(`INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
           VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`)
-          .bind(p.chapterId, p.pageNumber, p.imageUrl, p.r2Key, p.r2AccountIdx).run();
+          .bind(p.chapterId, p.pageNumber, p.imageUrl, p.b2Key, p.b2AccountIdx).run();
         return { success: true };
       } catch (e) {
-        console.error('[markPageR2Uploaded] failed:', String(e));
+        console.error('[markPageB2Uploaded] failed:', String(e));
         return { success: false };
       }
-    },
-
-    touchLastAccess: async (p) => {
-      const now = Date.now();
-      const stmts = p.r2Keys.map((k) =>
-        prep(`INSERT INTO r2_last_access (r2_key, account_idx, last_viewed, created_at) VALUES (?, ?, ?, ?)
-          ON CONFLICT(r2_key) DO UPDATE SET last_viewed = excluded.last_viewed, account_idx = excluded.account_idx`)
-          .bind(k, p.accountIdx, now, now)
-      );
-      if (stmts.length > 0) await client.batch(stmts);
-      return { success: true };
     },
 
     incrementLbUsage: async (p) => {
