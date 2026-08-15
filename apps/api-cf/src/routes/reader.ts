@@ -8,7 +8,7 @@ import type { Env, Context } from '../lib/context';
 import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
-import { resolveB2Accounts, type B2Account } from '../lib/b2Config.ts';
+import { resolveB2Accounts, pickB2AccountIdx, type B2Account } from '../lib/b2Config.ts';
 import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
@@ -165,14 +165,17 @@ const b2AccountByIdx = (b2Accounts: B2Account[], accountIdx: number): B2Account 
 
 // Upload gambar ke B2 storage tier (background) + catat D1. Idempoten:
 // key sama → overwrite sama. Race 2 request paralel aman.
-// Tier: B2-A (idx=-1) → B2-B (idx=-2) → ... → proxy-only mode.
+// Hash-pick → mulai dari akun itu; gagal → fallback ke akun lain (wrapping).
 // R2 path removed per projek: semua asset ke B2.
 const uploadToStorage = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
   const b2Key = b2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
   const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
 
-  // Coba tiap B2 account berurutan (B2-A → B2-B → ...).
-  for (let i = 0; i < b2Accounts.length; i++) {
+  // Hash pick → start at that account; on failure fall back to the others
+  // (wrapping) instead of a fixed ordered chain.
+  const startIdx = pickB2AccountIdx(b2Accounts, b2Key);
+  for (let k = 0; k < b2Accounts.length; k++) {
+    const i = (startIdx + k) % b2Accounts.length;
     const b2 = b2Accounts[i];
     const accountIdx = -(i + 1); // -1, -2, ... → B2 account index
     try {

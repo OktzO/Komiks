@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { identifyImage } from '@manga-platform/vision';
 import type { Env, Context } from '../lib/context';
 import { getDb, json, sha256Hex } from '../lib/context';
-import { resolveB2Accounts, type B2Account } from '../lib/b2Config.ts';
+import { resolveB2Accounts, pickB2Account, type B2Account } from '../lib/b2Config.ts';
 import { b2PutObject } from '../lib/s3Upload.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
@@ -56,7 +56,8 @@ router.post('/identify', async (c: Context) => {
   const b2Accounts = getB2Accounts(c.env);
   if (b2Accounts.length > 0) {
     const arrBuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    c.executionCtx.waitUntil(b2PutObject(b2Accounts[0], uploadKey, arrBuf, file.type).catch(() => {}));
+    const b2 = pickB2Account(b2Accounts, uploadKey);
+    if (b2) c.executionCtx.waitUntil(b2PutObject(b2, uploadKey, arrBuf, file.type).catch(() => {}));
   }
 
   const allHashes = await getHashSet(c);

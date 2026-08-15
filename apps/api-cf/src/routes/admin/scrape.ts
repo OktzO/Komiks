@@ -4,7 +4,7 @@ import type { Env, Context } from '../../lib/context';
 import { getDb, json } from '../../lib/context';
 import { requireAdminKey } from '../../lib/auth';
 import { retryUpstream } from '../../lib/retry';
-import { resolveB2Accounts } from '../../lib/b2Config.ts';
+import { resolveB2Accounts, pickB2Account } from '../../lib/b2Config.ts';
 import { b2PutObject } from '../../lib/s3Upload.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
@@ -167,7 +167,8 @@ router.post('/scrape', requireAdminKey, async (c: Context) => {
             const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
             if (b2Accounts.length > 0) {
               const arrBuf = imgBytes.buffer.slice(imgBytes.byteOffset, imgBytes.byteOffset + imgBytes.byteLength) as ArrayBuffer;
-              await b2PutObject(b2Accounts[0], b2Key, arrBuf, ct).catch((e) => { console.error('[scrape] cover upload failed:', String(e)); });
+              const b2 = pickB2Account(b2Accounts, b2Key);
+              if (b2) await b2PutObject(b2, b2Key, arrBuf, ct).catch((e) => { console.error('[scrape] cover upload failed:', String(e)); });
             }
             const { hashImage } = await import('@manga-platform/vision');
             const hash = await hashImage(imgBytes, ct);
