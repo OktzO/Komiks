@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { getAdapter, type AdapterEnv } from '@manga-platform/sources';
 import type { Series, Chapter } from '@manga-platform/shared';
-import { r2KeyFor } from '@manga-platform/shared/r2-routing';
+import { b2KeyFor } from '@manga-platform/shared/r2-routing';
 import { drainResponse } from '@manga-platform/shared/http';
 import { getDb } from '../lib/context';
 import type { Env, Context } from '../lib/context';
@@ -168,7 +168,7 @@ const b2AccountByIdx = (b2Accounts: B2Account[], accountIdx: number): B2Account 
 // Tier: B2-A (idx=-1) → B2-B (idx=-2) → ... → proxy-only mode.
 // R2 path removed per projek: semua asset ke B2.
 const uploadToStorage = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
-  const b2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
+  const b2Key = b2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
   const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
 
   // Coba tiap B2 account berurutan (B2-A → B2-B → ...).

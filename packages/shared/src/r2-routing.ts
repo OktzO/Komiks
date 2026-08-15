@@ -1,11 +1,7 @@
-// R2 multi-account routing — satu sumber kebenaran untuk hash, dipakai oleh
-// scraper Worker (apps/api-cf) DAN frontend Pages (apps/web). JANGAN
-// re-implement di sisi lain; import dari sini agar tidak drift.
-
-export interface RingNode {
-  pos: number;
-  accountIndex: number;
-}
+// B2 multi-account routing — satu sumber kebenaran untuk hash, dipakai oleh
+// scraper Worker (apps/api-cf). JANGAN re-implement di sisi lain; import dari
+// sini agar tidak drift. Frontend tidak perlu hash routing lagi (B2 presigned
+// langsung dari Worker), jadi tidak di-import dari apps/web.
 
 // MurmurHash3 x86_32, pure JS, tanpa dependency. Deterministik lintas runtime
 // (Worker + browser). seed default 0.
@@ -46,66 +42,8 @@ export function murmur3_32(key: string, seed = 0): number {
   return h >>> 0;
 }
 
-// Consistent hashing ring: tiap akun diwakili `vnodes` titik di ring 2^32.
-// Trade-off vs modulo polos: nambah/kurang akun cuma meremap key antara node
-// baru dan tetangganya (~1/N bagian), bukan hampir semua. Harga: sedikit CPU
-// + distribusi bergantung vnodes (semakin besar semakin merata, makin besar
-// juga struktur ring).
-export function buildRing(accounts: readonly string[], vnodes = 32): RingNode[] {
-  if (accounts.length === 0) throw new Error('no accounts configured');
-  const ring: RingNode[] = [];
-  for (let a = 0; a < accounts.length; a++) {
-    for (let v = 0; v < vnodes; v++) {
-      ring.push({ pos: murmur3_32(`${accounts[a]}#${v}`), accountIndex: a });
-    }
-  }
-  return ring.sort((x, y) => x.pos - y.pos);
-}
-
-// Key → index akun. Bangun ring sekali per request/halaman, lalu panggil ini
-// per key — jangan panggil buildRing per key (O(N·vnodes·log) per call).
-export function accountFor(key: string, ring: RingNode[]): number {
-  if (ring.length === 0) throw new Error('empty ring');
-  const h = murmur3_32(key);
-  // Binary search node pertama >= h; wrap ke node pertama kalau lewat ujung.
-  let lo = 0;
-  let hi = ring.length - 1;
-  let found = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (ring[mid].pos >= h) {
-      found = mid;
-      hi = mid - 1;
-    } else {
-      lo = mid + 1;
-    }
-  }
-  return ring[found === -1 ? 0 : found].accountIndex;
-}
-
 // Key deterministik per source: {source}/{slug}/{chapterId}/{pageNo}.
 // Format komiku lama (`komiku/{slug}/...`) identik — kompatibel penuh,
-// key R2 existing tetap valid. Hash ring tetap dari slug (akun mapping
-// per series tidak berubah saat source bertambah).
-export const r2KeyFor = (source: string, slug: string, chapterId: string, pageNo: number): string =>
+// key existing tetap valid.
+export const b2KeyFor = (source: string, slug: string, chapterId: string, pageNo: number): string =>
   `${source}/${slug}/${chapterId}/${pageNo}`;
-
-// Utilitas migrasi manual: daftar key yang pindah akun saat jumlah akun
-// berubah. Jalankan offline (script), bukan runtime. Key yang pindah akan
-// di-re-fetch otomatis via cache-aside — tidak perlu aksi manual.
-export function generateRemapReport(
-  keys: readonly string[],
-  oldAccounts: readonly string[],
-  newAccounts: readonly string[],
-  vnodes = 32
-): Array<{ key: string; from: number; to: number }> {
-  const oldRing = buildRing(oldAccounts, vnodes);
-  const newRing = buildRing(newAccounts, vnodes);
-  const report: Array<{ key: string; from: number; to: number }> = [];
-  for (const key of keys) {
-    const from = accountFor(key, oldRing);
-    const to = accountFor(key, newRing);
-    if (from !== to) report.push({ key, from, to });
-  }
-  return report;
-}
