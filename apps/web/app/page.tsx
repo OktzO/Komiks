@@ -3,7 +3,6 @@ import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
 import { TypeBadge } from '@/components/TypeBadge';
 import { SourceBadge, sourceLabel, SOURCE_ORDER } from '@/components/SourceBadge';
-import { BookmarkButton } from '@/components/BookmarkButton';
 import { HomeSkeleton } from '@/components/Skeleton';
 import { Suspense } from 'react';
 import Link from 'next/link';
@@ -81,7 +80,6 @@ async function HomeFeed() {
                   source={source}
                   sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]}
                   type={item.type}
-                  bookmarkable
                 />
               </Link>
             );
@@ -119,11 +117,8 @@ async function HomeFeed() {
                       {item.status && <span className="text-[11px] text-muted capitalize">{item.status}</span>}
                     </div>
                   </div>
-                   <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
-                   <div className="absolute top-1.5 right-1.5 z-10">
-                     <BookmarkButton slug={item.slug} size="sm" />
-                   </div>
-                 </Link>
+                    <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
+                  </Link>
               );
             })}
           </div>

@@ -3,16 +3,14 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAuthApiUrl } from '@/lib/api';
 
-// Bookmark toggle — kotak kecil persegi (border putih, bg hitam) di toolbox.
-// Guest: GET status → 401 → tombol tampil, aksi redirect login.
-// Uses getAuthApiUrl() so the session cookie (set by the auth origin) is sent
-// to the correct Worker. Without this, bookmark add/remove can fail silently
-// when the main API_URL origin differs from the auth origin.
+// Bookmark toggle — small black box per manga tile (reader + detail pages).
+// Login is detected via GET /me (guest-friendly: 200 + {data:null}); only the
+// mutating POST/DELETE bookmark endpoints are rate-limited + session-guarded.
 export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm' | 'md' }) {
   const router = useRouter();
   const [on, setOn] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [guest, setGuest] = useState(true);
+  const [signedIn, setSignedIn] = useState(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -20,79 +18,50 @@ export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm
     (async () => {
       try {
         const base = await getAuthApiUrl();
-        const r = await fetch(`${base}/api/user/bookmark/${encodeURIComponent(slug)}`, {
+        const r = await fetch(`${base}/api/user/me`, {
           credentials: 'include',
           signal: AbortSignal.timeout(8000),
         });
-        if (r.status === 401) return; // guest
-        const j = r.ok ? await r.json() : null;
-        if (alive && j?.data) { setGuest(false); setOn(!!j.data.bookmarked); }
+        if (!r.ok) return; // treat as guest
+        const j = await r.json();
+        if (alive) setSignedIn(!!j?.data);
       } catch {
-        // best-effort — tombol tetap tampil, aksi akan redirect ke login
+        // offline / blocked — treat as guest, actions will redirect to login
       }
     })();
     return () => { alive = false };
-  }, [slug]);
+  }, []);
 
   const dim = size === 'sm' ? 'h-9 w-9' : 'h-11 w-11';
   const iconSize = size === 'sm' ? 14 : 18;
 
   const toggle = async () => {
     if (busy) return;
-    if (guest) { router.push('/login'); return; }
+    if (!signedIn) { router.push('/login'); return; }
     setBusy(true);
     const prev = on;
     setOn(!prev); // optimistic
     try {
       const base = await getAuthApiUrl();
-      const r = prev
-        ? await fetch(`${base}/api/user/bookmark/${encodeURIComponent(slug)}`, { method: 'DELETE', credentials: 'include' })
-        : await fetch(`${base}/api/user/bookmark`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ seriesSlug: slug }),
-          });
-      if (r.status === 401) { setOn(false); router.push('/login'); return; }
-      if (!r.ok) {
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
-        try {
-          const r2 = prev
-            ? await fetch(`${API_URL}/api/user/bookmark/${encodeURIComponent(slug)}`, { method: 'DELETE', credentials: 'include', signal: AbortSignal.timeout(8000) })
-            : await fetch(`${API_URL}/api/user/bookmark`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ seriesSlug: slug }),
-                signal: AbortSignal.timeout(8000),
-              });
-          if (r2.status === 401) { setOn(false); router.push('/login'); return; }
-          if (!r2.ok) { setOn(prev); setFailed(true); setTimeout(() => setFailed(false), 1500); }
-        } catch {
-          setOn(prev);
-          setFailed(true);
-          setTimeout(() => setFailed(false), 1500);
-        }
-      }
-    } catch {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
-      try {
-        const r2 = prev
-          ? await fetch(`${API_URL}/api/user/bookmark/${encodeURIComponent(slug)}`, { method: 'DELETE', credentials: 'include', signal: AbortSignal.timeout(8000) })
-          : await fetch(`${API_URL}/api/user/bookmark`, {
+      const r =
+        prev
+          ? await fetch(`${base}/api/user/bookmark/${encodeURIComponent(slug)}`, {
+              method: 'DELETE',
+              credentials: 'include',
+              signal: AbortSignal.timeout(8000),
+            })
+          : await fetch(`${base}/api/user/bookmark`, {
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ seriesSlug: slug }),
-              signal: AbortSignal.timeout(8000),
             });
-        if (r2.status === 401) { setOn(false); router.push('/login'); return; }
-        if (!r2.ok) { setOn(prev); setFailed(true); setTimeout(() => setFailed(false), 1500); }
-      } catch {
-        setOn(prev);
-        setFailed(true);
-        setTimeout(() => setFailed(false), 1500);
-      }
+      if (r.status === 401) { setOn(false); router.push('/login'); return; }
+      if (!r.ok) { setOn(prev); setFailed(true); setTimeout(() => setFailed(false), 1500); }
+    } catch {
+      setOn(prev);
+      setFailed(true);
+      setTimeout(() => setFailed(false), 1500);
     } finally {
       setBusy(false);
     }

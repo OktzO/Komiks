@@ -6,32 +6,24 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787
 // Sticky origin via sessionStorage — setelah login, semua /api/auth/* + /api/user/*
 // calls ikut origin yang dipilih (D1 split per-akun, data user harus konsisten).
 const AUTH_API_URL = process.env.NEXT_PUBLIC_AUTH_API_URL || API_URL;
-const AUTH_FALLBACK = process.env.NEXT_PUBLIC_AUTH_FALLBACK || API_URL;
 const AUTH_CACHE_KEY = 'auth_origin';
-const AUTH_CACHE_TTL = 60000; // 60s
 
 export async function getAuthApiUrl(): Promise<string> {
   if (typeof sessionStorage !== 'undefined') {
     const cached = sessionStorage.getItem(AUTH_CACHE_KEY);
     if (cached) return cached;
   }
-  const candidates = [AUTH_API_URL, AUTH_FALLBACK, API_URL].filter(Boolean) as string[];
-  for (const c of candidates) {
-    try {
-      const res = await fetch(`${c}/api/health`, { signal: AbortSignal.timeout(4000) });
-      if (res.ok) {
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.setItem(AUTH_CACHE_KEY, c);
-          setTimeout(() => sessionStorage.removeItem(AUTH_CACHE_KEY), AUTH_CACHE_TTL);
-        }
-        return c;
-      }
-    } catch {}
-  }
-  return API_URL; // last resort
+  const candidate = AUTH_API_URL || API_URL;
+  try {
+    const res = await fetch(`${candidate}/api/health`, { signal: AbortSignal.timeout(4000) });
+    if (res.ok) return candidate;
+  } catch {}
+  return candidate;
 }
 
 // Set sticky origin after successful login (called by AuthForm post-callback).
+// MUST be called immediately after login so subsequent bookmark/me calls hit the
+// cookie-bearing origin (avoids cross-origin cookie 401 + D1-split inconsistency).
 export function setAuthOrigin(origin: string): void {
   if (typeof sessionStorage !== 'undefined') {
     sessionStorage.setItem(AUTH_CACHE_KEY, origin);
@@ -69,7 +61,7 @@ export interface Chapter {
 // triggering a 502 when the Worker API is slow on cold KV cache.
 async function api<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
-    next: { revalidate: 60 },
+    cache: "no-store",
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
@@ -123,7 +115,7 @@ export interface SourceStatus {
 async function dataApi<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${DATA_API_URL}${path}`, {
     ...init,
-    next: { revalidate: 60 },
+    cache: "no-store",
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`Data API ${path} → ${res.status}`);
@@ -172,7 +164,7 @@ export const getOrigins = async (): Promise<{ url: string }[]> => {
   try {
     const res = await fetch(`${API_URL}/api/origins`, {
       signal: AbortSignal.timeout(8000),
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (!res.ok) return [];
     const json = await res.json() as { data: { url: string }[] };
