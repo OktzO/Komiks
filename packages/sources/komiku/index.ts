@@ -2,9 +2,9 @@
 // Komiku adapter: PRIMARY source. Fetches HTML directly from komiku.org (no Puppeteer).
 // Komiku site returns server-rendered HTML — parsing via regex avoids browser rendering rate limits.
 import type { Series, Chapter } from '@manga-platform/shared';
-import { drainResponse } from '@manga-platform/shared/http';
+import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { KOMIKU_SELECTORS } from './selectors.js';
-import { fetchRobots, isPathAllowed, KOMIKU_BASE } from './client.js';
+import { fetchRobots, isPathAllowed, KOMIKU_BASE, KOMIKU_UA, KOMIKU_REFERER } from './client.js';
 import type { RobotsResult } from './client.js';
 
 export interface AdapterEnv {
@@ -35,12 +35,16 @@ const parseSearchHtml = (html: string, _sel: typeof KOMIKU_SELECTORS.search): Se
     const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
     const href = hrefMatch ? hrefMatch[1] : '';
     const slug = href.split('/').filter(Boolean).pop() ?? '';
+    // Komiku ships a `?resize=450,235` query on cover thumbnails, forcing
+    // landscape (1.91:1) art into what our 3:4 portrait grid expects. Strip
+    // it so the upstream returns the original portrait thumbnail (≈2:3).
+    const cover_image = sanitizeCoverUrl(imgMatch?.[1] ?? null);
     return {
       slug: slug || slugify(titleMatch?.[1]?.trim() ?? ''),
       title: titleMatch?.[1]?.trim() ?? '',
       source: 'komiku',
       source_url: href.startsWith('http') ? href : KOMIKU_BASE + href,
-      cover_image: imgMatch?.[1] ?? null,
+      cover_image,
       type,
       status: 'ongoing',
     } as Series;
@@ -56,7 +60,16 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
   const synopsis = html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/p>/)?.[1]?.replace(/<[^>]+>/g, '').trim()
     ?? html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/div>/)?.[1]?.replace(/<[^>]+>/g, '').trim()
     ?? null;
-  const cover = html.match(/itemprop="image"[^>]*src="([^"]+)"/)?.[1] ?? null;
+  // og:image is the most reliable cover source on Komiku manga pages — it
+  // serves the full portrait art (`?w=1200`), unlike the lazy `itemprop=image`
+  // attribute which often returns empty (itemscope-only) and forces a fallback
+  // to the cropped landscape search thumbnail. Strip the `?resize=...` query
+  // for the same reason as parseSearchHtml.
+  const coverRaw =
+    html.match(/property="og:image"\s+content="([^"]+)"/)?.[1]
+    ?? html.match(/itemprop="image"[^>]*src="([^"]+)"/)?.[1]
+    ?? null;
+  const cover = sanitizeCoverUrl(coverRaw);
   // Info table: <td>Author:</td><td>Masashi Kishimoto</td>
   const tds = Array.from(html.matchAll(/<td[^>]*>([^<]*)<\/td>/g)).map((m) => m[1].trim());
   const findVal = (label: RegExp) => {
@@ -85,7 +98,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
       // Komiku search via htmx API endpoint — returns HTML directly, no JS render needed.
       // Avoids Puppeteer launch for search (saves browser requests for reader).
       const res = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(q)}&post_type=manga`, {
-        headers: { 'User-Agent': 'manga-platform/1.0', 'Referer': KOMIKU_BASE + '/' },
+        headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) { await drainResponse(res); return []; }
@@ -96,7 +109,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
 
     async getSeries(sourceId: string): Promise<Series> {
       const res = await fetch(`${KOMIKU_BASE}/manga/${sourceId}/`, {
-        headers: { 'User-Agent': 'manga-platform/1.0' },
+        headers: { 'User-Agent': KOMIKU_UA },
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) { await drainResponse(res); throw new Error(`komiku getSeries ${res.status}`); }
@@ -110,7 +123,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
         try {
           const qWords = sourceId.split('-').slice(0, 2).join(' ');
            const searchRes = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
-             headers: { 'User-Agent': 'manga-platform/1.0', 'Referer': KOMIKU_BASE + '/' },
+             headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
              signal: AbortSignal.timeout(8000),
            });
            if (searchRes.ok) {
@@ -135,7 +148,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
 
     async listChapters(sourceId: string, _opts?: { lang?: string }): Promise<Chapter[]> {
       const res = await fetch(`${KOMIKU_BASE}/manga/${sourceId}/`, {
-        headers: { 'User-Agent': 'manga-platform/1.0' },
+        headers: { 'User-Agent': KOMIKU_UA },
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) { await drainResponse(res); throw new Error(`komiku listChapters ${res.status}`); }
@@ -174,7 +187,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
 
     async fetchPageUrls(chapterSourceId: string): Promise<{ url: string; proxyHeaders?: Record<string, string> }[]> {
       const res = await fetch(`${KOMIKU_BASE}/${chapterSourceId}/`, {
-        headers: { 'User-Agent': 'manga-platform/1.0' },
+        headers: { 'User-Agent': KOMIKU_UA },
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) { await drainResponse(res); throw new Error(`komiku fetchPageUrls ${res.status}`); }
@@ -186,7 +199,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
 
     async scrapeUrl(url: string): Promise<{ series: Series; chapters: Chapter[]; coverImageUrl: string | null }> {
       const res = await fetch(url, {
-        headers: { 'User-Agent': 'manga-platform/1.0' },
+        headers: { 'User-Agent': KOMIKU_UA },
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) { await drainResponse(res); throw new Error(`komiku scrapeUrl ${res.status}`); }

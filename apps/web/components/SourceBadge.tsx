@@ -1,5 +1,7 @@
 // Source badge: icon-only. No text label — accessibility via title/alt.
-// Icons are local static assets in /public/sources/ (favicons per source).
+// Icons are local static assets in /public/sources/ (favicons per source),
+// now committed alongside the build instead of relying on external URLs
+// that 404 on the Pages deploy (no /public directory existed before).
 
 export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo';
 

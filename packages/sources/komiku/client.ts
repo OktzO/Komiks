@@ -1,6 +1,16 @@
 // Komiku HTTP client: robots.txt fetch + raw HTML fetch (no puppeteer for static pages).
 const BASE = 'https://komiku.org';
 
+// Komiku.org (and its api subdomain) sit behind a DDoS-guard style edge that
+// silently stalls (10-15s) on non-browser User-Agents — `manga-platform/1.0`
+// consistently times out at the 15s fetch limit, surfacing as 502s to the
+// reader API. A real browser UA + Referer bypasses it (~1.3s vs >10s).
+// Referer header is also required for image hotlinking (img.komiku.org 403s
+// without it).
+export const KOMIKU_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+export const KOMIKU_REFERER = `${BASE}/`;
+
 export interface RobotsResult {
   allowed: boolean;
   disallowedPaths: string[];

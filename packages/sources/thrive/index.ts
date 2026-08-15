@@ -4,7 +4,7 @@
 // Backs content from MangaDex UUIDs but we scrape Thrive's own HTML, never
 // the MangaDex API.
 import type { Series, Chapter } from '@manga-platform/shared';
-import { drainResponse } from '@manga-platform/shared/http';
+import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { THRIVE_BASE, fetchHtml, parseNextData, fetchRobots, isPathAllowed } from './client.js';
 import type { RobotsResult } from './client.js';
 
@@ -60,7 +60,7 @@ const toSeries = (d: ThriveDetail): Series => {
     source_url: `${THRIVE_BASE}/title/${d.id}/`,
     title: d.title,
     synopsis,
-    cover_image: d.image ?? null,
+    cover_image: sanitizeCoverUrl(d.image ?? null),
     genres: (d.tags && d.tags.length > 0) ? d.tags : undefined,
     type,
     status,

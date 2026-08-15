@@ -3,7 +3,7 @@
 // Cloudflare Bot Fight on pages — hybrid fetch (plain fetch + Puppeteer
 // fallback via MY_BROWSER binding). See client.ts.
 import type { Series, Chapter } from '@manga-platform/shared';
-import { drainResponse } from '@manga-platform/shared/http';
+import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { BACA_BASE, fetchHtml, fetchRobots, isPathAllowed } from './client.js';
 import type { BacaFetchEnv, RobotsResult } from './client.js';
 
@@ -53,7 +53,7 @@ const parseSearchHtml = (html: string): Series[] => {
         title,
         source: 'bacakomik',
         source_url: href.startsWith('http') ? href : BACA_BASE + href,
-        cover_image: img,
+        cover_image: sanitizeCoverUrl(img),
         type,
         status: 'ongoing',
       } as Series);
@@ -72,7 +72,7 @@ const parseDetailHtml = (html: string): {
   const title = titleRaw.replace(/<[^>]+>/g, '').replace(/^Komik\s+/i, '').trim();
   const synopsis = html.match(/<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]
     ?.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, '').trim() ?? null;
-  const cover = html.match(/property="og:image"[^>]*content="([^"]+)"/)?.[1] ?? null;
+  const cover = sanitizeCoverUrl(html.match(/property="og:image"[^>]*content="([^"]+)"/)?.[1] ?? null);
   const genreBlock = html.match(/<div class="genre-info[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '';
   const genres = Array.from(genreBlock.matchAll(/<a[^>]*>([^<]+)<\/a>/g)).map((m) => m[1].trim()).filter(Boolean);
 
