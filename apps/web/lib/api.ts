@@ -54,7 +54,7 @@ export interface Chapter {
   language: string;
   pages_count: number;
   published_at?: number | null;
-  pages?: { proxyUrl: string; b2Url?: string | null; r2Url?: string | null }[];
+  pages?: { proxyUrl: string; b2Url?: string | null }[];
 }
 
 // 12s timeout prevents Cloudflare Pages Function timeout (30s) from
@@ -127,23 +127,6 @@ export const searchMerged = (q: string): Promise<{ data: MergedManga[]; sources_
 
 export const getSourceStatus = (): Promise<{ data: SourceStatus[] }> =>
   dataApi('/api/source-status');
-
-// ---- R2 multi-account direct serving (komiku) --------------------------
-// Domain R2 dari env build-time; urutan = index akun, HARUS sama dengan
-// R2_ACCOUNTS di Worker. Ring di-build sekali per proses (pure).
-import { buildRing, accountFor } from '@manga-platform/shared/r2-routing';
-
-export const R2_DOMAINS = (process.env.NEXT_PUBLIC_R2_DOMAINS || '').split(',').map((s) => s.trim()).filter(Boolean);
-const R2_VNODES = Number(process.env.NEXT_PUBLIC_R2_VNODES) || 32;
-const r2Ring = R2_DOMAINS.length > 0 ? buildRing(R2_DOMAINS, R2_VNODES) : null;
-
-// Key deterministik: {source}/{slug}/{chapterId}/{pageNo} (tanpa ext — sama
-// dengan sisi Worker). null saat R2 belum dikonfigurasi → proxy-only.
-export const r2UrlFor = (source: string, slug: string, chapterId: string, pageNo: number): string | null => {
-  if (!r2Ring || !slug) return null;
-  const idx = accountFor(slug, r2Ring);
-  return `https://${R2_DOMAINS[idx]}/${source}/${slug}/${chapterId}/${pageNo}`;
-};
 
 // ---- Round-robin origin failover (LB multi-account) --------------------
 // Health-aware: skip origin yang 429/5xx/timeout (circuit breaker 60s per

@@ -28,8 +28,8 @@ async function ChapterContent({ params }: { params: { source: string; slug: stri
     ? `/${params.source}/s/${params.slug}/${params.slug}-chapter-${chapterNum + 1}`
     : null;
 
-  // URL storage datang dari server (D1 source of truth: b2Url presigned /
-  // r2Url direct). Page baru belum di-upload → null → Reader pakai proxy
+  // URL storage datang dari server (D1 source of truth: b2Url presigned).
+  // Page baru belum di-upload → null → Reader pakai proxy
   // (yang sekaligus meng-upload → request berikutnya dapat URL langsung).
   const pages = (chapter.pages || []).map((p) => ({ ...p }));
 

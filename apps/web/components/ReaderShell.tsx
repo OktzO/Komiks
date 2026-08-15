@@ -9,7 +9,6 @@ import { getChapters } from '@/lib/api';
 interface PageUrl {
   proxyUrl: string;
   b2Url?: string | null;
-  r2Url?: string | null;
 }
 
 interface ShellItem {
@@ -107,7 +106,7 @@ export function ReaderShell({
   const downloadCurrent = useCallback(() => {
     const p = pages[activeIdx];
     if (!p) return;
-    const url = p.b2Url ?? p.r2Url ?? `${apiUrl}${p.proxyUrl}`;
+    const url = p.b2Url ?? `${apiUrl}${p.proxyUrl}`;
     const ext = (url.split('?')[0].match(/\.([a-z0-9]{2,5})$/i)?.[1] ?? '').toLowerCase();
     const a = document.createElement('a');
     a.href = url;
