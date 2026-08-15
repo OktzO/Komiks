@@ -1,0 +1,94 @@
+import { murmur3_32 } from '@manga-platform/shared/r2-routing';
+import type { Env } from './context';
+
+export interface PeerInfo {
+  url: string;
+  index: number;
+  self: boolean;
+}
+
+// Parse PEER_URLS (comma-separated, ordered akun-1/2/3) + PEER_INDEX (this
+// worker's own index). Same URL list on all workers; self-flag is per-worker.
+export const getPeers = (env: Env): PeerInfo[] => {
+  const raw = env.PEER_URLS as string | undefined;
+  const selfIndex = Number(env.PEER_INDEX ?? 0) || 0;
+  const urls = (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return urls.map((url, index) => ({ url, index, self: index === selfIndex }));
+};
+
+// Deterministic owner of a sharded key (chapterId). Falls back to "self" when
+// no peers are configured (single-account / local dev).
+export const ownerFor = (env: Env, key: string): PeerInfo => {
+  const peers = getPeers(env);
+  if (peers.length === 0) return { url: '', index: 0, self: true };
+  return peers[murmur3_32(key) % peers.length];
+};
+
+const forwardKey = (env: Env): string | undefined => env.DB_FORWARD_KEY as string | undefined;
+
+// Write-forward to a peer worker's internal /db/exec. Returns false on
+// missing key, missing peer, or non-2xx (caller falls back to local).
+export const internalExec = async (
+  env: Env,
+  peerUrl: string,
+  payload: { sql: string; params: unknown[]; table: string }
+): Promise<boolean> => {
+  const key = forwardKey(env);
+  if (!key || !peerUrl) return false;
+  try {
+    const res = await fetch(`${peerUrl}/api/_internal/db/exec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-db-forward-key': key },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(8000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+// Read-forward: SELECT via peer /db/query (allowlisted table). null = failure.
+export const internalQuery = async <T = Record<string, unknown>>(
+  env: Env,
+  peerUrl: string,
+  sql: string,
+  params: unknown[],
+  table: string
+): Promise<T[] | null> => {
+  const key = forwardKey(env);
+  if (!key || !peerUrl) return null;
+  try {
+    const res = await fetch(`${peerUrl}/api/_internal/db/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-db-forward-key': key },
+      body: JSON.stringify({ sql, params, table }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { results?: T[] };
+    return j.results ?? null;
+  } catch {
+    return null;
+  }
+};
+
+// KV peer fallback: try each non-self peer's /kv/get (allowlist enforced
+// server-side). First non-null wins; returns null when none have it.
+export const peerKvGet = async (env: Env, key: string): Promise<unknown | null> => {
+  const k = forwardKey(env);
+  if (!k) return null;
+  for (const peer of getPeers(env)) {
+    if (peer.self) continue;
+    try {
+      const res = await fetch(`${peer.url}/api/_internal/kv/get?key=${encodeURIComponent(key)}`, {
+        headers: { 'x-db-forward-key': k },
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res.ok) continue;
+      const j = (await res.json()) as { value?: unknown };
+      if (j.value != null) return j.value;
+    } catch { /* try next peer */ }
+  }
+  return null;
+};

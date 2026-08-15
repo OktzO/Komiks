@@ -17,6 +17,11 @@ export interface Env {
    SCRAPE_API_KEY?: string;
   B2_CONFIG?: string;
   B2_ACCOUNTS?: string;
+  PEER_URLS?: string;
+  PEER_INDEX?: string;
+  EVICTION_OWNER?: string;
+  B2_QUOTA_BYTES?: string;
+  DB_FORWARD_KEY?: string;
   [k: string]: unknown;
 }
 
