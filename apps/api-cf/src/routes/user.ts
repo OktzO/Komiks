@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Env, Context } from '../lib/context';
 import { db } from '@manga-platform/db';
+import { rateLimitMutate } from '../lib/rateLimit';
 import {
   getSessionUser,
   listSessionsForUser,
@@ -74,9 +75,9 @@ async function requireSession(c: Context, next: () => Promise<void>) {
   await next();
 }
 
-router.use('/bookmark', requireSession);
-router.use('/bookmark/:slug', requireSession);
-router.use('/bookmarks', requireSession);
+router.use('/bookmark', requireSession, rateLimitMutate);
+router.use('/bookmark/:slug', requireSession, rateLimitMutate);
+router.use('/bookmarks', requireSession, rateLimitMutate);
 router.use('/history', requireSession);
 router.use('/sessions', requireSession);
 router.use('/sessions/:token', requireSession);
@@ -86,9 +87,9 @@ router.use('/sessions/revoke-all', requireSession);
 
 router.post('/bookmark', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const { seriesSlug } = await c.req.json() as { seriesSlug?: string };
+  const { seriesSlug, source, source_url } = await c.req.json() as { seriesSlug?: string; source?: string; source_url?: string };
   if (!seriesSlug) return c.json({ error: 'seriesSlug required' }, 400);
-  await db(c.env.DB).addBookmark({ userId: user.id, seriesSlug });
+  await db(c.env.DB).addBookmark({ userId: user.id, seriesSlug, source, source_url });
   return c.json({ data: { ok: true } });
 });
 

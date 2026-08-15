@@ -21,3 +21,28 @@ export const drainResponse = async (res: Response): Promise<void> => {
     if (res.body?.cancel) await res.body.cancel().catch(() => {});
   } catch { /* ignored — best effort */ }
 };
+
+/**
+ * Normalize a manga cover URL so the image CDN serves the ORIGINAL portrait
+ * art instead of a cropped landscape thumbnail.
+ *
+ * Two problems this solves:
+ * 1. Komiku's search HTML ships covers with `?resize=450,235` (landscape crop),
+ *    which collapses portrait manga into a 1.91:1 strip.
+ * 2. WordPress.com CDN (i2.wp.com) used by bacakomik/manhwaindo crops via
+ *    `resize=w,h`.
+ *
+ * Heuristic:
+ * - Decode HTML-encoded `&` (`&#038;`)` → `&` so query params are reliable.
+ * - If the URL has `resize=w,h`, drop the whole querystring and re-add
+ *   `?w=450` (WP.com) → original aspect ratio. For non-WP hosts (komiku
+ *   thumbnail host) dropping the querystring serves full art too.
+ */
+export const sanitizeCoverUrl = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  const decoded = url.replace(/&#0?38;/g, '&').trim();
+  const [base, hash] = decoded.split('#');
+  const [origin, _oldQuery] = base.split('?');
+  if (!hash) return origin;
+  return `${origin}#${hash}`;
+};

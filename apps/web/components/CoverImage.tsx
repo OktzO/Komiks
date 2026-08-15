@@ -1,5 +1,3 @@
-'use client';
-
 export function CoverImage({
   src,
   alt,
@@ -33,9 +31,6 @@ export function CoverImage({
         fetchPriority={priority ? 'high' : 'auto'}
         decoding="async"
         className={`relative h-full w-full ${objectClass} ${zoom ? 'transition-transform duration-300 group-hover:scale-[1.03]' : ''}`}
-        onError={(e) => {
-          e.currentTarget.style.display = 'none';
-        }}
       />
     </div>
   );

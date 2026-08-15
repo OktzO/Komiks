@@ -1,6 +1,7 @@
 import { getSourceStatus } from '@/lib/api';
 import { SourceBadge, sourceLabel, SOURCE_LABELS } from '@/components/SourceBadge';
 
+export const runtime = 'edge';
 export const revalidate = 30;
 
 type SourceHealth = {

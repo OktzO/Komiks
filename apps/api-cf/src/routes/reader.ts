@@ -523,6 +523,8 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   const n = Number(pageNo);
   if (!Number.isInteger(n) || n < 1 || n > 10000) return c.json({ error: 'bad page number' }, 400);
 
+  const retry = Number(c.req.query('retry')) || 0;
+
   const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
 
@@ -558,7 +560,8 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   // reset). Retry up to 2 times (reduced from 3 to cap CPU time) before
   // surfacing the error. Only accept HTTP 200.
   let upstream: Response | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let retryCount = Number(c.req.query('retry')) || 0;
+  for (let attempt = 0; attempt < 2 + retryCount; attempt++) {
     try {
       const r = await fetch(page.url, {
         headers: {
@@ -580,7 +583,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
     } catch {
       // network error → retry
     }
-    if (attempt < 1) await new Promise((res) => setTimeout(res, 200 * (attempt + 1)));
+    if (attempt < 1) await new Promise(res => setTimeout(res, 200 * (attempt + 1)));
   }
 
   if (!upstream) {

@@ -8,7 +8,7 @@ import { getAuthApiUrl } from '@/lib/api';
 // Uses getAuthApiUrl() so the session cookie (set by the auth origin) is sent
 // to the correct Worker. Without this, bookmark add/remove can fail silently
 // when the main API_URL origin differs from the auth origin.
-export function BookmarkButton({ slug }: { slug: string }) {
+export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm' | 'md' }) {
   const router = useRouter();
   const [on, setOn] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,8 +31,11 @@ export function BookmarkButton({ slug }: { slug: string }) {
         // best-effort — tombol tetap tampil, aksi akan redirect ke login
       }
     })();
-    return () => { alive = false; };
+    return () => { alive = false };
   }, [slug]);
+
+  const dim = size === 'sm' ? 'h-9 w-9' : 'h-11 w-11';
+  const iconSize = size === 'sm' ? 14 : 18;
 
   const toggle = async () => {
     if (busy) return;
@@ -52,9 +55,8 @@ export function BookmarkButton({ slug }: { slug: string }) {
           });
       if (r.status === 401) { setOn(false); router.push('/login'); return; }
       if (!r.ok) {
-        // Retry once with main API_URL in case the auth origin is stale/unreachable
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
         try {
-          const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
           const r2 = prev
             ? await fetch(`${API_URL}/api/user/bookmark/${encodeURIComponent(slug)}`, { method: 'DELETE', credentials: 'include', signal: AbortSignal.timeout(8000) })
             : await fetch(`${API_URL}/api/user/bookmark`, {
@@ -73,9 +75,8 @@ export function BookmarkButton({ slug }: { slug: string }) {
         }
       }
     } catch {
-      // Retry with main API_URL as fallback
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
       try {
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
         const r2 = prev
           ? await fetch(`${API_URL}/api/user/bookmark/${encodeURIComponent(slug)}`, { method: 'DELETE', credentials: 'include', signal: AbortSignal.timeout(8000) })
           : await fetch(`${API_URL}/api/user/bookmark`, {
@@ -99,12 +100,12 @@ export function BookmarkButton({ slug }: { slug: string }) {
 
   return (
     <button
-      onClick={toggle}
+      onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggle(); }}
       aria-pressed={on}
       title={on ? 'Hapus bookmark' : 'Tambah bookmark'}
-      className={`h-11 w-11 shrink-0 grid place-items-center rounded-lg border bg-black text-white transition-transform duration-150 active:scale-95 ${failed ? 'border-red-500' : 'border-white'}`}
+      className={`${dim} shrink-0 grid place-items-center rounded-lg border bg-black text-white transition-transform duration-150 active:scale-95 ${failed ? 'border-red-500' : 'border-white'}`}
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill={on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill={on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M6 3h12v18l-6-4-6 4z" />
       </svg>
     </button>

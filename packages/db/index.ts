@@ -38,7 +38,7 @@ export interface Db {
    deleteUserAccount: (userId: number) => Promise<{ success: boolean }>;
    clearUserHistory: (userId: number) => Promise<{ success: boolean; deleted: number }>;
    clearUserBookmarks: (userId: number) => Promise<{ success: boolean; deleted: number }>;
-   addBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
+   addBookmark: (params: { userId: number; seriesSlug: string; source?: string; source_url?: string }) => Promise<{ success: boolean }>;
    removeBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
    isBookmarked: (params: { userId: number; seriesSlug: string }) => Promise<boolean>;
    listBookmarks: (userId: number) => Promise<ListResult<Series>>;
@@ -272,11 +272,11 @@ export const db = (client: D1Database): Db => {
        return { success: true, deleted };
      },
 
-     addBookmark: async ({ userId, seriesSlug }) => {
-      const res = await prep('INSERT OR IGNORE INTO bookmarks (user_id, series_slug) VALUES (?1, ?2)')
-        .bind(userId, seriesSlug).run();
-      return { success: res.success };
-    },
+      addBookmark: async ({ userId, seriesSlug, source, source_url }) => {
+       const res = await prep('INSERT OR IGNORE INTO bookmarks (user_id, series_slug, source, source_url) VALUES (?1, ?2, ?3, ?4)')
+         .bind(userId, seriesSlug, source ?? null, source_url ?? null).run();
+       return { success: res.success };
+     },
 
     removeBookmark: async ({ userId, seriesSlug }) => {
       const res = await prep('DELETE FROM bookmarks WHERE user_id = ?1 AND series_slug = ?2')
@@ -291,12 +291,14 @@ export const db = (client: D1Database): Db => {
     },
 
     listBookmarks: async (userId) => {
-      const { results } = await prep(
-        `SELECT s.* FROM bookmarks b JOIN series s ON s.slug = b.series_slug
-         WHERE b.user_id = ?1 ORDER BY b.created_at DESC`
-      ).bind(userId).all<Row>();
-      return (results ?? []).map(parseJson);
-    },
+       const { results } = await prep(
+         `SELECT s.*, b.source AS bookmark_source, b.source_url AS bookmark_url, b.created_at AS bookmark_created_at
+          FROM bookmarks b JOIN series s ON s.slug = b.series_slug
+          WHERE b.user_id = ?1
+          ORDER BY b.created_at DESC`
+       ).bind(userId).all<Row>();
+       return (results ?? []).map(parseJson);
+     },
 
     upsertHistory: async ({ userId, chapterId, lastPage }) =>
       fromRow<ReadingHistory>(

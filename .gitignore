@@ -18,3 +18,5 @@ coverage/
 *.tsbuildinfo
 test-results/
 
+
+.env.deploy

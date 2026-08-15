@@ -3,6 +3,7 @@ import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
 import { TypeBadge } from '@/components/TypeBadge';
 import { SourceBadge, sourceLabel, SOURCE_ORDER } from '@/components/SourceBadge';
+import { BookmarkButton } from '@/components/BookmarkButton';
 import { HomeSkeleton } from '@/components/Skeleton';
 import { Suspense } from 'react';
 import Link from 'next/link';
@@ -65,7 +66,7 @@ async function HomeFeed() {
           </Link>
         </div>
         <div className="flex gap-4 overflow-x-auto pb-4 snap-x" style={{ scrollbarWidth: 'thin' }} aria-label="Judul populer">
-          {popular.map((m, idx) => {
+          {popular.map((m) => {
             const item = itemOf(m);
             const source = (m.sources?.includes('komiku') ?? item.sources?.includes('komiku')) ? 'komiku' : item.source;
             return (
@@ -75,18 +76,13 @@ async function HomeFeed() {
                 prefetch={false}
                 className="group relative shrink-0 snap-start w-36 sm:w-40 transition-transform duration-200 hover:-translate-y-1"
               >
-                <div className="aspect-[3/4] w-full overflow-hidden rounded-xl border border-border-subtle bg-card relative">
-                  <CoverImage src={item.cover_image} alt={item.title} title={item.title} className="h-full w-full" zoom priority={idx < 3} />
-                  <div className="absolute top-1.5 right-1.5 z-10">
-                    <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
-                  </div>
-                  <div className="absolute bottom-1.5 right-1.5 z-10">
-                    <TypeBadge type={item.type} />
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <div className="text-xs sm:text-sm text-primary line-clamp-2 group-hover:text-accent transition-colors">{item.title}</div>
-                </div>
+                <MangaCard
+                  manga={{ id: item.slug, title: item.title, cover: item.cover_image || null, slug: item.slug }}
+                  source={source}
+                  sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]}
+                  type={item.type}
+                  bookmarkable
+                />
               </Link>
             );
           })}
@@ -123,8 +119,11 @@ async function HomeFeed() {
                       {item.status && <span className="text-[11px] text-muted capitalize">{item.status}</span>}
                     </div>
                   </div>
-                  <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
-                </Link>
+                   <SourceBadge sources={(m.sources as string[]) || (item.sources as string[]) || [item.source]} size="sm" />
+                   <div className="absolute top-1.5 right-1.5 z-10">
+                     <BookmarkButton slug={item.slug} size="sm" />
+                   </div>
+                 </Link>
               );
             })}
           </div>
