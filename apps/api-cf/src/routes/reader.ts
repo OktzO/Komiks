@@ -1,14 +1,14 @@
 import { Hono } from 'hono';
 import { getAdapter, type AdapterEnv } from '@manga-platform/sources';
-import { buildRing, accountFor, r2KeyFor } from '@manga-platform/shared/r2-routing';
+import type { Series, Chapter } from '@manga-platform/shared';
+import { r2KeyFor } from '@manga-platform/shared/r2-routing';
 import { drainResponse } from '@manga-platform/shared/http';
 import { getDb } from '../lib/context';
 import type { Env, Context } from '../lib/context';
 import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
-import { parseR2Accounts } from '../lib/r2Accounts.ts';
-import { s3PutObject } from '../lib/s3Upload.ts';
-import { parseB2Accounts, b2AccountForIdx, resolveB2Accounts, type B2Account } from '../lib/b2Config.ts';
+import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
+import { resolveB2Accounts, type B2Account } from '../lib/b2Config.ts';
 import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
@@ -126,69 +126,66 @@ const resolveKomikuSlug = async (c: Context, chapterId: string): Promise<string 
   return parsed;
 };
 
-// R2 config dibangun sekali per request — murah (2 akun × 32 vnodes).
-const r2RingFor = (c: Context): { accounts: ReturnType<typeof parseR2Accounts>; ring: ReturnType<typeof buildRing> } | null => {
-  const accounts = parseR2Accounts(c.env.R2_ACCOUNTS);
-  if (accounts.length === 0) return null;
-  const vnodes = Number(c.env.R2_RING_VNODES) || 32;
-  return { accounts, ring: buildRing(accounts.map((a) => a.public_domain), vnodes) };
-};
-
 // Update chapter:detail KV cache setelah upload sukses — biar request
-// berikutnya dapat b2Url/r2Url langsung (KV TTL 300s, tanpa refresh).
+// berikutnya dapat b2Url langsung (KV TTL 300s, tanpa refresh).
 const touchChapterDetailKv = async (
   c: Context,
   source: string,
   chapterId: string,
   pageNo: number,
   b2Accounts: B2Account[],
-  r2cfg: ReturnType<typeof r2RingFor>,
-  r2Key: string,
+  b2Key: string,
   accountIdx: number
 ): Promise<void> => {
   const key = `chapter:detail:${source}:${chapterId}`;
   const raw = await c.env.CACHE_KV.get(key).catch(() => null);
   if (!raw) return;
   try {
-    const parsed = JSON.parse(raw) as { data?: { pages?: Array<{ proxyUrl: string; b2Url?: string | null; r2Url?: string | null }> } };
+    const parsed = JSON.parse(raw) as { data?: { pages?: Array<{ proxyUrl: string; b2Url?: string | null }> } };
     if (!parsed.data?.pages) return;
     const idx = pageNo - 1;
     if (idx < 0 || idx >= parsed.data.pages.length) return;
-    if (accountIdx < 0) {
-      const b2 = b2AccountForIdx(b2Accounts, accountIdx);
-      if (b2) parsed.data.pages[idx].b2Url = await b2PresignedGet(b2, r2Key).catch(() => null);
-    } else if (accountIdx >= 0 && r2cfg && r2cfg.accounts[accountIdx]) {
-      parsed.data.pages[idx].r2Url = `https://${r2cfg.accounts[accountIdx].public_domain}/${r2Key}`;
+    // accountIdx < 0 → B2 account -(idx+1). R2 path removed.
+    if (accountIdx < 0 && b2Accounts.length > 0) {
+      const arrIdx = -(accountIdx + 1);
+      const b2 = b2Accounts[arrIdx];
+      if (b2) parsed.data.pages[idx].b2Url = await b2PresignedGet(b2, b2Key).catch(() => null);
     }
     await c.env.CACHE_KV.put(key, JSON.stringify(parsed), { expirationTtl: 300 }).catch(() => {});
   } catch { /* corrupt cache → ignore, next refresh repopulates */ }
 };
 
-// Upload gambar ke storage tier (background) + catat D1. Idempoten:
-// key sama → overwrite sama. Race 2 request paralel aman.
-// Tier: B2-A (idx=-1) → B2-B (idx=-2) → R2 ring (idx>=0).
-// Round-robin: coba B2-A dulu, kalau fail → B2-B, kalau fail → R2.
-// Semua gagal → response user tetap jalan (proxy only).
-const uploadToStorage = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
-  const r2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
-  const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
-  const cfg = r2RingFor(c);
+// Resolve B2 account for a given accountIdx (negative = B2).
+const b2AccountByIdx = (b2Accounts: B2Account[], accountIdx: number): B2Account | null => {
+  if (accountIdx >= 0 || b2Accounts.length === 0) return null;
+  const arrIdx = -(accountIdx + 1);
+  if (arrIdx < 0 || arrIdx >= b2Accounts.length) return null;
+  return b2Accounts[arrIdx];
+};
 
-  // Try B2 accounts in order (B2-A → B2-B → ...).
+// Upload gambar ke B2 storage tier (background) + catat D1. Idempoten:
+// key sama → overwrite sama. Race 2 request paralel aman.
+// Tier: B2-A (idx=-1) → B2-B (idx=-2) → ... → proxy-only mode.
+// R2 path removed per projek: semua asset ke B2.
+const uploadToStorage = async (c: Context, opts: { source: string; slug: string; chapterId: string; pageNo: number; imageUrl: string; contentType: string; body: ReadableStream | ArrayBuffer }): Promise<void> => {
+  const b2Key = r2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
+  const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
+
+  // Coba tiap B2 account berurutan (B2-A → B2-B → ...).
   for (let i = 0; i < b2Accounts.length; i++) {
     const b2 = b2Accounts[i];
-    const accountIdx = -(i + 1); // -1, -2, ...
+    const accountIdx = -(i + 1); // -1, -2, ... → B2 account index
     try {
-      const res = await b2PutObject(b2, r2Key, opts.body as ArrayBuffer, opts.contentType);
+      const res = await b2PutObject(b2, b2Key, opts.body as ArrayBuffer, opts.contentType);
       if (res.ok) {
         await getDb(c).markPageR2Uploaded({
           chapterId: opts.chapterId,
           pageNumber: opts.pageNo,
           imageUrl: opts.imageUrl,
-          r2Key,
+          r2Key: b2Key,
           r2AccountIdx: accountIdx,
         });
-        await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, cfg, r2Key, accountIdx);
+        await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, b2Key, accountIdx);
         return;
       }
       console.error(`[b2:${b2.name}] upload ${res.status} → next tier: ${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}`);
@@ -197,74 +194,73 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
     }
   }
 
-  // R2 ring fallback.
-  try {
-    if (!cfg) return; // tidak ada R2 juga → proxy-only mode
-    const idx = accountFor(opts.slug, cfg.ring);
-    const account = cfg.accounts[idx];
-    const res = await s3PutObject(account, r2Key, opts.body, opts.contentType);
-    await drainResponse(res);
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(`r2 upload ${res.status} ${detail.slice(0, 200)}`);
-    }
-    await getDb(c).markPageR2Uploaded({
-      chapterId: opts.chapterId,
-      pageNumber: opts.pageNo,
-      imageUrl: opts.imageUrl,
-      r2Key,
-      r2AccountIdx: idx,
-    });
-    await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, cfg, r2Key, idx);
-  } catch (e) {
-    console.error(`[r2] upload failed [${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}]:`, String(e));
-  }
+  // Semua B2 gagal → proxy-only mode (response user tetap jalan).
 };
 
 // Consolidated series detail + chapters in a single Worker invocation.
 // GET /api/reader/:source/series/:sourceId/detail?lang=id
-// Returns { data: { ...series, chapters: [...] } } cached under one KV key,
-// halving the Worker + KV-read cost vs separate getSeries + getChapters calls.
+// Returns { data: { ...series, chapters: [...] } }.
+//
+// Cache strategy: two-tier (fresh 10min + stale 24h) with stale-while-revalidate
+// + circuit breaker per source. When the upstream DDoS-guard 502s (Komiku),
+// we serve last-known-good stale instead of failing the reader. This is the
+// primary mitigation for the intermittent 502s on detail pages.
 router.get('/:source/series/:sourceId/detail', async (c: Context) => {
   const { source, sourceId } = c.req.param();
   const lang = c.req.query('lang') || 'id';
   const cacheKey = `series:full:${source}:${sourceId}:${lang}`;
-  const cached = await cacheGet<{ data: { chapters: unknown[] } & Record<string, unknown> }>(c, cacheKey);
-  if (cached) {
-    c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
-    return c.json(cached);
-  }
 
   const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
+
   const start = Date.now();
   try {
-    const [series, chapters] = await Promise.all([
-      retryUpstream(() => adapter.getSeries(sourceId)),
-      retryUpstream(() => adapter.listChapters(sourceId, { lang })),
-    ]);
-    const data = { ...series, chapters };
-    cachePut(c, cacheKey, { data }, 600);
-    recordHealth(c, source, start, true);
-    c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
-    // Index chapterId → slug (KV 1 jam) supaya R2 cache-aside bisa resolve
-    // slug dari chapterId (thrive pakai uuid yang tidak bisa di-parse).
-    //
-    // KV WRITE THROTTLE: Previously this loop wrote a KV key for EVERY chapter
-    // in the series (e.g. 200 chapters = 200 KV writes). Now we batch-write
-    // only the first 50 chapters — enough for the most-accessed recent
-    // chapters, and the rest lazily resolve via D1 on first page proxy request.
-    // This cuts KV writes by ~75% for large series.
-    c.executionCtx.waitUntil(
-      (async () => {
-        const maxToIndex = Math.min(chapters.length, 50);
-        for (let i = 0; i < maxToIndex; i++) {
-          const ch = chapters[i];
-          try { await cachePut(c, `slug:${ch.id}`, series.slug, 3600); } catch { /* best-effort */ }
+    const result = await readThroughCache<{ data: { chapters: Chapter[] } & Record<string, unknown> }>(
+      c,
+      cacheKey,
+      async () => {
+        // Prefer getSeriesDetail (single upstream fetch) — falls back to
+        // Promise.all([getSeries, listChapters]) for adapters that don't implement it.
+        // The single-fetch path avoids double-requesting the same detail-page URL,
+        // which triggered intermittent 502s from Komiku's DDoS-guard edge.
+        let r: { series: Series; chapters: Chapter[] };
+        if (adapter.getSeriesDetail) {
+          const detail = adapter.getSeriesDetail;
+          r = await retryUpstream(() => detail(sourceId, { lang }));
+        } else {
+          const [series, chapters] = await Promise.all([
+            retryUpstream(() => adapter.getSeries(sourceId)),
+            retryUpstream(() => adapter.listChapters(sourceId, { lang })),
+          ]);
+          r = { series, chapters };
         }
-      })()
+        const { series, chapters } = r;
+        // Index chapterId → slug (KV 1 jam) supaya R2 cache-aside bisa resolve
+        // slug dari chapterId (thrive pakai uuid yang tidak bisa di-parse).
+        //
+        // KV WRITE THROTTLE: Previously this loop wrote a KV key for EVERY chapter
+        // in the series (e.g. 200 chapters = 200 KV writes). Now we batch-write
+        // only the first 50 chapters — enough for the most-accessed recent
+        // chapters, and the rest lazily resolve via D1 on first page proxy request.
+        // This cuts KV writes by ~75% for large series.
+        c.executionCtx.waitUntil(
+          (async () => {
+            const maxToIndex = Math.min(chapters.length, 50);
+            for (let i = 0; i < maxToIndex; i++) {
+              const ch = chapters[i];
+              try { await cachePut(c, `slug:${ch.id}`, series.slug, 3600); } catch { /* best-effort */ }
+            }
+          })()
+        );
+        return { data: { ...series, chapters } };
+      },
+      { circuitKey: `reader:${source}:detail` }
     );
-    return c.json({ data });
+    recordHealth(c, source, start, true);
+    const maxAge = result.source === 'stale' ? 30 : 600;
+    c.header('Cache-Control', `public, s-maxage=${maxAge}, stale-while-revalidate=1800`);
+    if (result.source === 'stale') c.header('X-Cache', 'stale');
+    return c.json(result.data);
   } catch (e) {
     recordHealth(c, source, start, false, String(e));
     return c.json({ error: 'upstream resolve failed', detail: String(e) }, 502);
@@ -272,20 +268,24 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
 });
 
 // Series detail: GET /api/reader/:source/series/:sourceId
+// Two-tier cache (fresh 10min + stale 24h) — serves last-known-good when
+// the upstream DDoS-guard 502s instead of failing the reader.
 router.get('/:source/series/:sourceId', async (c: Context) => {
   const { source, sourceId } = c.req.param();
   const cacheKey = `series:detail:${source}:${sourceId}`;
-  const cached = await cacheGet<{ data: unknown }>(c, cacheKey);
-  if (cached) return c.json(cached);
 
   const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
   const start = Date.now();
   try {
-    const data = await retryUpstream(() => adapter.getSeries(sourceId));
-    cachePut(c, cacheKey, { data }, 600);
+    const result = await readThroughCache<{ data: Series }>(
+      c,
+      cacheKey,
+      async () => ({ data: await retryUpstream(() => adapter.getSeries(sourceId)) }),
+      { circuitKey: `reader:${source}:detail` }
+    );
     recordHealth(c, source, start, true);
-    return c.json({ data });
+    return c.json(result.data);
   } catch (e) {
     recordHealth(c, source, start, false, String(e));
     return c.json({ error: 'upstream resolve failed', detail: String(e) }, 502);
@@ -297,17 +297,19 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
   const { source, sourceId } = c.req.param();
   const lang = c.req.query('lang') || 'id';
   const cacheKey = `chapters:list:${source}:${sourceId}:${lang}`;
-  const cached = await cacheGet<{ data: unknown[] }>(c, cacheKey);
-  if (cached) return c.json(cached);
 
   const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
   const start = Date.now();
   try {
-    const data = await retryUpstream(() => adapter.listChapters(sourceId, { lang }));
-    cachePut(c, cacheKey, { data }, 300);
+    const result = await readThroughCache<{ data: Chapter[] }>(
+      c,
+      cacheKey,
+      async () => ({ data: await retryUpstream(() => adapter.listChapters(sourceId, { lang })) }),
+      { freshTtl: 300, circuitKey: `reader:${source}:detail` }
+    );
     recordHealth(c, source, start, true);
-    return c.json({ data });
+    return c.json(result.data);
   } catch (e) {
     recordHealth(c, source, start, false, String(e));
     return c.json({ error: 'upstream resolve failed', detail: String(e) }, 502);
@@ -474,24 +476,18 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     const storedByPage = new Map<number, { r2Key: string; accountIdx: number }>();
     for (const row of stored?.results ?? []) storedByPage.set(row.page_number, { r2Key: row.r2_key, accountIdx: row.r2_account_idx });
     const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
-    const r2cfg = r2RingFor(c);
     const data = {
       ...chapter,
-      // B2 presign & R2 domain resolve per page — Promise.all biar paralel.
+      // B2 presign per page — Promise.all biar paralel.
       pages: await Promise.all(pages.map(async (_, i) => {
         const pageNo = i + 1;
         const row = storedByPage.get(pageNo);
         let b2Url: string | null = null;
-        let r2Url: string | null = null;
-        if (row) {
-          if (row.accountIdx < 0) {
-            const b2 = b2AccountForIdx(b2Accounts, row.accountIdx);
-            if (b2) b2Url = await b2PresignedGet(b2, row.r2Key).catch(() => null);
-          } else if (row.accountIdx >= 0 && r2cfg && r2cfg.accounts[row.accountIdx]) {
-            r2Url = `https://${r2cfg.accounts[row.accountIdx].public_domain}/${row.r2Key}`;
-          }
+        if (row && row.accountIdx < 0) {
+          const b2 = b2AccountByIdx(b2Accounts, row.accountIdx);
+          if (b2) b2Url = await b2PresignedGet(b2, row.r2Key).catch(() => null);
         }
-        return { proxyUrl: `${proxyBase}/${pageNo}`, b2Url, r2Url };
+        return { proxyUrl: `${proxyBase}/${pageNo}`, b2Url };
       })),
     };
     // LRU touch: update last_access untuk pages yang diakses (background).
@@ -554,6 +550,27 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
     const h = new Headers(cachedImg.headers);
     setCorsHeaders(c.env, h, c.req.header('origin'));
     return new Response(cachedImg.body, { status: 200, headers: h });
+  }
+
+  // Stampede protection: when many concurrent requests fetch the SAME upstream
+  // image URL (popular chapter page), Cloudflare coalesces identical
+  // cache.match() calls. We key the upstream URL itself (not our proxy URL
+  // which differs per request via `retry` query param).
+  const upstreamReq = new Request(page.url, {
+    headers: { 'User-Agent': 'manga-platform/1.0', 'Referer': 'https://komiku.org/', ...(page.proxyHeaders || {}) },
+  });
+  const edgeHit = await matchEdgeCache(upstreamReq);
+  if (edgeHit && edgeHit.status === 200) {
+    const h = new Headers(edgeHit.headers);
+    h.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    setCorsHeaders(c.env, h, c.req.header('origin'));
+    const resp = new Response(edgeHit.body, { status: 200, headers: h });
+    // Mirror to proxy cache for next request.
+    if (typeof caches !== 'undefined') {
+      const cache = (caches as unknown as { default: Cache }).default;
+      c.executionCtx.waitUntil(cache.put(c.req.raw, resp.clone()).catch(() => {}));
+    }
+    return resp;
   }
 
   // Source CDNs occasionally fail transiently (502/503/connection reset).
@@ -621,10 +638,14 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
 
   const response = new Response(upstream.body, { status: 200, headers });
 
-  // Store in Cloudflare edge cache for subsequent requests
+  // Store in Cloudflare edge cache for subsequent requests. We populate
+  // BOTH the proxy-keyed cache (for next /api/reader/*/page/* hit) AND the
+  // upstream-URL-keyed cache (for stampede coalescing on concurrent fetches
+  // of the same source CDN URL).
   if (typeof caches !== 'undefined') {
     const cache = (caches as unknown as { default: Cache }).default;
     c.executionCtx.waitUntil(cache.put(c.req.raw, response.clone()).catch(() => {}));
+    c.executionCtx.waitUntil(cache.put(upstreamReq, response.clone()).catch(() => {}));
   }
 
   if (r2Upload) c.executionCtx.waitUntil(r2Upload);

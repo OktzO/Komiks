@@ -1,12 +1,11 @@
 import { Context as HonoContext } from 'hono';
-import type { D1Database, KVNamespace, R2Bucket, Fetcher } from '@cloudflare/workers-types';
+import type { D1Database, KVNamespace, Fetcher } from '@cloudflare/workers-types';
 import { db } from '@manga-platform/db';
 import type { Db } from '@manga-platform/db';
 
 export interface Env {
   DB: D1Database;
   CACHE_KV: KVNamespace;
-  ASSETS_R2: R2Bucket;
   MY_BROWSER: Fetcher;
   LB_ENCRYPTION_KEY: string;
   ALLOWED_ORIGINS?: string;
@@ -16,13 +15,8 @@ export interface Env {
    ADMIN_PASSWORD?: string;
    ADMIN_EMAILS?: string;
    SCRAPE_API_KEY?: string;
-  CF_ACCOUNT_ID?: string;
-  R2_ACCOUNTS?: string;
-  R2_RING_VNODES?: string;
-  R2_EVICTION_DAYS?: string;
   B2_CONFIG?: string;
   B2_ACCOUNTS?: string;
-  B2_EVICTION_DAYS?: string;
   [k: string]: unknown;
 }
 

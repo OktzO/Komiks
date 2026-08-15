@@ -166,6 +166,28 @@ export const manhwaindoAdapter = (env?: ManhwaFetchEnv) => {
       return parseChapterList(html, sourceId);
     },
 
+    async getSeriesDetail(sourceId: string, _opts?: { lang?: string }): Promise<{ series: Series; chapters: Chapter[] }> {
+      // SINGLE fetch — parse both series + chapters from same HTML.
+      const url = `${MANHWA_BASE}/series/${sourceId}/`;
+      const html = await fetchHtml(url, env);
+      const d = parseDetailHtml(html);
+      const series: Series = {
+        slug: sourceId,
+        external_id: sourceId,
+        source: 'manhwaindo',
+        source_url: url,
+        title: d.title || sourceId,
+        synopsis: d.synopsis,
+        cover_image: d.cover_image,
+        author: d.author,
+        status: d.status,
+        type: d.type,
+        genres: d.genres.length > 0 ? d.genres : undefined,
+        language: 'id',
+      } as Series;
+      return { series, chapters: parseChapterList(html, sourceId) };
+    },
+
     async getChapter(chapterSourceId: string): Promise<Chapter> {
       const num = parseChapterNumber(chapterSourceId);
       return {

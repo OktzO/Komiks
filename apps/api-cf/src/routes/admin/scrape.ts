@@ -4,6 +4,8 @@ import type { Env, Context } from '../../lib/context';
 import { getDb, json } from '../../lib/context';
 import { requireAdminKey } from '../../lib/auth';
 import { retryUpstream } from '../../lib/retry';
+import { resolveB2Accounts } from '../../lib/b2Config.ts';
+import { b2PutObject } from '../../lib/s3Upload.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
 
@@ -161,11 +163,15 @@ router.post('/scrape', requireAdminKey, async (c: Context) => {
           const ct = imgRes.headers.get('content-type') || '';
           if (imgRes.ok && ct.startsWith('image/')) {
             const imgBytes = new Uint8Array(await imgRes.arrayBuffer());
-            const r2Key = `covers/${result.series.slug}.jpg`;
-            await c.env.ASSETS_R2.put(r2Key, imgBytes);
+            const b2Key = `covers/${result.series.slug}.jpg`;
+            const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
+            if (b2Accounts.length > 0) {
+              const arrBuf = imgBytes.buffer.slice(imgBytes.byteOffset, imgBytes.byteOffset + imgBytes.byteLength) as ArrayBuffer;
+              await b2PutObject(b2Accounts[0], b2Key, arrBuf, ct).catch((e) => { console.error('[scrape] cover upload failed:', String(e)); });
+            }
             const { hashImage } = await import('@manga-platform/vision');
             const hash = await hashImage(imgBytes, ct);
-            await db.addImageHash({ seriesSlug: result.series.slug, hash, r2Key, imageType: 'cover' });
+            await db.addImageHash({ seriesSlug: result.series.slug, hash, r2Key: b2Key, imageType: 'cover' });
           } else {
             await imgRes.body?.cancel().catch(() => {});
           }

@@ -139,8 +139,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
     },
 
     async listChapters(sourceId: string): Promise<Chapter[]> {
-      const html = await fetchHtml(`${THRIVE_BASE}/title/${sourceId}/`);
-      const data = parseNextData<ThriveDetail>(html);
+      const data = await this._fetchDetail(sourceId);
       if (!data?.chapterlist) return [];
       return data.chapterlist.map((c) => ({
         id: c.chapter_id,
@@ -151,6 +150,31 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
         pages_count: 0,
         published_at: c.created_at ? new Date(c.created_at).getTime() : undefined,
       }));
+    },
+
+    async getSeriesDetail(sourceId: string, _opts?: { lang?: string }): Promise<{ series: Series; chapters: Chapter[] }> {
+      // SINGLE fetch + SINGLE parseNextData — vs. getSeries + listChapters both
+      // fetching /title/<id>/ separately.
+      const data = await this._fetchDetail(sourceId);
+      if (!data || !data.id) throw new Error(`thrive getSeriesDetail: no pageProps for ${sourceId}`);
+      const series = toSeries(data);
+      const chapters = (data.chapterlist || []).map((c) => ({
+        id: c.chapter_id,
+        series_slug: sourceId,
+        chapter_number: c.chapter_number ? parseFloat(c.chapter_number) || 0 : 0,
+        title: c.chapter_title ?? null,
+        language: 'id',
+        pages_count: 0,
+        published_at: c.created_at ? new Date(c.created_at).getTime() : undefined,
+      }));
+      return { series, chapters };
+    },
+
+    // Shared detail-page fetch + __NEXT_DATA__ parse (used by getSeries,
+    // listChapters, getSeriesDetail) — eliminates duplicate parseNextData calls.
+    async _fetchDetail(sourceId: string): Promise<ThriveDetail | null> {
+      const html = await fetchHtml(`${THRIVE_BASE}/title/${sourceId}/`);
+      return parseNextData<ThriveDetail>(html);
     },
 
     async getChapter(chapterSourceId: string): Promise<Chapter> {

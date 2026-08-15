@@ -22,6 +22,11 @@ export interface SourceAdapter {
   search(params: { q: string; limit?: number; offset?: number }): Promise<Series[]>;
   getSeries(sourceId: string): Promise<Series>;
   listChapters(sourceId: string, opts?: { lang?: string; chapter?: string }): Promise<Chapter[]>;
+  // Single-fetch detail: returns both series + chapters from ONE upstream request.
+  // Replaces the Promise.all([getSeries, listChapters]) pattern that double-fetched
+  // the same detail-page URL and triggered intermittent 502s from Komiku's
+  // DDoS-guard edge on parallel requests.
+  getSeriesDetail?(sourceId: string, opts?: { lang?: string }): Promise<{ series: Series; chapters: Chapter[] }>;
   getChapter(chapterSourceId: string): Promise<Chapter>;
   fetchPageUrls(
     chapterSourceId: string

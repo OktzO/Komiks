@@ -51,9 +51,33 @@ const parseSearchHtml = (html: string, _sel: typeof KOMIKU_SELECTORS.search): Se
   }).filter((s) => s.title);
 };
 
+// Parse chapter links from the series detail HTML.
+// Used by both listChapters and getSeriesDetail — single parse of one fetch.
+const parseChapterList = (html: string, seriesSlug: string): Chapter[] => {
+  const links = Array.from(html.matchAll(/<a[^>]*href="(\/[^"]*-chapter-[\d.-]+\/?)"[^>]*title="([^"]*)"/g)).map((m) => {
+    const href = m[1];
+    const title = m[2].replace(/^Baca\s+/, '').replace(/\s+Bahasa Indonesia$/, '').replace(/\s+Terbaru$/, '');
+    // Normalize: strip trailing slash so /foo-chapter-12/ and /foo-chapter-12 dedupe.
+    const id = (href.split('/').filter(Boolean).pop() ?? '').replace(/\/$/, '');
+    return { id, title, href };
+  });
+  const seen = new Set<string>();
+  const chapters = links.filter((c) => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+  return chapters.map((c) => ({
+    id: c.id,
+    series_slug: seriesSlug,
+    chapter_number: parseChapterNumber(c.title),
+    title: c.title,
+    language: 'id',
+    pages_count: 0,
+  }));
+};
+
 // Parse Komiku detail HTML (from komiku.org/manga/<slug>/) without DOM — Worker has no DOMParser.
 const parseDetailHtml = (html: string): { title: string; synopsis: string | null; cover_image: string | null; author: string | null; status: string; type: string; genres: string[] } => {
   // Title: find <span itemprop="name"> that is not "Komiku" sitename (inside <h1> context ideally).
+  // <meta itemprop="name" content="..."> tags are skipped because their content
+  // sits INSIDE the tag, not after `>`. This naturally filters them out.
   const allNames = Array.from(html.matchAll(/itemprop="name"[^>]*>([^<]+)</g)).map((m) => m[1].trim());
   const title = allNames.find((n) => n && n.toLowerCase() !== 'komiku') ?? allNames[0] ?? '';
   // Synopsis: <p class="desc" itemprop="description"> or <div itemprop="description">
@@ -70,7 +94,36 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
     ?? html.match(/itemprop="image"[^>]*src="([^"]+)"/)?.[1]
     ?? null;
   const cover = sanitizeCoverUrl(coverRaw);
-  // Info table: <td>Author:</td><td>Masashi Kishimoto</td>
+  // Info table: <td>Author:</td><td>Masashi Kishimoto</td>.
+  // NOTE: Komiku wraps the type value in <strong>Manhwa</strong> so the
+  // `[^<]*` table-cell capture returns empty for the Tipe row. We instead
+  // prefer <meta itemprop="additionalType" content="Manhwa"> (schema.org) —
+  // always present, always exact. Fall back to <td> parsing only if missing.
+  const additionalType = html.match(/itemprop="additionalType"\s+content="([^"]+)"/i)?.[1]?.trim();
+  const typeFromTable = (() => {
+    const tds = Array.from(html.matchAll(/<td[^>]*>([^<]*)<\/td>/g)).map((m) => m[1].trim());
+    const idx = tds.findIndex((t) => /^Tipe:$/i.test(t));
+    if (idx < 0) return null;
+    // Skip the empty placeholder <td> that Komiku inserts before <td>Tema:</td>.
+    for (let i = idx + 1; i < Math.min(idx + 4, tds.length); i++) {
+      const v = tds[i].replace(/<[^>]+>/g, '').trim();
+      if (/^(manga|manhwa|manhua)$/i.test(v)) return v.toLowerCase();
+    }
+    return null;
+  })();
+  const typeMatch = (additionalType && /^(manga|manhwa|manhua)$/i.test(additionalType) ? additionalType : null)
+    ?? typeFromTable
+    ?? html.match(/manga_img_horizontal-(manhua|manhwa|manga)/i)?.[1];
+  const type = (typeMatch ?? 'manga').toLowerCase();
+  // Genres: scope to the `<ul class="genre">...</ul>` block (excludes nav
+  // menu genre links which are unrelated). Inside, Komiku nests `<span>`
+  // inside `<a>` so direct text `[^<]+` misses the name — allow one nested
+  // open+close tag level around the label.
+  const genreBlock = html.match(/<ul class="genre">([\s\S]*?)<\/ul>/i)?.[1] ?? '';
+  const genres = Array.from(genreBlock.matchAll(/<a[^>]*href="[^"]*\/genre\/[^"]*"[^>]*>(?:<[^>]+>)*([^<]+)(?:<\/[^>]+>)*<\/a>/g))
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+  // Author / Status from <td> table (work fine — values are plain text).
   const tds = Array.from(html.matchAll(/<td[^>]*>([^<]*)<\/td>/g)).map((m) => m[1].trim());
   const findVal = (label: RegExp) => {
     const idx = tds.findIndex((t) => label.test(t));
@@ -79,14 +132,6 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
   const author = findVal(/^Author:/i);
   const statusRaw = findVal(/^Status:/i);
   const status = statusRaw ? (statusRaw.toLowerCase().includes('end') ? 'completed' : 'ongoing') : 'ongoing';
-  const typeRaw = findVal(/^Tipe:/i);
-  // Komiku baris Tipe: sering noise double-label "<td>Tipe:</td><td>Tema:</td>" —
-  // hanya terima value yang eksplisit manga/manhwa/manhua. Fallback: cover
-  // horizontal komiku mengandung tipe ("manga_img_horizontal-Manhua-...").
-  const typeMatch = typeRaw?.trim().match(/^(manga|manhwa|manhua)$/i)?.[1]
-    ?? html.match(/manga_img_horizontal-(manhua|manhwa|manga)/i)?.[1];
-  const type = (typeMatch ?? 'manga').toLowerCase();
-  const genres = Array.from(html.matchAll(/<a[^>]*href="[^"]*\/genre\/[^"]*"[^>]*>([^<]+)<\/a>/g)).map((m) => m[1].trim()).filter(Boolean);
   return { title, synopsis, cover_image: cover, author, status, type, genres };
 };
 
@@ -109,8 +154,16 @@ export const komikuAdapter = (env?: AdapterEnv) => {
 
     async getSeries(sourceId: string): Promise<Series> {
       const res = await fetch(`${KOMIKU_BASE}/manga/${sourceId}/`, {
-        headers: { 'User-Agent': KOMIKU_UA },
-        signal: AbortSignal.timeout(15000),
+        headers: { 
+          'User-Agent': KOMIKU_UA,
+          'Referer': KOMIKU_REFERER,
+        },
+        signal: AbortSignal.timeout(30000),
+        // Komiku HTML is cacheable at Cloudflare's edge (cf-cache-status
+        // header on the response indicates HIT/MISS). Forcing cacheEverything
+        // + cacheTtl ensures CF caches a successful upstream response so
+        // concurrent miss-spike traffic doesn't all hammer komiku.org at once.
+        cf: { cacheEverything: true, cacheTtl: 600 },
       });
       if (!res.ok) { await drainResponse(res); throw new Error(`komiku getSeries ${res.status}`); }
       const html = await res.text();
@@ -153,22 +206,49 @@ export const komikuAdapter = (env?: AdapterEnv) => {
       });
       if (!res.ok) { await drainResponse(res); throw new Error(`komiku listChapters ${res.status}`); }
       const html = await res.text();
-      const links = Array.from(html.matchAll(/<a[^>]*href="(\/[^"]*-chapter-[\d.-]+\/?)"[^>]*title="([^"]*)"/g)).map((m) => {
-        const href = m[1];
-        const title = m[2].replace(/^Baca\s+/, '').replace(/\s+Bahasa Indonesia$/, '').replace(/\s+Terbaru$/, '');
-        const id = href.split('/').filter(Boolean).pop() ?? '';
-        return { id, title, href };
+      return parseChapterList(html, sourceId);
+    },
+
+    async getSeriesDetail(sourceId: string, _opts?: { lang?: string }): Promise<{ series: Series; chapters: Chapter[] }> {
+      // SINGLE fetch of the detail page — parseBoth series metadata + chapter
+      // list from the same HTML. Replaces the double-fetch (getSeries +
+      // listChapters) that triggered Komiku DDoS-guard stalls → intermittent 502.
+      const res = await fetch(`${KOMIKU_BASE}/manga/${sourceId}/`, {
+        headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
+        signal: AbortSignal.timeout(30000),
+        cf: { cacheEverything: true, cacheTtl: 600 },
       });
-      const seen = new Set<string>();
-      const chapters = links.filter((c) => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
-      return chapters.map((c) => ({
-        id: c.id,
-        series_slug: sourceId,
-        chapter_number: parseChapterNumber(c.title),
-        title: c.title,
-        language: 'id',
-        pages_count: 0,
-      }));
+      if (!res.ok) { await drainResponse(res); throw new Error(`komiku getSeriesDetail ${res.status}`); }
+      const html = await res.text();
+      const data = parseDetailHtml(html);
+      let cover = data.cover_image;
+      if (!cover) {
+        try {
+          const qWords = sourceId.split('-').slice(0, 2).join(' ');
+          const searchRes = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
+            headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (searchRes.ok) {
+            const sHtml = await searchRes.text();
+            const items = parseSearchHtml(sHtml, KOMIKU_SELECTORS.search);
+            const match = items.find((it) => it.slug === sourceId);
+            if (match?.cover_image) cover = match.cover_image;
+          } else {
+            await drainResponse(searchRes);
+          }
+        } catch { /* cover fallback optional */ }
+      }
+      const chapters = parseChapterList(html, sourceId);
+      const series: Series = {
+        slug: sourceId,
+        external_id: sourceId,
+        source: 'komiku',
+        source_url: `${KOMIKU_BASE}/manga/${sourceId}/`,
+        ...data,
+        cover_image: cover,
+      } as Series;
+      return { series, chapters };
     },
 
     async getChapter(chapterSourceId: string): Promise<Chapter> {
@@ -187,14 +267,17 @@ export const komikuAdapter = (env?: AdapterEnv) => {
 
     async fetchPageUrls(chapterSourceId: string): Promise<{ url: string; proxyHeaders?: Record<string, string> }[]> {
       const res = await fetch(`${KOMIKU_BASE}/${chapterSourceId}/`, {
-        headers: { 'User-Agent': KOMIKU_UA },
-        signal: AbortSignal.timeout(15000),
+        headers: { 
+          'User-Agent': KOMIKU_UA,
+          'Referer': KOMIKU_REFERER,
+        },
+        signal: AbortSignal.timeout(30000),
       });
       if (!res.ok) { await drainResponse(res); throw new Error(`komiku fetchPageUrls ${res.status}`); }
       const html = await res.text();
       const urls = Array.from(html.matchAll(/<img[^>]*src="(https?:\/\/img\.komiku\.org\/[^"]+)"/g)).map((m) => m[1]);
       // Komiku images require Referer header — pass to image proxy.
-      return urls.map((url) => ({ url, proxyHeaders: { Referer: 'https://komiku.org/' } }));
+      return urls.map((url) => ({ url, proxyHeaders: { Referer: KOMIKU_REFERER } }));
     },
 
     async scrapeUrl(url: string): Promise<{ series: Series; chapters: Chapter[]; coverImageUrl: string | null }> {

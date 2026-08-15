@@ -6,7 +6,7 @@ import { getAuthApiUrl } from '@/lib/api';
 // Bookmark toggle — small black box per manga tile (reader + detail pages).
 // Login is detected via GET /me (guest-friendly: 200 + {data:null}); only the
 // mutating POST/DELETE bookmark endpoints are rate-limited + session-guarded.
-export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm' | 'md' }) {
+export function BookmarkButton({ slug, size = 'md', title, cover, source }: { slug: string; size?: 'sm' | 'md'; title?: string | null; cover?: string | null; source?: string }) {
   const router = useRouter();
   const [on, setOn] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
@@ -65,7 +65,12 @@ export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ seriesSlug: slug }),
+              body: JSON.stringify({
+                seriesSlug: slug,
+                title: title ?? undefined,
+                cover_image: cover ?? undefined,
+                source: source ?? undefined,
+              }),
             });
       if (r.status === 401) { setOn(false); router.push('/login'); return; }
       if (!r.ok) { setOn(prevOn); setFailed(true); setTimeout(() => setFailed(false), 1500); }

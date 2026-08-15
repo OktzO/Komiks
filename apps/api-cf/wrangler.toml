@@ -15,11 +15,18 @@ binding = "CACHE_KV"
 id = "6205fceab7b64f9d80f6f67e4189316b"
 preview_id = "6205fceab7b64f9d80f6f67e4189316b"
 
-[[r2_buckets]]
-binding = "ASSETS_R2"
-bucket_name = "manga-assets"
-preview_bucket_name = "manga-assets-dev"
-
 [browser]
 binding = "MY_BROWSER"
 remote = true
+
+# B2 credentials via `wrangler secret put` (production).
+# For local preview, set in .dev.vars instead (see .dev.vars.example).
+# B2_CONFIG / B2_ACCOUNTS: JSON array of B2Account objects.
+# Example:
+# [{
+#   "name":"kom","bucket":"manga-images","keyId":"005336d7...","appKey":"K0058cxC...",
+#   "region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"
+# }]
+[vars]
+B2_CONFIG = ""
+B2_ACCOUNTS = ""

@@ -232,7 +232,7 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
       {startChapterId && (
         <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
           <div className="nav-island flex w-full max-w-md items-center gap-2 rounded-xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.45)]">
-            <BookmarkButton slug={params.slug} />
+            <BookmarkButton slug={params.slug} title={series.title} cover={series.cover_image} source={params.source} />
             <Link
               href={`/${params.source}/s/${params.slug}/${startChapterId}?mangaId=${params.slug.split('--').pop()}`}
               prefetch={false}

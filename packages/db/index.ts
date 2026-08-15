@@ -38,7 +38,7 @@ export interface Db {
    deleteUserAccount: (userId: number) => Promise<{ success: boolean }>;
    clearUserHistory: (userId: number) => Promise<{ success: boolean; deleted: number }>;
    clearUserBookmarks: (userId: number) => Promise<{ success: boolean; deleted: number }>;
-   addBookmark: (params: { userId: number; seriesSlug: string; source?: string; source_url?: string }) => Promise<{ success: boolean }>;
+   addBookmark: (params: { userId: number; seriesSlug: string; source?: string; source_url?: string; title?: string; cover_image?: string }) => Promise<{ success: boolean }>;
    removeBookmark: (params: { userId: number; seriesSlug: string }) => Promise<{ success: boolean }>;
    isBookmarked: (params: { userId: number; seriesSlug: string }) => Promise<boolean>;
    listBookmarks: (userId: number) => Promise<ListResult<Series>>;
@@ -272,11 +272,23 @@ export const db = (client: D1Database): Db => {
        return { success: true, deleted };
      },
 
-      addBookmark: async ({ userId, seriesSlug, source, source_url }) => {
+      addBookmark: async ({ userId, seriesSlug, source, source_url, title, cover_image }) => {
+       // Ensure the FK parent `series` row exists BEFORE inserting the bookmark.
+       // The auth origin's D1 (akun-2) has a sparse `series` table (only scraped
+       // rows) — a user can bookmark a slug that isn't in this account's DB yet.
+       // Without the parent row, `INSERT OR IGNORE` still throws
+       // SQLITE_CONSTRAINT (FOREIGN KEY) → POST 500 → frontend button reverts.
+       await prep(
+         `INSERT INTO series (slug, source, title, type, status, cover_image, updated_at)
+          VALUES (?1, ?2, ?3, 'manga', 'ongoing', ?4, unixepoch())
+          ON CONFLICT(slug) DO UPDATE SET
+            cover_image = COALESCE(excluded.cover_image, series.cover_image),
+            updated_at = unixepoch()`
+       ).bind(seriesSlug, source ?? 'local', title ?? seriesSlug, cover_image ?? null).run();
        const res = await prep('INSERT OR IGNORE INTO bookmarks (user_id, series_slug, source, source_url) VALUES (?1, ?2, ?3, ?4)')
          .bind(userId, seriesSlug, source ?? null, source_url ?? null).run();
        return { success: res.success };
-     },
+      },
 
     removeBookmark: async ({ userId, seriesSlug }) => {
       const res = await prep('DELETE FROM bookmarks WHERE user_id = ?1 AND series_slug = ?2')

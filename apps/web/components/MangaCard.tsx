@@ -33,7 +33,7 @@ export function MangaCard({
         </div>
         {bookmarkable && (
           <div className="absolute top-1.5 right-1.5 z-10">
-            <BookmarkButton slug={bookmarkSlug ?? manga.slug} size="sm" />
+            <BookmarkButton slug={bookmarkSlug ?? manga.slug} size="sm" title={manga.title} cover={manga.cover} source={source} />
           </div>
         )}
       </div>

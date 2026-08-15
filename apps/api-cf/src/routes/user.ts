@@ -89,9 +89,9 @@ router.use('/sessions/revoke-all', requireSession);
 
 router.post('/bookmark', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const { seriesSlug, source, source_url } = await c.req.json() as { seriesSlug?: string; source?: string; source_url?: string };
+  const { seriesSlug, source, source_url, title, cover_image } = await c.req.json() as { seriesSlug?: string; source?: string; source_url?: string; title?: string; cover_image?: string };
   if (!seriesSlug) return c.json({ error: 'seriesSlug required' }, 400);
-  await db(c.env.DB).addBookmark({ userId: user.id, seriesSlug, source, source_url });
+  await db(c.env.DB).addBookmark({ userId: user.id, seriesSlug, source, source_url, title, cover_image });
   return c.json({ data: { ok: true } });
 });
 

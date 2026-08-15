@@ -158,6 +158,28 @@ export const bacakomikAdapter = (env?: BacaFetchEnv) => {
       return parseChapterList(html, sourceId);
     },
 
+    async getSeriesDetail(sourceId: string, _opts?: { lang?: string }): Promise<{ series: Series; chapters: Chapter[] }> {
+      // SINGLE fetch — parse both series + chapters from same HTML.
+      const url = `${BACA_BASE}/komik/${sourceId}/`;
+      const html = await fetchHtml(url, env);
+      const data = parseDetailHtml(html);
+      const series: Series = {
+        slug: sourceId,
+        external_id: sourceId,
+        source: 'bacakomik',
+        source_url: url,
+        title: data.title || sourceId,
+        synopsis: data.synopsis,
+        cover_image: data.cover_image,
+        author: data.author,
+        status: data.status,
+        type: data.type,
+        genres: data.genres.length > 0 ? data.genres : undefined,
+        language: 'id',
+      } as Series;
+      return { series, chapters: parseChapterList(html, sourceId) };
+    },
+
     async getChapter(chapterSourceId: string): Promise<Chapter> {
       const num = parseChapterNumber(chapterSourceId);
       return {
