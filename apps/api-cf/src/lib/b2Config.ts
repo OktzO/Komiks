@@ -1,6 +1,8 @@
 // Konfigurasi Backblaze B2 multi-account.
 // Secret JSON array (B2_ACCOUNTS), urutan = idx: [-1, -2, ...].
 // Backward-compat: single-object B2_CONFIG lama diconvert ke array 1-item.
+import { murmur3_32 } from '@manga-platform/shared/r2-routing';
+
 export interface B2Account {
   name: string;
   bucket: string;
@@ -78,4 +80,17 @@ export const resolveB2Accounts = (
     out.push(a);
   }
   return out;
+};
+
+// Deterministic B2 account pick by object-key hash (murmur3_32). Same object
+// key always lands on the same B2 account (dedup-able, consistent eviction).
+// Single account → always index 0 (backward compatible with legacy setup).
+export const pickB2AccountIdx = (accounts: B2Account[], key: string): number => {
+  if (accounts.length <= 1) return 0;
+  return murmur3_32(key) % accounts.length;
+};
+
+export const pickB2Account = (accounts: B2Account[], key: string): B2Account | null => {
+  if (accounts.length === 0) return null;
+  return accounts[pickB2AccountIdx(accounts, key)];
 };
