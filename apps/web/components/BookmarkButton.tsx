@@ -8,7 +8,7 @@ import { getAuthApiUrl } from '@/lib/api';
 // mutating POST/DELETE bookmark endpoints are rate-limited + session-guarded.
 export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm' | 'md' }) {
   const router = useRouter();
-  const [on, setOn] = useState(false);
+  const [on, setOn] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -18,19 +18,30 @@ export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm
     (async () => {
       try {
         const base = await getAuthApiUrl();
-        const r = await fetch(`${base}/api/user/me`, {
+        const me = await fetch(`${base}/api/user/me`, {
           credentials: 'include',
           signal: AbortSignal.timeout(8000),
         });
-        if (!r.ok) return; // treat as guest
-        const j = await r.json();
-        if (alive) setSignedIn(!!j?.data);
+        if (alive && me.ok) {
+          const j = await me.json();
+          setSignedIn(!!j?.data);
+          if (j?.data) {
+            const bk = await fetch(`${base}/api/user/bookmark/${encodeURIComponent(slug)}`, {
+              credentials: 'include',
+              signal: AbortSignal.timeout(8000),
+            });
+            if (alive && bk.ok) {
+              const b = await bk.json();
+              setOn(!!b?.data?.bookmarked);
+            }
+          }
+        }
       } catch {
-        // offline / blocked — treat as guest, actions will redirect to login
+        if (alive) { /* offline / blocked — treat as guest */ }
       }
     })();
     return () => { alive = false };
-  }, []);
+  }, [slug]);
 
   const dim = size === 'sm' ? 'h-9 w-9' : 'h-11 w-11';
   const iconSize = size === 'sm' ? 14 : 18;
@@ -39,12 +50,12 @@ export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm
     if (busy) return;
     if (!signedIn) { router.push('/login'); return; }
     setBusy(true);
-    const prev = on;
-    setOn(!prev); // optimistic
+    const prevOn = on;
+    setOn(!prevOn); // optimistic
     try {
       const base = await getAuthApiUrl();
       const r =
-        prev
+        prevOn
           ? await fetch(`${base}/api/user/bookmark/${encodeURIComponent(slug)}`, {
               method: 'DELETE',
               credentials: 'include',
@@ -57,9 +68,9 @@ export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm
               body: JSON.stringify({ seriesSlug: slug }),
             });
       if (r.status === 401) { setOn(false); router.push('/login'); return; }
-      if (!r.ok) { setOn(prev); setFailed(true); setTimeout(() => setFailed(false), 1500); }
+      if (!r.ok) { setOn(prevOn); setFailed(true); setTimeout(() => setFailed(false), 1500); }
     } catch {
-      setOn(prev);
+      setOn(prevOn);
       setFailed(true);
       setTimeout(() => setFailed(false), 1500);
     } finally {
@@ -68,11 +79,12 @@ export function BookmarkButton({ slug, size = 'md' }: { slug: string; size?: 'sm
   };
 
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggle(); }}
+        <button
+      onClick={(e) => { e.stopPropagation(); e.preventDefault(); if (!busy) toggle(); }}
+      disabled={busy}
       aria-pressed={on}
       title={on ? 'Hapus bookmark' : 'Tambah bookmark'}
-      className={`${dim} shrink-0 grid place-items-center rounded-lg border bg-black text-white transition-transform duration-150 active:scale-95 ${failed ? 'border-red-500' : 'border-white'}`}
+      className={`${dim} shrink-0 grid place-items-center rounded-lg border bg-black text-white transition-transform duration-150 active:scale-95 ${failed ? 'border-red-500' : 'border-white'} ${busy ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
     >
       <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill={on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M6 3h12v18l-6-4-6 4z" />
