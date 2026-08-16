@@ -121,7 +121,7 @@ npx wrangler kv key put --binding=CACHE_KV "provision:migration:latest" --path=p
 | Secret | Deskripsi |
 |---|---|
 | `LB_ENCRYPTION_KEY` | HMAC sign key cookie session+state (32-byte hex) |
-| `GOOGLE_CLIENT_ID` | `552946613891-hcc6nh35d52tfjfsr7ijcigkoqbinhl9.apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_ID` | `set via wrangler secret (rotasi setelah leak)` |
 | `ALLOWED_ORIGINS` | comma-separated: `https://oktzz.xyz,https://www.oktzz.xyz,https://oktz.xyz,https://manga-web-d32.pages.dev,https://*.manga-web-d32.pages.dev,http://localhost:3000` |
 | `ADMIN_EMAILS` | comma-separated email → auto role admin |
 | `SCRAPE_API_KEY` | admin API key untuk `/api/scrape` (via header `x-admin-api-key`) |
