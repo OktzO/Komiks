@@ -9,7 +9,7 @@ import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
 import { resolveB2Accounts, pickB2AccountIdx, type B2Account } from '../lib/b2Config.ts';
-import { ownerFor, internalExec } from '../lib/peers';
+import { ownerFor, internalExec, internalQuery } from '../lib/peers';
 import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
@@ -187,6 +187,39 @@ const upsertPageRow = async (
   if (!ok) {
     await getDb(c).markPageB2Uploaded({ chapterId, pageNumber: pageNo, imageUrl, b2Key, b2AccountIdx: accountIdx }).catch(() => {});
   }
+};
+
+// Read chapter_pages rows from the owner D1 (self → local; peer → internal
+// /db/query). Empty array when owner read fails → frontend falls back to proxy
+// (which re-uploads + heals the owner row).
+const readStoredPageRows = async (
+  c: Context,
+  chapterId: string
+): Promise<Array<{ page_number: number; r2_key: string; r2_account_idx: number }>> => {
+  const owner = ownerFor(c.env, chapterId);
+  const sql = 'SELECT page_number, r2_key, r2_account_idx FROM chapter_pages WHERE chapter_id = ?1';
+  if (owner.self) {
+    const res = await c.env.DB.prepare(sql).bind(chapterId).all<{ page_number: number; r2_key: string; r2_account_idx: number }>().catch(() => null);
+    return res?.results ?? [];
+  }
+  return (await internalQuery<{ page_number: number; r2_key: string; r2_account_idx: number }>(
+    c.env, owner.url, sql, [chapterId], 'chapter_pages'
+  ).catch(() => null)) ?? [];
+};
+
+// LRU touch must land on the owner D1 too (the row lives there). Best-effort.
+const touchOwnerPage = async (c: Context, chapterId: string, pageNo: number): Promise<void> => {
+  const owner = ownerFor(c.env, chapterId);
+  if (owner.self) {
+    await getDb(c).touchPageLastAccess(chapterId, pageNo).catch(() => {});
+    return;
+  }
+  const sql = 'UPDATE chapter_pages SET last_access = ?1 WHERE chapter_id = ?2 AND page_number = ?3';
+  await internalExec(c.env, owner.url, {
+    sql,
+    params: [Math.floor(Date.now() / 1000), chapterId, pageNo],
+    table: 'chapter_pages',
+  }).catch(() => {});
 };
 
 // Upload gambar ke B2 storage tier (background) + catat D1. Idempoten:
@@ -489,15 +522,13 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     const chapter = await retryUpstream(() => adapter.getChapter(chapterId));
     const pages = await fetchPageUrlsWithCache(c, source, chapterId);
     const proxyBase = `/api/reader/${source}/page/${encodeURIComponent(chapterId)}`;
-    // Storage lookup: object yang sudah di-upload → URL langsung (B2 presigned
-    // atau R2 public domain) biar serve tidak lewat Worker. r2_account_idx=-1
-    // = B2, >=0 = akun R2 ring. Object new → null → frontend pakai proxy
-    // (yang sekaligus meng-upload → request berikutnya dapat URL langsung).
-    const stored = await c.env.DB.prepare(
-      'SELECT page_number, r2_key, r2_account_idx FROM chapter_pages WHERE chapter_id = ?1'
-    ).bind(chapterId).all<{ page_number: number; r2_key: string; r2_account_idx: number }>().catch(() => null);
+    // Storage lookup: object yang sudah di-upload → URL langsung (B2 presigned)
+    // biar serve tidak lewat Worker. chapter_pages di-shard ke owner D1, jadi
+    // baca lewat readStoredPageRows (self → lokal; peer → internal /db/query).
+    // Object new → null → frontend pakai proxy (yang sekaligus meng-upload).
+    const storedRows = await readStoredPageRows(c, chapterId);
     const storedByPage = new Map<number, { r2Key: string; accountIdx: number }>();
-    for (const row of stored?.results ?? []) storedByPage.set(row.page_number, { r2Key: row.r2_key, accountIdx: row.r2_account_idx });
+    for (const row of storedRows) storedByPage.set(row.page_number, { r2Key: row.r2_key, accountIdx: row.r2_account_idx });
     const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
     const data = {
       ...chapter,
@@ -516,7 +547,7 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     // LRU touch: update last_access untuk pages yang diakses (background).
     c.executionCtx.waitUntil((async () => {
       for (let i = 0; i < pages.length; i++) {
-        await getDb(c).touchPageLastAccess(chapterId, i + 1).catch(() => {});
+        await touchOwnerPage(c, chapterId, i + 1).catch(() => {});
       }
       // Eviction trigger: every 100th chapter detail request, run LRU evict.
       // eviction:tick gets a 24h TTL so the key doesn't persist forever.
