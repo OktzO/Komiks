@@ -97,3 +97,26 @@ export const b2PresignedGet = async (
   const signature = hex(await hmac(keyBuf, stringToSign));
   return `https://${b2.host}${path}?${query}&X-Amz-Signature=${signature}`;
 };
+
+// DELETE object (AWS SigV4). Used by storage eviction.
+export const b2DeleteObject = async (b2: B2Account, key: string): Promise<boolean> => {
+  const dateISO = new Date().toISOString();
+  const amzDate = dateISO.replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const path = `/${b2.bucket}/${encodePath(key)}`;
+  const canonicalHeaders = `host:${b2.host}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'host;x-amz-date';
+  const canonicalRequest = `DELETE\n${path}\n\n${canonicalHeaders}\n${signedHeaders}\n`;
+  const scope = `${dateStamp}/${b2.region}/${SERVICE}/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalRequest)))}`;
+  const keyBuf = await signingKey(b2.appKey, dateStamp, b2.region);
+  const signature = hex(await hmac(keyBuf, stringToSign));
+  const res = await fetch(`https://${b2.host}${path}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `AWS4-HMAC-SHA256 Credential=${b2.keyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      'x-amz-date': amzDate,
+    },
+  });
+  return res.ok || res.status === 204;
+};

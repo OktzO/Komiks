@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getB2Usage, addB2Usage, setB2Usage, quotaBytes } from '../src/lib/b2Usage.ts';
+import { getB2Usage, addB2Usage, setB2Usage, quotaBytes, usageRatio } from '../src/lib/b2Usage.ts';
 
 function stubKv() {
   const store = new Map();
@@ -33,4 +33,11 @@ test('setB2Usage overwrites', async () => {
 test('quotaBytes default 10GB, env override', () => {
   assert.equal(quotaBytes({}), 10 * 1024 * 1024 * 1024);
   assert.equal(quotaBytes({ B2_QUOTA_BYTES: '2048' }), 2048);
+});
+
+test('usageRatio = used/quota', async () => {
+  const kv = stubKv();
+  await setB2Usage(kv, 0, 5 * 1024 * 1024 * 1024); // 5GB
+  assert.equal(await usageRatio({}, kv, 0), 0.5);
+  assert.equal(await usageRatio({ B2_QUOTA_BYTES: '100' }, kv, 0), 53687091.2);
 });

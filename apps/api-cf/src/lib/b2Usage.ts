@@ -28,3 +28,13 @@ export const addB2Usage = async (kv: UsageKv, idx: number, delta: number): Promi
   await setB2Usage(kv, idx, bytes);
   return bytes;
 };
+
+export const usageRatio = async (
+  env: { B2_QUOTA_BYTES?: string },
+  kv: UsageKv,
+  idx: number
+): Promise<number> => {
+  const quota = quotaBytes(env);
+  if (quota <= 0) return 0;
+  return (await getB2Usage(kv, idx)) / quota;
+};
