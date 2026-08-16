@@ -9,6 +9,7 @@ import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
 import { resolveB2Accounts, pickB2AccountIdx, type B2Account } from '../lib/b2Config.ts';
+import { ownerFor, internalExec } from '../lib/peers';
 import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
@@ -163,6 +164,31 @@ const b2AccountByIdx = (b2Accounts: B2Account[], accountIdx: number): B2Account 
   return b2Accounts[arrIdx];
 };
 
+// Upsert chapter_pages row to the OWNER D1 (sharded by chapterId). Self →
+// local write; peer → internal /db/exec; on forward failure write locally as
+// row-healing fallback (design "Error handling: Owner down → tulis lokal").
+const upsertPageRow = async (
+  c: Context,
+  chapterId: string,
+  pageNo: number,
+  imageUrl: string,
+  b2Key: string,
+  accountIdx: number
+): Promise<void> => {
+  const owner = ownerFor(c.env, chapterId);
+  if (owner.self) {
+    await getDb(c).markPageB2Uploaded({ chapterId, pageNumber: pageNo, imageUrl, b2Key, b2AccountIdx: accountIdx }).catch(() => {});
+    return;
+  }
+  const sql = `INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`;
+  const ok = await internalExec(c.env, owner.url, { sql, params: [chapterId, pageNo, imageUrl, b2Key, accountIdx], table: 'chapter_pages' });
+  if (!ok) {
+    await getDb(c).markPageB2Uploaded({ chapterId, pageNumber: pageNo, imageUrl, b2Key, b2AccountIdx: accountIdx }).catch(() => {});
+  }
+};
+
 // Upload gambar ke B2 storage tier (background) + catat D1. Idempoten:
 // key sama → overwrite sama. Race 2 request paralel aman.
 // Hash-pick → mulai dari akun itu; gagal → fallback ke akun lain (wrapping).
@@ -181,13 +207,7 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
     try {
       const res = await b2PutObject(b2, b2Key, opts.body as ArrayBuffer, opts.contentType);
       if (res.ok) {
-        await getDb(c).markPageB2Uploaded({
-          chapterId: opts.chapterId,
-          pageNumber: opts.pageNo,
-          imageUrl: opts.imageUrl,
-          b2Key,
-          b2AccountIdx: accountIdx,
-        });
+        await upsertPageRow(c, opts.chapterId, opts.pageNo, opts.imageUrl, b2Key, accountIdx);
         await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, b2Key, accountIdx);
         return;
       }
