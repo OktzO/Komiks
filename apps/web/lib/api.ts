@@ -92,8 +92,6 @@ export const getSeriesList = (page = 1, limit = 24): Promise<Series[]> =>
   apiWithFailover<Series[]>(`/api/series?page=${page}&limit=${limit}`);
 
 // ---- Data API (now merged into single manga-api Worker) ----------------------
-export const DATA_API_URL = process.env.NEXT_PUBLIC_DATA_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
-
 export interface MergedManga {
   slug: string;
   title: string;
@@ -112,33 +110,26 @@ export interface SourceStatus {
   error?: string;
 }
 
-async function dataApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${DATA_API_URL}${path}`, {
-    ...init,
-    cache: "no-store",
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!res.ok) throw new Error(`Data API ${path} → ${res.status}`);
-  return res.json() as Promise<T>;
-}
-
 export const searchMerged = (q: string): Promise<{ data: MergedManga[]; sources_queried: string[] }> =>
-  dataApi(`/api/search?q=${encodeURIComponent(q)}`);
+  apiWithFailover(`/api/search?q=${encodeURIComponent(q)}`);
 
 export const getSourceStatus = (): Promise<{ data: SourceStatus[] }> =>
-  dataApi('/api/source-status');
+  apiWithFailover('/api/source-status');
 
 // ---- Round-robin origin failover (LB multi-account) --------------------
 // Health-aware: skip origin yang 429/5xx/timeout (circuit breaker 60s per
-// origin setelah 2 gagal beruntun). Retry max 2x, bukan coba semua akun.
+// origin setelah 2 gagal beruntun). Round-robin cursor di sessionStorage
+// supaya beban tersebar ke semua worker (bukan selalu mulai di index 0).
 // Hanya path publik yang boleh dipanggil ke origin — allowlist eksplisit.
+// D1 chapter_pages kini shard-readable dari worker mana pun (owner forwarding),
+// jadi reader/series/search/health/source-status boleh round-robin. Auth paths
+// TIDAK di sini — tetap sticky ke auth origin (cookie + D1 split).
 const ORIGIN_PATH_ALLOWLIST = [
-  '/api/health',
+  '/api/reader/',
+  '/api/series',
   '/api/search',
+  '/api/health',
   '/api/source-status',
-  // /api/reader/* tidak di-failover: butuh D1 storage lookup (chapter_pages)
-  // yang hanya ada di main D1 — origin 2 D1 terpisah. /api/series juga
-  // main-only. Reader tetap tahan: R2/B2 URL langsung serve, tanpa Worker.
 ];
 
 export const getOrigins = async (): Promise<{ url: string }[]> => {
@@ -162,6 +153,16 @@ export const getOrigins = async (): Promise<{ url: string }[]> => {
   }
 };
 
+// Round-robin cursor. Persisted in sessionStorage so consecutive page loads
+// rotate across workers instead of always starting at index 0.
+const getNextRrIndex = (len: number): number => {
+  const key = 'rr_index';
+  const prev = typeof sessionStorage !== 'undefined' ? Number(sessionStorage.getItem(key)) || 0 : 0;
+  const next = (prev + 1) % len;
+  if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(key, String(next));
+  return next;
+};
+
 // Circuit state per origin: gagal beruntun → skip 60s.
 const failures = new Map<string, { count: number; until: number }>();
 
@@ -170,13 +171,15 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
     return api<T>(path); // non-publik → main API saja
   }
   const origins = await getOrigins();
+  if (origins.length === 0) return api<T>(path);
+
   const now = Date.now();
-  let attempts = 0;
-  for (const origin of origins) {
-    if (attempts >= 2) break; // retry terbatas, bukan loop semua akun
+  const start = getNextRrIndex(origins.length);
+  // Rotate across ALL origins (not a fixed 2-attempt cap) so load spreads.
+  for (let k = 0; k < origins.length; k++) {
+    const origin = origins[(start + k) % origins.length];
     const state = failures.get(origin.url);
-    if (state && state.until > now) continue;
-    attempts++;
+    if (state && state.until > now) continue; // circuit open → skip
     try {
       const res = await fetch(`${origin.url}${path}`, {
         signal: AbortSignal.timeout(8000),
