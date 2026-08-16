@@ -30,3 +30,7 @@ remote = true
 [vars]
 B2_CONFIG = ""
 B2_ACCOUNTS = ""
+EVICTION_OWNER = "1"
+
+[triggers]
+crons = ["0 * * * *"]

@@ -1,10 +1,14 @@
 // KV-backed B2 usage tracker. Each account has a counter key `b2:usage:<idx>`
 // holding JSON `{ bytes: number; updatedAt: number }`. Usage is additive +
 // occasionally reconciled from native B2 API by the cron (Task 15/16).
+import { resolveB2Accounts } from './b2Config';
+
 export type UsageKv = {
   get(key: string, fmt?: 'json'): Promise<any | null>;
   put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
 };
+
+export type B2Account = { keyId: string; appKey: string; bucket: string };
 
 export const DEFAULT_QUOTA_BYTES = 10 * 1024 * 1024 * 1024; // 10 GiB per account
 
@@ -37,4 +41,45 @@ export const usageRatio = async (
   const quota = quotaBytes(env);
   if (quota <= 0) return 0;
   return (await getB2Usage(kv, idx)) / quota;
+};
+
+// Native B2 API usage (b2_authorize_account → b2_list_buckets). Accurate
+// bytes/fileCount; used by cron to reconcile the KV counter.
+export const b2NativeUsage = async (b2: B2Account): Promise<{ fileCount: number; bytes: number } | null> => {
+  try {
+    const authRes = await fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
+      headers: { Authorization: `Basic ${btoa(`${b2.keyId}:${b2.appKey}`)}` },
+    });
+    if (!authRes.ok) return null;
+    const auth = (await authRes.json()) as {
+      authorizationToken: string;
+      apiInfo: { storageApi: { apiUrl: string; bucketId: string } };
+      accountInfo: { usedBucketCapabilities: number };
+    };
+    const { authorizationToken, apiInfo, accountInfo } = auth;
+    if (!apiInfo?.storageApi?.apiUrl || !authorizationToken) return null;
+    const listRes = await fetch(`${apiInfo.storageApi.apiUrl}/b2api/v3/b2_list_buckets`, {
+      method: 'POST',
+      headers: { Authorization: authorizationToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: apiInfo.storageApi.bucketId }),
+    });
+    if (!listRes.ok) return null;
+    const list = (await listRes.json()) as { buckets?: Array<{ bucketName: string; fileCount: number }> };
+    const bucket = list.buckets?.find((b) => b.bucketName === b2.bucket);
+    return { fileCount: bucket?.fileCount ?? 0, bytes: accountInfo?.usedBucketCapabilities ?? 0 };
+  } catch {
+    return null;
+  }
+};
+
+export const syncB2UsageFromBuckets = async (env: {
+  B2_CONFIG?: string;
+  B2_ACCOUNTS?: string;
+  CACHE_KV: UsageKv;
+}): Promise<void> => {
+  const accounts = resolveB2Accounts(env.B2_CONFIG, env.B2_ACCOUNTS);
+  for (let i = 0; i < accounts.length; i++) {
+    const usage = await b2NativeUsage(accounts[i]).catch(() => null);
+    if (usage) await setB2Usage(env.CACHE_KV, i, usage.bytes);
+  }
 };

@@ -17,6 +17,8 @@ import { router as readerRouter } from './routes/reader';
 import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
+import { evictStaleStorage } from './lib/storageEviction';
+import { syncB2UsageFromBuckets } from './lib/b2Usage';
 
 // CORS: allow credentials only when origin matches the allowlist.
 // Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
@@ -95,4 +97,25 @@ app.notFound((c) => json(c, { error: 'Not Found' }, 404));
 
 export default {
   fetch: app.fetch,
+  async scheduled(
+    _controller: unknown,
+    env: Env,
+    ctx: { waitUntil(p: Promise<unknown>): void }
+  ): Promise<void> {
+    if (env.EVICTION_OWNER !== '1') return; // hanya akun-1 yang punya cron
+    const run = async () => {
+      const kv = env.CACHE_KV;
+      const lock = await kv.get('eviction:lock').catch(() => null);
+      if (lock) return;
+      await kv.put('eviction:lock', '1', { expirationTtl: 600 }).catch(() => {});
+      try {
+        await syncB2UsageFromBuckets(env as Env);
+        const res = await evictStaleStorage(env as Env);
+        console.log(`[cron] eviction done: ${res.evicted} objects`);
+      } finally {
+        await kv.delete('eviction:lock').catch(() => {});
+      }
+    };
+    ctx.waitUntil(run());
+  },
 };
