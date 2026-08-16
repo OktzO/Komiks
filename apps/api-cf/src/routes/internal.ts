@@ -79,6 +79,12 @@ router.post('/db/exec', async (c: Context) => {
     return c.json({ error: 'forbidden table' }, 403);
   }
 
+  // Refuse destructive DDL over the forward channel (DROP/ALTER/TRUNCATE).
+  // The allowlist above only gates by table, not statement intent.
+  if (/\bDROP\b|\bALTER\b|\bTRUNCATE\b/i.test(sql)) {
+    return c.json({ error: 'forbidden statement' }, 403);
+  }
+
   // Pass the isMirror flag through to writeLocal via header on internal Request —
   // writeLocal checks c.req.header('x-db-mirror') which is preserved here.
   const result = await writeLocal(c, table, sql, params);
@@ -89,4 +95,78 @@ router.post('/db/exec', async (c: Context) => {
     return c.json({ error: 'overflow', detail: result.error }, OVERFLOW_RESPONSE_STATUS);
   }
   return c.json({ error: result.error ?? 'write failed' }, 500);
+});
+
+// Read-only SELECT exec for sharded reads (chapter_pages owner lookup).
+// Same auth as /db/exec; enforced SELECT-only so the internal surface cannot
+// be used to mutate via this path.
+router.post('/db/query', async (c: Context) => {
+  const forwardKey = c.req.header('x-db-forward-key');
+  const mirrorKey = c.req.header('x-db-mirror-key');
+  const isMirrorHeader = c.req.header('x-db-mirror') === '1';
+
+  let authed = false;
+  if (forwardKey && c.env.DB_FORWARD_KEY && constantTimeEqualStr(forwardKey, c.env.DB_FORWARD_KEY as string)) {
+    authed = true;
+  } else if (
+    mirrorKey && c.env.DB_MIRROR_KEY && constantTimeEqualStr(mirrorKey, c.env.DB_MIRROR_KEY as string) && isMirrorHeader
+  ) {
+    authed = true;
+  }
+  if (!authed) return c.json({ error: 'invalid forward key' }, 401);
+
+  const contentLength = Number(c.req.header('content-length') ?? '0');
+  if (contentLength > 64 * 1024) return c.json({ error: 'payload too large' }, 413);
+
+  let payload: { sql: string; params: unknown[]; table?: string };
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json({ error: 'invalid JSON' }, 400);
+  }
+  const { sql, params, table = 'chapter_pages' } = payload;
+  if (typeof sql !== 'string' || !Array.isArray(params) || typeof table !== 'string') {
+    return c.json({ error: 'missing sql/params/table' }, 400);
+  }
+  if (table.startsWith('_') || table === 'sqlite_sequence' || !ALLOWED_TABLES.has(table)) {
+    return c.json({ error: 'forbidden table' }, 403);
+  }
+  if (!/^\s*SELECT\b/i.test(sql)) {
+    return c.json({ error: 'read-only endpoint' }, 403);
+  }
+  try {
+    const stmt = c.env.DB.prepare(sql);
+    const bound = params.length > 0 ? stmt.bind(...params) : stmt;
+    const { results } = await bound.all();
+    return c.json({ ok: true, results: results ?? [] });
+  } catch (e) {
+    return c.json({ error: 'query failed', detail: String(e) }, 500);
+  }
+});
+
+// KV peer-read for cache fallback. Key allowlist enforced here (server side)
+// so a leaked forward key can't dump arbitrary KV.
+const KV_READ_ALLOW_PREFIXES = ['series:detail:', 'chapters:list:', 'chapter:detail:'];
+
+router.get('/kv/get', async (c: Context) => {
+  const forwardKey = c.req.header('x-db-forward-key');
+  const mirrorKey = c.req.header('x-db-mirror-key');
+  const isMirrorHeader = c.req.header('x-db-mirror') === '1';
+
+  let authed = false;
+  if (forwardKey && c.env.DB_FORWARD_KEY && constantTimeEqualStr(forwardKey, c.env.DB_FORWARD_KEY as string)) {
+    authed = true;
+  } else if (
+    mirrorKey && c.env.DB_MIRROR_KEY && constantTimeEqualStr(mirrorKey, c.env.DB_MIRROR_KEY as string) && isMirrorHeader
+  ) {
+    authed = true;
+  }
+  if (!authed) return c.json({ error: 'invalid forward key' }, 401);
+
+  const key = c.req.query('key');
+  if (!key || !KV_READ_ALLOW_PREFIXES.some((p) => key.startsWith(p))) {
+    return c.json({ error: 'key not allowed' }, 403);
+  }
+  const raw = await c.env.CACHE_KV.get(key, 'json').catch(() => null);
+  return c.json({ value: raw ?? null });
 });

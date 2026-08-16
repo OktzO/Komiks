@@ -16,6 +16,7 @@ import { router as mergeAdminRouter } from './routes/admin/merge';
 import { router as readerRouter } from './routes/reader';
 import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
+import { router as internalRouter } from './routes/internal';
 
 // CORS: allow credentials only when origin matches the allowlist.
 // Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
@@ -52,6 +53,9 @@ export const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', securityHeadersMw);
 app.use('*', corsMw);
+// Internal router mounts BEFORE the global rate limit — cross-account peer
+// calls (akun-1→2→3) share Worker egress IPs and must not be throttled.
+app.route('/api/_internal', internalRouter);
 app.use('*', rateLimit);
 app.route('/api', healthRouter);
 app.route('/api', seriesRouter);
