@@ -9,7 +9,7 @@ import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
 import { resolveB2Accounts, pickB2AccountIdx, type B2Account } from '../lib/b2Config.ts';
-import { ownerFor, internalExec, internalQuery } from '../lib/peers';
+import { ownerFor, internalExec, internalQuery, peerKvGet } from '../lib/peers';
 import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
@@ -310,7 +310,10 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
         );
         return { data: { ...series, chapters } };
       },
-      { circuitKey: `reader:${source}:detail` }
+      { circuitKey: `reader:${source}:detail`, peerFallback: async () => {
+          const v = await peerKvGet(c.env, cacheKey);
+          return v as { data: { chapters: Chapter[] } & Record<string, unknown> } | null;
+        } }
     );
     recordHealth(c, source, start, true);
     const maxAge = result.source === 'stale' ? 30 : 600;
@@ -338,7 +341,10 @@ router.get('/:source/series/:sourceId', async (c: Context) => {
       c,
       cacheKey,
       async () => ({ data: await retryUpstream(() => adapter.getSeries(sourceId)) }),
-      { circuitKey: `reader:${source}:detail` }
+      { circuitKey: `reader:${source}:detail`, peerFallback: async () => {
+          const v = await peerKvGet(c.env, cacheKey);
+          return v as { data: Series } | null;
+        } }
     );
     recordHealth(c, source, start, true);
     return c.json(result.data);
@@ -362,7 +368,10 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
       c,
       cacheKey,
       async () => ({ data: await retryUpstream(() => adapter.listChapters(sourceId, { lang })) }),
-      { freshTtl: 300, circuitKey: `reader:${source}:detail` }
+      { freshTtl: 300, circuitKey: `reader:${source}:detail`, peerFallback: async () => {
+          const v = await peerKvGet(c.env, cacheKey);
+          return v as { data: Chapter[] } | null;
+        } }
     );
     recordHealth(c, source, start, true);
     return c.json(result.data);

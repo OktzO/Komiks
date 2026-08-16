@@ -146,7 +146,7 @@ router.post('/db/query', async (c: Context) => {
 
 // KV peer-read for cache fallback. Key allowlist enforced here (server side)
 // so a leaked forward key can't dump arbitrary KV.
-const KV_READ_ALLOW_PREFIXES = ['series:detail:', 'chapters:list:', 'chapter:detail:'];
+const KV_READ_ALLOW_PREFIXES = ['series:detail:', 'series:full:', 'chapters:list:', 'chapter:detail:'];
 
 router.get('/kv/get', async (c: Context) => {
   const forwardKey = c.req.header('x-db-forward-key');

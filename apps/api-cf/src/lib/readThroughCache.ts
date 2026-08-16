@@ -23,7 +23,7 @@ import type { Context } from '../routes/../lib/context';
 
 export type FreshLoader<T> = () => Promise<T>;
 
-export interface CacheOptions {
+export interface CacheOptions<T> {
   /** Fresh-tier TTL (seconds). Default 600. */
   freshTtl?: number;
   /** Stale-tier TTL (seconds). Default 86400. */
@@ -41,6 +41,10 @@ export interface CacheOptions {
   circuitThreshold?: number;
   /** Circuit open duration (seconds). Default 60. */
   circuitTtl?: number;
+  /** Optional peer-KV fallback: called on both-miss before upstream load.
+   *  Return null/undefined to fall through to origin. Result is cached in
+   *  both tiers as if fresh. */
+  peerFallback?: () => Promise<T | null>;
 }
 
 const cacheGet = async <T>(c: Context, key: string): Promise<T | null> => {
@@ -105,7 +109,7 @@ export const readThroughCache = async <T>(
   c: Context,
   cacheKey: string,
   load: FreshLoader<T>,
-  opts: CacheOptions = {}
+  opts: CacheOptions<T> = {}
 ): Promise<{ source: 'fresh' | 'stale'; data: T }> => {
   const freshTtl = opts.freshTtl ?? 600;
   const staleTtl = opts.staleTtl ?? 86400;
@@ -115,6 +119,7 @@ export const readThroughCache = async <T>(
   const circuitKey = opts.circuitKey ?? cacheKey;
   const circuitThreshold = opts.circuitThreshold ?? 3;
   const circuitTtl = opts.circuitTtl ?? 60;
+  const peerFallback = opts.peerFallback;
 
   const freshKey = `f:${cacheKey}`;
   const staleKey = `s:${cacheKey}`;
@@ -156,6 +161,21 @@ export const readThroughCache = async <T>(
   // 3. Both miss (or circuit open) — try to fetch upstream.
   if (circuitOpen && stale !== null) {
     return { source: 'stale', data: stale };
+  }
+
+  // 3a. Peer-KV fallback before upstream load: hit → treat as fresh, write
+  // both tiers locally (next request is a local hit).
+  if (peerFallback) {
+    try {
+      const peer = await peerFallback();
+      if (peer != null) {
+        c.env.CACHE_KV.put(freshKey, JSON.stringify(peer), { expirationTtl: freshTtl }).catch(() => {});
+        c.env.CACHE_KV.put(staleKey, JSON.stringify(peer), { expirationTtl: staleTtl }).catch(() => {});
+        resetFailures(c, circuitKey);
+        closeCircuit(c, circuitKey);
+        return { source: 'fresh', data: peer };
+      }
+    } catch { /* peer error → fall through to origin */ }
   }
 
   try {
