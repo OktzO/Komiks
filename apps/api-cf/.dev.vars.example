@@ -3,3 +3,11 @@ ALLOWED_ORIGINS=http://localhost:3000
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 ADMIN_EMAILS=
+# B2_ACCOUNTS (JSON array): name/bucket/keyId/appKey/region
+B2_ACCOUNTS=
+B2_QUOTA_BYTES=
+B2_EVICTION_DAYS=
+# Peer sharding (owner D1 forwarding)
+PEER_URLS=http://localhost:8787
+PEER_INDEX=0
+DB_FORWARD_KEY=

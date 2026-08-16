@@ -102,7 +102,6 @@ NEXT_PUBLIC_API_URL=https://manga-api.oktz.workers.dev \
 NEXT_PUBLIC_AUTH_API_URL=https://manga-api-2.tzok5555.workers.dev \
 NEXT_PUBLIC_AUTH_FALLBACK=https://manga-api-3.dwikaoktyffan.workers.dev \
 NEXT_PUBLIC_SITE_URL=https://manga-web-d32.pages.dev \
-NEXT_PUBLIC_R2_DOMAINS=https://cdn1.oktz.qzz.io \
 npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static \
   --project-name manga-web --branch main
 ```
@@ -128,10 +127,14 @@ npx wrangler kv key put --binding=CACHE_KV "provision:migration:latest" --path=p
 | `ADMIN_EMAILS` | comma-separated email → auto role admin |
 | `SCRAPE_API_KEY` | admin API key untuk `/api/scrape` (via header `x-admin-api-key`) |
 | `B2_ACCOUNTS` | JSON array 2-item (`b2-a`, `b2-b`) — `keyId`/`appKey`/`bucket`/`region` |
-| `R2_ACCOUNTS` | JSON array akun R2 (`account_id`/`access_key_id`/`secret_access_key`/`public_domain`/`bucket`) — **akun-1 only** |
-| `R2_RING_VNODES` | hash-ring vnodes (default `32`) |
-| `R2_EVICTION_DAYS` | lifecycle R2 prefix `komiku/` (default `30`) |
+| `B2_QUOTA_BYTES` | kuota per B2 akun (default `10737418240` = 10GB) |
 | `B2_EVICTION_DAYS` | LRU eviction threshold days (default `30`) |
+| `PEER_URLS` | comma-separated worker URLs (3), untuk owner-forward + round-robin |
+| `PEER_INDEX` | index worker ini di `PEER_URLS` (0/1/2) |
+| `DB_FORWARD_KEY` | secret bersama untuk internal `/api/_internal` (owner D1) |
+| `EVICTION_OWNER` | `"1"` → worker akun-1 menjalankan cron eviction |
+
+> R2 removed — storage 100% B2 (`B2_CONFIG` + `B2_ACCOUNTS`).
 
 > Deploy migrasi schema baru ke semua akun setelah deploy worker:
 > `npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0010_bookmark_source.sql`
@@ -140,14 +143,13 @@ npx wrangler kv key put --binding=CACHE_KV "provision:migration:latest" --path=p
 
 ## 4. Arsitektur
 
-### 4.1 Storage 3-tier — B2 multi-account → R2 fallback
+### 4.1 Storage — B2 multi-account (hash pick)
 
 ```
-Upload (Komiku page baru, cache miss):   B2-A (-1) → B2-B (-2) → R2 ring (>=0)
-Read  (cache miss):                     b2Url → r2Url → /api/reader proxy
+Upload (Komiku page baru, cache miss):   hash(key) → B2-A/B-B (deterministik, wrap on fail)
+Read  (cache miss):                     b2Url → /api/reader proxy
 
 b2Url  = https://s3.us-east-005.backblazeb2.com/{key}?X-Amz-Signature=... (SigV4, 7 hari, langsung B2, no Worker)
-r2Url  = https://cdnN.oktz.qzz.io/{key} (langsung R2 CDN)
 proxy  = Worker stream (Komiku: +Referer https://komiku.org/; lain: plain)
 ```
 
@@ -367,8 +369,7 @@ Manga/
 │   │       │   ├── auth.ts           # signed HMAC cookie (state+session), D1 sessions, requireSession/AdminKey/AdminSession
 │   │       │   ├── rateLimit.ts      # makeLimiter(limit,window) in-memory; rateLimit 60/min, rateLimitIdentify 10/min, rateLimitAdmin 600/min, rateLimitMutate 60/hr
 │   │       │   ├── retry.ts          # retryUpstream 429 backoff
-│   │   │   ├── r2Accounts.ts         # parse R2_ACCOUNTS JSON
-│   │   │   ├── b2Config.ts          # parse B2_ACCOUNTS + B2_CONFIG, resolveB2Accounts()
+│   │   ├── b2Config.ts          # parse B2_ACCOUNTS + B2_CONFIG, resolveB2Accounts()
 │   │   │   ├── s3Upload.ts          # SigV4 signed PUT (B2+R2) no @aws-sdk
 │   │   │   ├── storageEviction.ts   # evictStaleStorage() LRU 30d @ quota>80%
 │   │   │   ├── dbWrite.ts           # D1 overflow detector
@@ -394,7 +395,7 @@ Manga/
 │   ├── sources/                          # komiku/bacakomik/thrive/manhwaindo adapters + registry
 │   ├── lb/                               # crypto.ts, accounts.ts, router.ts, provision.ts
 │   └── vision/                           # phash.ts, hamming.ts, identify.ts
-├── scripts/                              # build-worker-bundle.mjs, deploy-worker-api.sh, setup-r2-account.mjs, smoke-*
+├── scripts/                              # build-worker-bundle.mjs, deploy-worker-api.sh, smoke-*
 ├── docs/                                 # DEPLOY.md, ADDING-ACCOUNT.md, specs
 ├── package.json • turbo.json
 └── README.md                             # ini file
@@ -452,13 +453,11 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0010_boo
 # ulangi per akun (CLOUDFLARE_ACCOUNT_ID + token masingkin)
 ```
 
-### Setup akun R2/B2 baru
+### Setup akun B2 baru
 ```bash
-node scripts/setup-r2-account.mjs          # panduan + remap report
-npx wrangler r2 bucket lifecycle set manga-assets --file - <<'EOF'
-{ "Rules": [ { "ID": "evict-komiku", "Status": "Enabled",
-  "Filter": { "Prefix": "komiku/" }, "Expiration": { "Days": 30 } } ] }
-EOF
+# Tambah entry baru ke secret B2_ACCOUNTS di semua 3 worker.
+# Urutan tidak berpengaruh (hash pick deterministik), tapi jaga B2_CONFIG
+# (legacy single) konsisten dengan B2_ACCOUNTS[0].
 ```
 
 ---
@@ -469,7 +468,7 @@ EOF
 - **`ALLOWED_ORIGINS` CORS cross-origin.** Frontend fetch ke `*.workers.dev` butuh origin match. Support wildcard subdomain `https://*.manga-web-d32.pages.dev`. Worker 500/exception → response **tanpa** CORS header → browser `TypeError: Failed to fetch` (bukan 5xx yang terlihat). Kalau admin/reader error fetch, cek dulu: domain frontend ada di allowlist? subdomain lama (`oktz.xyz` vs `oktzz.xyz`, `www.`) terlewat?
 - **Cookie `__Host-`** butuh `Path=/`, `Secure`, tidak ada `Domain`.** Cookie hanya diset API origin, bukan frontend origin. Frontend `middleware.ts` no-op; session guard pakai `credentials:'include'` fetch, bukan `req.cookies`.
 - **Komiku proxy butuh `Referer: https://komiku.org/`.** Image CDN komiku 403 tanpa Referer — set di `routes/reader.ts`.
-- **R2 upload idempotent.** Key sama → overwrite; race aman. Background via `waitUntil`. Jika B2-A gagal → B2-B → R2 ring (silent).
+- **B2 upload idempotent.** Key sama → overwrite; race aman. Background via `waitUntil`. Gagal → akun lain (wrap) → proxy-only.
 - **Clone stream sebelum `new Response(upstream.body)`.** Setelah dibaca stream terkunci (`ReadableStream.locked`).
 - **Bundle worker base64 ~143KB.** Jangan via argumen shell; pakai `--path=` (KV key put limit 1MB, tapi argumen CLI lebih kecil).
 - **D1 per-akun tidak sinkron.** User di akun-1 mungkin tidak ada di akun-2 → sticky auth origin wajib. Search/series (public) boleh round-robin karena D1 read-only snapshot konsisten cukup.

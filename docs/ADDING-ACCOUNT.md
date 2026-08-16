@@ -1,17 +1,16 @@
-# Menambah Akun R2 Baru (dan Akun Worker API)
+# Menambah Akun B2 Baru (dan Akun Worker API)
 
-## R2 storage (gambar komiku)
+## B2 storage (gambar komiku)
 
-1. Buat bucket `manga-images` di akun Cloudflare baru
-2. R2 API token: permission **Object Read & Write**, scope bucket tsb
-   (bukan Admin)
-3. Custom domain `cdnN.example.com` → bucket (butuh zone di akun tsb)
-4. Lifecycle rule prefix `komiku/` → `Expiration.Days = R2_EVICTION_DAYS`
-   (default 30 — lihat `scripts/setup-r2-account.mjs`)
-5. Update secret `R2_ACCOUNTS` (Worker primary) + `NEXT_PUBLIC_R2_DOMAINS`
-   (web) — **urutan list WAJIB sama** (index akun = identitas hash)
-6. Jalankan `node scripts/setup-r2-account.mjs` untuk panduan + remap report
-7. Verifikasi: `curl -I https://cdnN.example.com/<key>` → 200
+1. Buat bucket (misal `manga-images`) di Backblaze B2 akun baru
+2. B2 application key: access **Read & Write** untuk bucket tsb
+3. Update secret `B2_ACCOUNTS` di **semua 3 worker** — tambah entry JSON
+   (`name`/`bucket`/`keyId`/`appKey`/`region`)
+4. Urutan list TIDAK berpengaruh untuk correctness (hash pick deterministik
+   by key), tapi jaga `B2_CONFIG` (legacy single) konsisten dengan
+   `B2_ACCOUNTS[0]`
+5. Verifikasi: upload via `/api/reader/*` → `b2:usage:{idx}` bertambah di KV;
+   `curl -I https://s3.<region>.backblazeb2.com/<bucket>/<key>` → 200
 
 ## Akun Worker API (origin round-robin)
 
@@ -30,9 +29,8 @@
   `/api/source-status` — endpoint admin (`/api/admin/*`, `/api/scrape`)
   tidak pernah dipanggil dari klien.
 
-## Verifikasi hash konsisten
+## Hash konsisten
 
-Hash function = satu file `packages/shared/src/r2-routing.ts`, di-import
-sisi scraper (Worker) dan frontend (Pages). Tidak ada duplikasi → tidak ada
-drift. Konfirmasi urutan domain di `R2_ACCOUNTS` dan
-`NEXT_PUBLIC_R2_DOMAINS` identik.
+Hash function = satu file `packages/shared/src/r2-routing.ts` (murmur3_32 +
+`b2KeyFor`), di-import sisi scraper (Worker) dan frontend (Pages). Tidak ada
+duplikasi → tidak ada drift.

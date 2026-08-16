@@ -528,8 +528,6 @@ cd apps/web
 rm -rf .next .vercel
 NEXT_PUBLIC_API_URL=https://manga-api.oktz.workers.dev \
 NEXT_PUBLIC_DATA_API_URL=https://manga-api.oktz.workers.dev \
-NEXT_PUBLIC_R2_DOMAINS=https://cdn1.oktz.qzz.io \
-NEXT_PUBLIC_R2_VNODES=32 \
 npx next-on-pages
 export CLOUDFLARE_API_TOKEN="***REMOVED***"
 npx wrangler pages deploy .vercel/output/static --project-name manga-web --branch main
