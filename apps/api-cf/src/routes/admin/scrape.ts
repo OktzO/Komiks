@@ -83,23 +83,25 @@ router.post('/scrape', requireAdminKey, async (c: Context) => {
       let canonicalSlug = existing?.slug ?? null;
 
       if (!canonicalSlug) {
-        // 2. Fuzzy match against all series titles.
+        // 2. Match against all series titles.
+        //    exact → auto-merge (reuse canonical row, link source to it)
+        //    fuzzy ≥ 0.92 → queue for admin (row kept, admin merges manually)
         const all = await db.getAllSeriesTitles();
         const match = matchCandidate(result.series.title, all.map((s) => ({
           id: s.id,
           title: s.title,
           alt_titles: s.alt_titles ? JSON.parse(s.alt_titles) as string[] : undefined,
         })));
-        if (match.type === 'exact' || match.type === 'fuzzy') {
+        if (match.type === 'exact') {
           const matched = await db.getSeriesById(match.id);
           if (matched) canonicalSlug = matched.slug;
-        } else if (match.type === 'queue') {
+        } else if (match.type === 'fuzzy' || match.type === 'queue') {
           await db.addMergeQueue({
             source: body.source,
             sourceSlug: srcSlug,
             title: result.series.title,
-            candidateIds: match.candidateIds,
-            confidence: match.confidence,
+            candidateIds: match.type === 'fuzzy' ? [match.id] : match.candidateIds,
+            confidence: match.type === 'fuzzy' ? match.score : match.confidence,
           });
         }
       }
@@ -108,6 +110,7 @@ router.post('/scrape', requireAdminKey, async (c: Context) => {
       const isNew = !canonicalSlug;
 
       // Upsert canonical series (keep the FIRST source's row as canonical when new).
+      const altTitles = (result.series as unknown as Record<string, unknown>).alt_titles as string[] | undefined;
       await db.upsertSeries({
         slug: finalSlug,
         external_id: result.series.external_id ?? (isNew ? srcSlug : null),
@@ -120,6 +123,7 @@ router.post('/scrape', requireAdminKey, async (c: Context) => {
         artist: result.series.artist ?? null,
         cover_image: result.series.cover_image ?? null,
         genres: result.series.genres,
+        alt_titles: altTitles?.length ? JSON.stringify(altTitles) : null,
         source_url: ((result.series as Record<string, unknown>).source_url as string) ?? null,
         language: ((result.series as Record<string, unknown>).language as string) ?? null,
       });

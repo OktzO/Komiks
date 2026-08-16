@@ -40,6 +40,34 @@ html, body {
 
 * { border-color: var(--border-subtle); }
 
+::selection {
+  background: color-mix(in oklab, var(--accent) 28%, transparent);
+  color: var(--text-primary);
+}
+
+html { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--text-primary) 18%, transparent) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--text-primary) 18%, transparent);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--text-primary) 40%, transparent);
+}
+
+blockquote {
+  margin: 1rem 0;
+  padding: 0.9rem 1.1rem 0.9rem 1.25rem;
+  background: color-mix(in oklab, var(--bg-card) 60%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 0.5rem 0.5rem 0;
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-subtle), 0 0 24px -12px color-mix(in oklab, var(--accent) 35%, transparent);
+  font-style: italic;
+}
+blockquote p { margin: 0; }
+
 a { color: inherit; text-decoration: none; transition: color 0.2s ease; }
 a:hover { color: var(--accent); }
 
@@ -198,7 +226,7 @@ a:hover { color: var(--accent); }
 /* ── Reader chrome: top bar + bottom toolbox + daftar chapter sheet ──
    Semua animasi transform/opacity saja + will-change → GPU compositor,
    tanpa layout/paint saat scroll panjang. */
-.reader-top, .reader-bottom {
+.reader-top, .reader-bottom, .reader-rail {
   position: fixed;
   left: 0;
   right: 0;
@@ -209,9 +237,25 @@ a:hover { color: var(--accent); }
 }
 .reader-top { top: 10px; }
 .reader-bottom { bottom: 14px; }
-.reader-top > *, .reader-bottom > * { pointer-events: auto; }
+.reader-rail {
+  top: 50%;
+  right: 10px;
+  left: auto;
+  transform: translateY(-50%);
+}
+.reader-top > *, .reader-bottom > *, .reader-rail > * { pointer-events: auto; }
 .reader-hidden.reader-top { transform: translateY(-140%); }
 .reader-hidden.reader-bottom { transform: translateY(140%); }
+.reader-hidden.reader-rail { transform: translate(calc(100% + 24px), -50%); }
+
+.reader-rail-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 9999px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
 
 .reader-top-inner {
   width: min(680px, calc(100% - 24px));
@@ -224,7 +268,8 @@ a:hover { color: var(--accent); }
 }
 .reader-toolbar {
   position: relative;
-  width: min(480px, calc(100% - 24px));
+  width: fit-content;
+  max-width: calc(100% - 24px);
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -261,6 +306,23 @@ a:hover { color: var(--accent); }
 .rbtn:active { background: var(--bg-secondary); }
 .rbtn:disabled, .rbtn-disabled { opacity: 0.35; pointer-events: none; }
 
+/* ── Settings popup: desktop anchored ke tombol; mobile melebar penuh di
+   atas toolbar (anchor jadi .reader-toolbar yang relative) biar jelas. ── */
+@media (max-width: 639px) {
+  .reader-settings-anchor { position: static; }
+  .reader-settings {
+    left: 0;
+    right: 0;
+    min-width: 0;
+    padding: 14px;
+  }
+  .reader-settings .rbtn-mode {
+    padding-top: 10px;
+    padding-bottom: 10px;
+    font-size: 15px;
+  }
+}
+
 .reader-backdrop {
   position: fixed;
   inset: 0;
@@ -296,7 +358,7 @@ a:hover { color: var(--accent); }
   -webkit-overflow-scrolling: touch;
 }
 @media (prefers-reduced-motion: reduce) {
-  .reader-top, .reader-bottom, .reader-backdrop, .reader-sheet { transition: none !important; }
+  .reader-top, .reader-bottom, .reader-rail, .reader-backdrop, .reader-sheet { transition: none !important; }
 }
 
 /* ── Skeleton shimmer ── */

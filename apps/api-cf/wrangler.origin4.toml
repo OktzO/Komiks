@@ -1,0 +1,23 @@
+name = "manga-api-4"
+main = "./dist/worker.js"
+compatibility_date = "2024-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "9befea142865276dab131815c729cd8f"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "manga-db"
+database_id = "d2c207fd-4ff4-41ce-b954-760ac33da037"
+
+[[kv_namespaces]]
+binding = "CACHE_KV"
+id = "725eea4df1ee413ead6324f23e7b18f8"
+
+[browser]
+binding = "MY_BROWSER"
+remote = true
+
+[vars]
+PEER_URLS = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.workers.dev,https://manga-api-3.dwikaoktyffan.workers.dev,https://manga-api-4.oktznih.workers.dev"
+PEER_INDEX = "3"

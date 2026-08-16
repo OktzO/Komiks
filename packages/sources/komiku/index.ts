@@ -3,6 +3,7 @@
 // Komiku site returns server-rendered HTML — parsing via regex avoids browser rendering rate limits.
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
+import { decodeHtmlEntities } from '@manga-platform/shared/entities';
 import { KOMIKU_SELECTORS } from './selectors.js';
 import { fetchRobots, isPathAllowed, KOMIKU_BASE, KOMIKU_UA, KOMIKU_REFERER } from './client.js';
 import type { RobotsResult } from './client.js';
@@ -17,6 +18,14 @@ const slugify = (s: string): string =>
 
 const parseChapterNumber = (title: string): number => {
   const m = title.match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : 0;
+};
+
+// Chapter number has higher fidelity from the URL slug (/-chapter-<n>/) than
+// from the title — titles embed volume numbers / "39 volumes" text (e.g. the
+// outcast-hero series where every chapter parsed as "39"). Prefer the id.
+const parseChapterNumberFromId = (id: string): number => {
+  const m = id.match(/-chapter-(\d+(?:\.\d+)?)$/);
   return m ? parseFloat(m[1]) : 0;
 };
 
@@ -41,7 +50,7 @@ const parseSearchHtml = (html: string, _sel: typeof KOMIKU_SELECTORS.search): Se
     const cover_image = sanitizeCoverUrl(imgMatch?.[1] ?? null);
     return {
       slug: slug || slugify(titleMatch?.[1]?.trim() ?? ''),
-      title: titleMatch?.[1]?.trim() ?? '',
+      title: decodeHtmlEntities(titleMatch?.[1]?.trim() ?? '') ?? '',
       source: 'komiku',
       source_url: href.startsWith('http') ? href : KOMIKU_BASE + href,
       cover_image,
@@ -56,7 +65,7 @@ const parseSearchHtml = (html: string, _sel: typeof KOMIKU_SELECTORS.search): Se
 const parseChapterList = (html: string, seriesSlug: string): Chapter[] => {
   const links = Array.from(html.matchAll(/<a[^>]*href="(\/[^"]*-chapter-[\d.-]+\/?)"[^>]*title="([^"]*)"/g)).map((m) => {
     const href = m[1];
-    const title = m[2].replace(/^Baca\s+/, '').replace(/\s+Bahasa Indonesia$/, '').replace(/\s+Terbaru$/, '');
+    const title = decodeHtmlEntities(m[2].replace(/^Baca\s+/, '').replace(/\s+Bahasa Indonesia$/, '').replace(/\s+Terbaru$/, '')) ?? '';
     // Normalize: strip trailing slash so /foo-chapter-12/ and /foo-chapter-12 dedupe.
     const id = (href.split('/').filter(Boolean).pop() ?? '').replace(/\/$/, '');
     return { id, title, href };
@@ -66,7 +75,7 @@ const parseChapterList = (html: string, seriesSlug: string): Chapter[] => {
   return chapters.map((c) => ({
     id: c.id,
     series_slug: seriesSlug,
-    chapter_number: parseChapterNumber(c.title),
+    chapter_number: parseChapterNumberFromId(c.id) || parseChapterNumber(c.title),
     title: c.title,
     language: 'id',
     pages_count: 0,
@@ -74,16 +83,17 @@ const parseChapterList = (html: string, seriesSlug: string): Chapter[] => {
 };
 
 // Parse Komiku detail HTML (from komiku.org/manga/<slug>/) without DOM — Worker has no DOMParser.
-const parseDetailHtml = (html: string): { title: string; synopsis: string | null; cover_image: string | null; author: string | null; status: string; type: string; genres: string[] } => {
+const parseDetailHtml = (html: string): { title: string; synopsis: string | null; cover_image: string | null; author: string | null; status: string; type: string; genres: string[]; alt_titles: string[] } => {
   // Title: find <span itemprop="name"> that is not "Komiku" sitename (inside <h1> context ideally).
   // <meta itemprop="name" content="..."> tags are skipped because their content
   // sits INSIDE the tag, not after `>`. This naturally filters them out.
   const allNames = Array.from(html.matchAll(/itemprop="name"[^>]*>([^<]+)</g)).map((m) => m[1].trim());
-  const title = allNames.find((n) => n && n.toLowerCase() !== 'komiku') ?? allNames[0] ?? '';
+  const title = decodeHtmlEntities(allNames.find((n) => n && n.toLowerCase() !== 'komiku') ?? allNames[0] ?? '') ?? '';
   // Synopsis: <p class="desc" itemprop="description"> or <div itemprop="description">
-  const synopsis = html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/p>/)?.[1]?.replace(/<[^>]+>/g, '').trim()
+  const synopsis = (html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/p>/)?.[1]?.replace(/<[^>]+>/g, '').trim()
     ?? html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/div>/)?.[1]?.replace(/<[^>]+>/g, '').trim()
-    ?? null;
+    ?? null);
+  const synopsisDecoded = synopsis != null ? decodeHtmlEntities(synopsis) ?? null : null;
   // og:image is the most reliable cover source on Komiku manga pages — it
   // serves the full portrait art (`?w=1200`), unlike the lazy `itemprop=image`
   // attribute which often returns empty (itemscope-only) and forces a fallback
@@ -121,7 +131,7 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
   // open+close tag level around the label.
   const genreBlock = html.match(/<ul class="genre">([\s\S]*?)<\/ul>/i)?.[1] ?? '';
   const genres = Array.from(genreBlock.matchAll(/<a[^>]*href="[^"]*\/genre\/[^"]*"[^>]*>(?:<[^>]+>)*([^<]+)(?:<\/[^>]+>)*<\/a>/g))
-    .map((m) => m[1].trim())
+    .map((m) => (decodeHtmlEntities(m[1].trim()) ?? ''))
     .filter(Boolean);
   // Author / Status from <td> table (work fine — values are plain text).
   const tds = Array.from(html.matchAll(/<td[^>]*>([^<]*)<\/td>/g)).map((m) => m[1].trim());
@@ -132,7 +142,14 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
   const author = findVal(/^Author:/i);
   const statusRaw = findVal(/^Status:/i);
   const status = statusRaw ? (statusRaw.toLowerCase().includes('end') ? 'completed' : 'ongoing') : 'ongoing';
-  return { title, synopsis, cover_image: cover, author, status, type, genres };
+  // Alt titles ("Judul Alternatif" row) — used for dedup matching + search.
+  const altTitlesRaw = findVal(/^Judul Alternatif:/i) ?? findVal(/^Judul Lain:/i);
+  const alt_titles = (altTitlesRaw ?? '')
+    .replace(/<[^>]+>/g, '')
+    .split(';')
+    .map((t) => (decodeHtmlEntities(t.trim()) ?? '').replace(/\s+/g, ' ').trim())
+    .filter((t) => t.length > 0);
+  return { title, synopsis: synopsisDecoded, cover_image: cover, author, status, type, genres, alt_titles };
 };
 
 export const komikuAdapter = (env?: AdapterEnv) => {
@@ -300,19 +317,20 @@ export const komikuAdapter = (env?: AdapterEnv) => {
         status: data.status,
         type: data.type,
         genres: data.genres.length > 0 ? data.genres : undefined,
+        alt_titles: data.alt_titles.length > 0 ? data.alt_titles : undefined,
         source_url: url,
         language: 'id',
       } as Series;
       const chapterLinks = Array.from(html.matchAll(/<a[^>]*href="(\/[^"]*-chapter-[\d.-]+\/?)"[^>]*title="([^"]*)"/g)).map((m) => ({
         id: m[1].split('/').filter(Boolean).pop() ?? '',
-        title: m[2].replace(/^Baca\s+/, '').replace(/\s+Bahasa Indonesia$/, '').replace(/\s+Terbaru$/, ''),
+        title: decodeHtmlEntities(m[2].replace(/^Baca\s+/, '').replace(/\s+Bahasa Indonesia$/, '').replace(/\s+Terbaru$/, '')) ?? '',
         href: m[1],
       }));
       const seen = new Set<string>();
       const chapters = chapterLinks.filter((c) => { if (seen.has(c.id)) return false; seen.add(c.id); return true; }).map((c) => ({
         id: c.id,
         series_slug: slug,
-        chapter_number: parseChapterNumber(c.title),
+        chapter_number: parseChapterNumberFromId(c.id) || parseChapterNumber(c.title),
         title: c.title,
         language: 'id',
         pages_count: 0,

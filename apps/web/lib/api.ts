@@ -105,16 +105,21 @@ export interface MergedManga {
 export interface SourceStatus {
   source: string;
   healthy: boolean;
-  latency_ms: number;
+  latency_ms: number | null;
   last_checked_at: number;
   error?: string;
+  uptime_pct?: number | null;
+  history?: Array<{ healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>;
 }
 
 export const searchMerged = (q: string): Promise<{ data: MergedManga[]; sources_queried: string[] }> =>
   apiWithFailover(`/api/search?q=${encodeURIComponent(q)}`);
 
+// Status + riwayat monitoring: selalu ke API utama (akun-1) supaya data
+// source_health konsisten (tidak round-robin ke D1 per-akun yang beda).
+// Update hanya pasif — tercatat saat ada aktivitas baca dari sumber (bukan polling).
 export const getSourceStatus = (): Promise<{ data: SourceStatus[] }> =>
-  apiWithFailover('/api/source-status');
+  api('/api/source-status');
 
 // ---- Round-robin origin failover (LB multi-account) --------------------
 // Health-aware: skip origin yang 429/5xx/timeout (circuit breaker 60s per
@@ -364,5 +369,19 @@ export async function apiGet<T>(path: string): Promise<T> {
     signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) throw new Error(`apiGet ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(12000),
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`apiPost ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }

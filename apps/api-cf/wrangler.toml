@@ -1,5 +1,5 @@
 name = "manga-api"
-main = "./src/index.ts"
+main = "./dist/worker.js"
 compatibility_date = "2024-08-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -28,8 +28,6 @@ remote = true
 #   "region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"
 # }]
 [vars]
-B2_CONFIG = ""
-B2_ACCOUNTS = ""
 EVICTION_OWNER = "1"
 PEER_URLS = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.workers.dev,https://manga-api-3.dwikaoktyffan.workers.dev"
 PEER_INDEX = "0"

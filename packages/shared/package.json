@@ -8,7 +8,8 @@
     ".": "./types.ts",
     "./types": "./types.ts",
     "./r2-routing": "./src/r2-routing.ts",
-    "./http": "./src/http.ts"
+    "./http": "./src/http.ts",
+    "./entities": "./src/entities.ts"
   },
   "dependencies": {
     "zod": "3.22.3"

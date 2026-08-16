@@ -12,6 +12,7 @@ import type {
   ScrapeJob,
   MeResponse
 } from '@manga-platform/shared/types';
+import { matchCandidate, type MatchCandidate } from './src/matching.js';
 
 export { D1Database as Database };
 
@@ -64,10 +65,14 @@ export interface Db {
   listScrapeJobs: (limit?: number) => Promise<ListResult<ScrapeJob>>;
   recordSourceHealth: (params: { source: string; healthy: boolean; latencyMs?: number | null; error?: string | null }) => Promise<{ id: number }>;
   getLatestSourceHealth: (source: string) => Promise<Result<{ source: string; healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>>;
+  getSourceHistory: (source: string, limit?: number) => Promise<Array<{ healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>>;
   upsertSourceLink: (params: { mangaId: number; source: string; sourceSlug: string; hasChapterList?: number; chapterCount?: number; lastScrapedAt?: number }) => Promise<Result<{ id: number }>>;
   getSourceLinksByManga: (mangaId: number) => Promise<Array<{ source: string; source_slug: string; chapter_count: number; has_chapter_list: number; last_scraped_at: number | null }>>;
   getMangaBySource: (source: string, sourceSlug: string) => Promise<Result<{ id: number; slug: string; title: string; source: string }>>;
   getAllSeriesTitles: () => Promise<Array<{ id: number; title: string; alt_titles: string | null }>>;
+  pickMergeTarget: (mangaIds: number[]) => Promise<{ id: number; slug: string } | null>;
+  mergeSeriesInto: (targetMangaId: number, sourceMangaIds: number[]) => Promise<{ success: boolean }>;
+  dedupeOnIndex: (params: { source: string; sourceSlug: string; title: string; altTitles?: string[] }) => Promise<{ merged: boolean; queued: boolean; candidateId?: number }>;
   listMergeQueue: (status?: string) => Promise<ListResult<{ id: number; source: string; source_slug: string; title: string; candidate_ids: string; confidence: number; status: string; created_at: number }>>;
   addMergeQueue: (params: { source: string; sourceSlug: string; title: string; candidateIds: number[]; confidence: number }) => Promise<Result<{ id: number }>>;
   resolveMergeQueue: (id: number, action: 'merge' | 'reject', targetMangaId?: number) => Promise<{ success: boolean }>;
@@ -461,9 +466,14 @@ export const db = (client: D1Database): Db => {
       return (results ?? []) as unknown as ListResult<ScrapeJob>;
     },
 
-    recordSourceHealth: async (p) =>
-      (await prep('INSERT INTO source_health (source, healthy, latency_ms, error) VALUES (?1, ?2, ?3, ?4) RETURNING id')
-        .bind(p.source, p.healthy ? 1 : 0, p.latencyMs ?? null, p.error ?? null).first<Row>()) as { id: number },
+    recordSourceHealth: async (p) => {
+      const res = (await prep('INSERT INTO source_health (source, healthy, latency_ms, error) VALUES (?1, ?2, ?3, ?4) RETURNING id')
+        .bind(p.source, p.healthy ? 1 : 0, p.latencyMs ?? null, p.error ?? null).first<Row>()) as { id: number };
+      // Prune: simpan maks 40 cek terakhir per source (buang yang lebih lama).
+      await prep('DELETE FROM source_health WHERE source = ?1 AND id NOT IN (SELECT id FROM source_health WHERE source = ?1 ORDER BY checked_at DESC LIMIT 40)')
+        .bind(p.source).run().catch(() => {});
+      return res;
+    },
 
     getLatestSourceHealth: async (source) => {
       const row = await prep('SELECT source, healthy, latency_ms, error, checked_at FROM source_health WHERE source = ?1 ORDER BY checked_at DESC LIMIT 1').bind(source).first<Row>();
@@ -475,6 +485,16 @@ export const db = (client: D1Database): Db => {
         error: (row.error as string) ?? null,
         checked_at: row.checked_at as number
       };
+    },
+
+    getSourceHistory: async (source, limit = 40) => {
+      const { results } = await prep('SELECT healthy, latency_ms, error, checked_at FROM source_health WHERE source = ?1 ORDER BY checked_at DESC LIMIT ?2').bind(source, limit).all<Row>();
+      return (results ?? []).map((row: Row) => ({
+        healthy: (row.healthy as number) === 1,
+        latency_ms: (row.latency_ms as number) ?? null,
+        error: (row.error as string) ?? null,
+        checked_at: row.checked_at as number,
+      }));
     },
 
     upsertSourceLink: async (p) => {
@@ -507,6 +527,41 @@ export const db = (client: D1Database): Db => {
     getAllSeriesTitles: async () => {
       const { results } = await prep('SELECT id, title, alt_titles FROM series').all<Row>();
       return (results ?? []) as unknown as Array<{ id: number; title: string; alt_titles: string | null }>;
+    },
+
+    // Hot-path dedup: after a series is upserted, find duplicates.
+    //   exact match -> auto-merge (keep row with most chapters)
+    //   fuzzy >= 0.92 (or ambiguous exact/queue) -> manga_merge_queue for admin
+    async dedupeOnIndex({ source, sourceSlug, title, altTitles }: { source: string; sourceSlug: string; title: string; altTitles?: string[] }) {
+      const all = await this.getAllSeriesTitles();
+      if (!all.length) return { merged: false, queued: false };
+      const candidates: MatchCandidate[] = all.map((s) => ({
+        id: s.id,
+        title: s.title,
+        alt_titles: s.alt_titles ? JSON.parse(s.alt_titles) as string[] : [],
+      }));
+      const result = matchCandidate(title, candidates);
+      if (result.type === 'new') return { merged: false, queued: false };
+
+      if (result.type === 'exact') {
+        const current = await this.getMangaBySource(source, sourceSlug);
+        if (!current) return { merged: false, queued: false };
+        const ids = [current.id, result.id];
+        const target = await this.pickMergeTarget(ids);
+        if (!target) return { merged: false, queued: false };
+        const sources = ids.filter((i) => i !== target.id);
+        const ok = await this.mergeSeriesInto(target.id, sources);
+        return { merged: ok.success, queued: false, candidateId: target.id };
+      }
+
+      if (result.type === 'fuzzy') {
+        const queued = await this.addMergeQueue({ source, sourceSlug, title, candidateIds: [result.id], confidence: result.score });
+        return { merged: false, queued: !!queued, candidateId: result.id };
+      }
+
+      // queue / ambiguous
+      const queued = await this.addMergeQueue({ source, sourceSlug, title, candidateIds: result.candidateIds, confidence: result.confidence });
+      return { merged: false, queued: !!queued, candidateId: result.candidateIds[0] };
     },
 
     listMergeQueue: async (status) => {
@@ -554,6 +609,58 @@ export const db = (client: D1Database): Db => {
       await prep('UPDATE manga_source_link SET manga_id = ?1 WHERE manga_id = ?2').bind(target.id, source.id).run();
       await prep('UPDATE chapters SET series_slug = ?1 WHERE series_slug = ?2').bind(targetSlug, sourceSlug).run();
       await prep('DELETE FROM series WHERE id = ?1').bind(source.id).run();
+      return { success: true };
+    },
+
+    // Pick the best merge target among duplicate manga rows. Target = the row
+    // with the most chapters (SUM of chapter_count across its source links);
+    // tie-break by source priority komiku > bacakomik > thrive > manhwaindo.
+    pickMergeTarget: async (mangaIds) => {
+      if (!mangaIds.length) return null;
+      const placeholders = mangaIds.map(() => '?').join(',');
+      const { results } = await prep(
+        `SELECT msl.manga_id, SUM(msl.chapter_count) AS total,
+                MIN(CASE s.source
+                  WHEN 'komiku' THEN 0
+                  WHEN 'bacakomik' THEN 1
+                  WHEN 'thrive' THEN 2
+                  ELSE 3 END) AS src_priority
+         FROM manga_source_link msl
+         JOIN series s ON s.id = msl.manga_id
+         WHERE msl.manga_id IN (${placeholders})
+         GROUP BY msl.manga_id
+         ORDER BY total DESC, src_priority ASC
+         LIMIT 1`
+      ).bind(...mangaIds).all<Row>();
+      const row = results?.[0];
+      if (!row) return null;
+      const id = row.manga_id as number;
+      const slugRow = await prep('SELECT slug FROM series WHERE id = ?1 LIMIT 1').bind(id).first<Row>();
+      return slugRow ? { id, slug: slugRow.slug as string } : null;
+    },
+
+    // Move source links + chapters from source rows into target, then delete
+    // the orphaned source rows (keeps canonical = target).
+    mergeSeriesInto: async (targetMangaId, sourceMangaIds) => {
+      if (!targetMangaId || !sourceMangaIds.length) return { success: false };
+      const placeholders = sourceMangaIds.map(() => '?').join(',');
+      const targetSlugRow = await prep('SELECT slug FROM series WHERE id = ?1 LIMIT 1').bind(targetMangaId).first<Row>();
+      if (!targetSlugRow) return { success: false };
+      const targetSlug = targetSlugRow.slug as string;
+      // Merge alt_titles: union JSON arrays (target keeps its own, source's appended).
+      const sourceRows = await prep(`SELECT id, slug, alt_titles FROM series WHERE id IN (${placeholders})`).bind(...sourceMangaIds).all<Row>();
+      for (const src of sourceRows ?? []) {
+        const { results: targetRow } = await prep('SELECT alt_titles FROM series WHERE id = ?1').bind(targetMangaId).all<Row>();
+        const targetAlt: string[] = JSON.parse((targetRow?.[0]?.alt_titles as string) ?? '[]');
+        const srcAlt: string[] = JSON.parse((src.alt_titles as string) ?? '[]');
+        const merged = [...new Set([...targetAlt, ...srcAlt])];
+        if (merged.length > 0) {
+          await prep('UPDATE series SET alt_titles = ?1 WHERE id = ?2').bind(JSON.stringify(merged), targetMangaId).run();
+        }
+        await prep('UPDATE manga_source_link SET manga_id = ?1 WHERE manga_id = ?2').bind(targetMangaId, src.id as number).run();
+        await prep('UPDATE chapters SET series_slug = ?1 WHERE series_slug = ?2').bind(targetSlug, src.slug as string).run();
+        await prep('DELETE FROM series WHERE id = ?1').bind(src.id as number).run();
+      }
       return { success: true };
     },
 

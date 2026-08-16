@@ -181,6 +181,9 @@ export default function AdminOverviewPage() {
         <Link href="/admin/users" className="px-4 py-2 text-sm text-primary border border-border-default rounded-full hover:bg-bg-secondary transition-colors">
           Users →
         </Link>
+        <Link href="/admin/merge" className="px-4 py-2 text-sm text-primary border border-border-default rounded-full hover:bg-bg-secondary transition-colors">
+          Merge Queue →
+        </Link>
         <Link href="/admin/settings" className="px-4 py-2 text-sm text-primary border border-border-default rounded-full hover:bg-bg-secondary transition-colors">
           Settings →
         </Link>

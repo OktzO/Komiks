@@ -3,6 +3,7 @@
 // Cloudflare Bot Fight — hybrid fetch (plain + MY_BROWSER Puppeteer fallback).
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
+import { decodeHtmlEntities } from '@manga-platform/shared/entities';
 import { MANHWA_BASE, fetchHtml, fetchRobots, isPathAllowed } from './client.js';
 import type { ManhwaFetchEnv, RobotsResult } from './client.js';
 
@@ -36,8 +37,8 @@ const parseSearchHtml = (html: string): Series[] => {
   for (const b of blocks) {
     const href = b.match(/href="([^"]*\/series\/[^"]+)"/)?.[1] ?? '';
     const slug = href.split('/').filter(Boolean).pop() ?? '';
-    const title = b.match(/<div class="tt">\s*([^<]+?)\s*<\/div>/)?.[1]?.trim()
-      ?? b.match(/<div class="tt">([^<]+)<\/div>/)?.[1]?.trim() ?? '';
+    const title = (decodeHtmlEntities(b.match(/<div class="tt">\s*([^<]+?)\s*<\/div>/)?.[1]?.trim()
+      ?? b.match(/<div class="tt">([^<]+)<\/div>/)?.[1]?.trim() ?? '') ?? '');
     const img = b.match(/data-src="([^"]+)"/)?.[1] ?? b.match(/src="(http[^"]+)"/)?.[1] ?? null;
     const cover_image = sanitizeCoverUrl(img ? img.replace(/^http:\/\//i, 'https://') : null);
     const typeRaw = b.match(/typename\s*([A-Za-z]+)/)?.[1]?.toLowerCase() ?? 'manga';
@@ -63,14 +64,15 @@ const parseDetailHtml = (html: string): {
   author: string | null; status: 'ongoing' | 'completed'; type: 'manga' | 'manhwa' | 'manhua';
   genres: string[];
 } => {
-  const title = html.match(/<h1[^>]*class="[^"]*entry-title[^"]*"[^>]*>([^<]+)<\/h1>/)?.[1]?.trim() ?? '';
-  const altTitle = html.match(/<span class="alternative">([^<]+)<\/span>/)?.[1]?.trim() ?? null;
-  const synopsis = html.match(/class="entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]
-    ?.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, '').trim() ?? null;
+  const title = (decodeHtmlEntities(html.match(/<h1[^>]*class="[^"]*entry-title[^"]*"[^>]*>([^<]+)<\/h1>/)?.[1]?.trim() ?? '') ?? '');
+  const altTitle = (decodeHtmlEntities(html.match(/<span class="alternative">([^<]+)<\/span>/)?.[1]?.trim() ?? '') ?? null);
+  const synopsis = (html.match(/class="entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]
+    ?.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, '').trim() ?? null);
+  const synopsisDecoded = synopsis != null ? decodeHtmlEntities(synopsis) ?? null : null;
   const cover = sanitizeCoverUrl(html.match(/property="og:image"[^>]*content="([^"]+)"/)?.[1]?.replace(/^http:\/\//i, 'https://') ?? null);
   const genresBlocks = Array.from(html.matchAll(/<span class="mgen">([\s\S]*?)<\/span>/g));
   const genres = genresBlocks[0]?.[1]
-    ? Array.from(genresBlocks[0][1].matchAll(/<a[^>]*>([^<]+)<\/a>/g)).map((m) => m[1].trim()).filter(Boolean)
+    ? Array.from(genresBlocks[0][1].matchAll(/<a[^>]*>([^<]+)<\/a>/g)).map((m) => decodeHtmlEntities(m[1].trim()) ?? '').filter(Boolean)
     : [];
 
   // `.imptdt` rows: `<div class="imptdt"> Status <i>Ongoing</i></div>`
@@ -82,8 +84,9 @@ const parseDetailHtml = (html: string): {
   const status = (statusRaw.includes('completed') || statusRaw.includes('selesai') ? 'completed' : 'ongoing') as 'ongoing' | 'completed';
   const typeRaw = (find('type') ?? '').toLowerCase();
   const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
-  const author = find('posted by');
-  return { title, alt_title: altTitle, synopsis, cover_image: cover, author, status, type, genres };
+  const authorRaw = find('posted by');
+  const author = authorRaw != null ? decodeHtmlEntities(authorRaw) ?? null : null;
+  return { title, alt_title: altTitle, synopsis: synopsisDecoded, cover_image: cover, author, status, type, genres };
 };
 
 // Parse chapter list from `#chapterlist li[data-num]`.

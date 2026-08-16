@@ -56,7 +56,7 @@ router.get('/search', async (c: Context) => {
       // FTS5 MATCH can throw on unmatched quotes / special chars. Fall back
       // to a LIKE search so the endpoint never 500s on malformed queries.
       const like = `%${q.replace(/[%_]/g, (m) => '\\' + m)}%`;
-      const r = await db.prepare("SELECT * FROM series WHERE title LIKE ?1 ESCAPE '\\' OR synopsis LIKE ?1 ESCAPE '\\' ORDER BY title LIMIT ?2").bind(like, limit).all();
+      const r = await db.prepare("SELECT * FROM series WHERE title LIKE ?1 ESCAPE '\\' OR synopsis LIKE ?1 ESCAPE '\\' OR alt_titles LIKE ?1 ESCAPE '\\' ORDER BY title LIMIT ?2").bind(like, limit).all();
       localResults = r.results ?? [];
     }
   } else {

@@ -4,6 +4,7 @@
 // fallback via MY_BROWSER binding). See client.ts.
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
+import { decodeHtmlEntities } from '@manga-platform/shared/entities';
 import { BACA_BASE, fetchHtml, fetchRobots, isPathAllowed } from './client.js';
 import type { BacaFetchEnv, RobotsResult } from './client.js';
 
@@ -41,7 +42,7 @@ const parseSearchHtml = (html: string): Series[] => {
   for (const b of blocks) {
     const href = b.match(/href="([^"]*\/komik\/[^"]+)"/)?.[1] ?? '';
     const slug = href.split('/').filter(Boolean).pop() ?? '';
-    const title = b.match(/<h4>([^<]+)<\/h4>/)?.[1]?.trim() ?? '';
+    const title = decodeHtmlEntities(b.match(/<h4>([^<]+)<\/h4>/)?.[1]?.trim() ?? '') ?? '';
     const lazyImg = b.match(/data-lazy-src="([^"]+)"/)?.[1];
     const plainImg = b.match(/<img[^>]*src="(https?:\/\/[^"]+)"/)?.[1];
     const img = lazyImg ?? plainImg ?? null;
@@ -69,12 +70,13 @@ const parseDetailHtml = (html: string): {
   genres: string[];
 } => {
   const titleRaw = html.match(/<h1[^>]*class="[^"]*entry-title[^"]*"[^>]*>([\s\S]*?)<\/h1>/)?.[1] ?? '';
-  const title = titleRaw.replace(/<[^>]+>/g, '').replace(/^Komik\s+/i, '').trim();
-  const synopsis = html.match(/<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]
-    ?.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, '').trim() ?? null;
+  const title = decodeHtmlEntities(titleRaw.replace(/<[^>]+>/g, '').replace(/^Komik\s+/i, '').trim()) ?? '';
+  const synopsis = (html.match(/<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]
+    ?.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, '').trim() ?? null);
+  const synopsisDecoded = synopsis != null ? decodeHtmlEntities(synopsis) ?? null : null;
   const cover = sanitizeCoverUrl(html.match(/property="og:image"[^>]*content="([^"]+)"/)?.[1] ?? null);
   const genreBlock = html.match(/<div class="genre-info[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '';
-  const genres = Array.from(genreBlock.matchAll(/<a[^>]*>([^<]+)<\/a>/g)).map((m) => m[1].trim()).filter(Boolean);
+  const genres = Array.from(genreBlock.matchAll(/<a[^>]*>([^<]+)<\/a>/g)).map((m) => decodeHtmlEntities(m[1].trim()) ?? '').filter(Boolean);
 
   // .spe label/value pairs: `<span><b>Label:</b> Value</span>`
   const speSpans = Array.from(html.matchAll(/<span><b>([^<]+):<\/b>([\s\S]*?)<\/span>/g))
@@ -85,8 +87,9 @@ const parseDetailHtml = (html: string): {
   const status = (statusRaw.includes('selesai') || statusRaw.includes('completed') ? 'completed' : 'ongoing') as 'ongoing' | 'completed';
   const typeRaw = (find('jenis komik') ?? '').toLowerCase();
   const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
-  const author = find('author');
-  return { title, synopsis, cover_image: cover, author, status, type, genres };
+  const authorRaw = find('author');
+  const author = authorRaw != null ? decodeHtmlEntities(authorRaw) ?? null : null;
+  return { title, synopsis: synopsisDecoded, cover_image: cover, author, status, type, genres };
 };
 
 // Parse chapter list from detail page `#chapter_list li`.
@@ -98,7 +101,7 @@ const parseChapterList = (html: string, seriesSlug: string): Chapter[] => {
     const href = li.match(/href="([^"]+)"[^>]*>/)?.[1] ?? '';
     const id = href.split('/').filter(Boolean).pop() ?? '';
     const titleRaw = li.match(/<a[^>]*>([\s\S]*?)<\/a>/)?.[1] ?? '';
-    const title = titleRaw.replace(/<[^>]+>/g, '').replace(/^Chapter\s*/i, '').trim();
+    const title = (decodeHtmlEntities(titleRaw.replace(/<[^>]+>/g, '').replace(/^Chapter\s*/i, '').trim()) ?? '');
     const dateRaw = li.match(/class="dt"[^>]*>([\s\S]*?)<\/span>/)?.[1]?.replace(/<[^>]+>/g, '').trim() ?? '';
     return {
       id,

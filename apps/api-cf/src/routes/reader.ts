@@ -469,6 +469,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
           c.executionCtx.waitUntil((async () => {
             try {
               const slug = series!.slug || sourceId;
+              const altTitles = (series as unknown as Record<string, unknown>).alt_titles as string[] | undefined;
               await db.upsertSeries({
                 slug,
                 title: series!.title,
@@ -481,6 +482,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
                 artist: series!.artist ?? null,
                 cover_image: series!.cover_image ?? null,
                 genres: series!.genres,
+                alt_titles: altTitles?.length ? JSON.stringify(altTitles) : null,
                 source_url: (series as unknown as Record<string, unknown>).source_url as string ?? null,
                 language: (series as unknown as Record<string, unknown>).language as string ?? null,
               });
@@ -504,6 +506,13 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
                   lastScrapedAt: Math.floor(Date.now() / 1000),
                 });
               }
+              // Hot-path dedup: exact match → auto-merge, fuzzy → merge queue.
+              await db.dedupeOnIndex({
+                source,
+                sourceSlug: sourceId,
+                title: series!.title,
+                altTitles,
+              });
             } catch (e) { console.error('[sources] auto-index failed:', String(e)); }
           })());
         }

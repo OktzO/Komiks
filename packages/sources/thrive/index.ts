@@ -5,6 +5,7 @@
 // the MangaDex API.
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
+import { decodeHtmlEntities } from '@manga-platform/shared/entities';
 import { THRIVE_BASE, fetchHtml, parseNextData, fetchRobots, isPathAllowed } from './client.js';
 import type { RobotsResult } from './client.js';
 
@@ -46,7 +47,7 @@ interface ThriveChapterPage {
 }
 
 const toSeries = (d: ThriveDetail): Series => {
-  const synopsis = (d.desc_ID || d.desc?.id || '').trim() || null;
+  const synopsis = decodeHtmlEntities((d.desc_ID || d.desc?.id || '').trim()) ?? null;
   // Type: no explicit manga/manhwa/manhua field. Best-effort from tags;
   // default 'manga'. Part 3 refines via D1 aggregation.
   const g = (d.tags || []).join(' ').toLowerCase();
@@ -58,7 +59,7 @@ const toSeries = (d: ThriveDetail): Series => {
     external_id: d.id,
     source: 'thrive',
     source_url: `${THRIVE_BASE}/title/${d.id}/`,
-    title: d.title,
+    title: decodeHtmlEntities(d.title) ?? d.title,
     synopsis,
     cover_image: sanitizeCoverUrl(d.image ?? null),
     genres: (d.tags && d.tags.length > 0) ? d.tags : undefined,

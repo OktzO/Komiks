@@ -15,7 +15,17 @@ router.use('*', requireAdminSession);
 router.get('/queue', async (c: Context) => {
   const status = c.req.query('status');
   const items = await getDb(c).listMergeQueue(status);
-  return json(c, { data: items });
+  // Resolve candidate ids to series rows (title/slug/source) for the UI.
+  const ids = new Set<number>();
+  for (const it of items) {
+    try { for (const id of JSON.parse(it.candidate_ids) as number[]) ids.add(id); } catch {}
+  }
+  const series: Record<number, { id: number; slug: string; title: string; source: string } | null> = {};
+  for (const id of ids) {
+    const row = await getDb(c).getSeriesById(id);
+    series[id] = row ? { id: id, slug: row.slug, title: row.title, source: row.source } : null;
+  }
+  return json(c, { data: items, candidates: series });
 });
 
 // POST /api/admin/merge/queue/:id  {action:'merge'|'reject', targetMangaId?}

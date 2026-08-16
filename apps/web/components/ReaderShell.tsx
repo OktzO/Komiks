@@ -18,10 +18,11 @@ interface ShellItem {
 }
 
 // Immersive reader chrome. Top bar: back / (judul + chapter) / home. Bottom
-// toolbar: prev·next chapter di tepi, di tengah: pengaturan (kiri), daftar
-// chapter (tengah), unduh (kanan). Tap kanvas toolbar → tutup/buka; scroll ke
-// bawah → sembunyi, ke atas → muncul. Semua gerak transform+opacity saja
-// (GPU compositor, `will-change: transform`) → ringan saat scroll panjang.
+// toolbar: ‹ › chapter · pengaturan / daftar / unduh (padat, gap-1, border
+// sesuai isi, di tengah). Rail kanan: gulir atas / autoscroll / gulir bawah.
+// Sembunyi saat scroll ke bawah; muncul hanya lewat tap (stage / pill,
+// tap lagi → sembunyi lagi). Semua gerak transform+opacity saja (GPU
+// compositor, `will-change: transform`) → ringan saat scroll panjang.
 export function ReaderShell({
   source,
   slug,
@@ -52,7 +53,9 @@ export function ReaderShell({
   const [mode, setMode] = useState<'scroll' | 'page'>('scroll');
   const [chapters, setChapters] = useState<ShellItem[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [autoScroll, setAutoScroll] = useState(false);
   const scrollState = useRef({ y: 0, dir: 0 });
+  const autoRaf = useRef<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -62,19 +65,54 @@ export function ReaderShell({
     return () => { alive = false; };
   }, [source, slug]);
 
-  // Hide on scroll-down, reveal on scroll-up. Passive listener; state hanya
-  // berubah saat arah berubah → tidak re-render per scroll event.
+  // Hide on scroll-down only. Reveal tidak otomatis saat scroll-up — chrome
+  // hanya muncul lewat tap (stage / pill toolbar). Passive listener; state
+  // hanya berubah saat arah berubah → tidak re-render per scroll event.
   useEffect(() => {
     const onScroll = () => {
       const y = window.scrollY;
       const dir = y > scrollState.current.y ? 1 : y < scrollState.current.y ? -1 : 0;
       scrollState.current = { y, dir };
-      if (dir === 0 || y < 90) return;
-      setHidden(dir > 0);
+      if (dir <= 0 || y < 90) return;
+      setHidden(true);
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  // Autoscroll: rAF loop, kecepatan proporsional viewport. Berhenti otomatis
+  // di dasar halaman; ikon rail berubah jadi pause saat aktif.
+  const stopAutoScroll = useCallback(() => {
+    if (autoRaf.current !== null) { cancelAnimationFrame(autoRaf.current); autoRaf.current = null; }
+    setAutoScroll(false);
+  }, []);
+
+  useEffect(() => {
+    if (!autoScroll) return;
+    let last = performance.now();
+    const tick = (t: number) => {
+      const dt = Math.min(t - last, 50) / 1000;
+      last = t;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      if (window.scrollY >= max - 2) { stopAutoScroll(); return; }
+      window.scrollBy(0, window.innerHeight * 0.28 * dt);
+      autoRaf.current = requestAnimationFrame(tick);
+    };
+    autoRaf.current = requestAnimationFrame(tick);
+    return () => { if (autoRaf.current !== null) { cancelAnimationFrame(autoRaf.current); autoRaf.current = null; } };
+  }, [autoScroll, stopAutoScroll]);
+
+  // Hentikan autoscroll saat user menyentuh scroll manual.
+  useEffect(() => {
+    if (!autoScroll) return;
+    const onManual = () => stopAutoScroll();
+    window.addEventListener('wheel', onManual, { passive: true });
+    window.addEventListener('touchstart', onManual, { passive: true });
+    return () => {
+      window.removeEventListener('wheel', onManual);
+      window.removeEventListener('touchstart', onManual);
+    };
+  }, [autoScroll, stopAutoScroll]);
 
   useEffect(() => {
     if (!sheetOpen && !settingsOpen) return;
@@ -92,6 +130,11 @@ export function ReaderShell({
     setSheetOpen(false);
     setSettingsOpen(false);
   }, []);
+
+  const scrollBy = (dir: 1 | -1) => {
+    window.scrollBy({ top: window.innerHeight * 0.8 * dir, behavior: 'smooth' });
+  };
+  const toggleAutoScroll = () => setAutoScroll((a) => !a);
 
   const chapterUrl = (n: number) => `/${source}/s/${slug}/${slug}-chapter-${n}`;
   const prevUrl = chapterNumber > 1 ? chapterUrl(chapterNumber - 1) : null;
@@ -125,18 +168,21 @@ export function ReaderShell({
   const ArrowLeft = icon(<><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></>);
   const HomeIcon = icon(<><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M9 22V12h6v10" /></>);
   const ListIcon = icon(<><path d="M8 6h13" /><path d="M8 12h13" /><path d="M8 18h13" /><path d="M3 6h.01" /><path d="M3 12h.01" /><path d="M3 18h.01" /></>);
-  const GearIcon = icon(<><circle cx="12" cy="12" r="3" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>);
+  const GearIcon = icon(<><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></>);
   const DownloadIcon = icon(<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></>);
+  const ChevronUp = icon(<path d="m18 15-6-6-6 6" />);
+  const ChevronDown = icon(<path d="m6 9 6 6 6-6" />);
+  const PlayIcon = icon(<polygon points="6 3 20 12 6 21 6 3" />);
+  const PauseIcon = icon(<><path d="M7 4h3v16H7z" /><path d="M14 4h3v16h-3z" /></>);
 
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
-  // Tap pada area baca → chrome muncul lagi + popup tertutup. Chrome hanya
-  // hilang lewat scroll-bawah atau tap pill; tap konten selalu membangunkannya
-  // (supaya reader pendek/statis tetap bisa memunculkan bar).
+  // Tap pada area baca → toggle chrome (muncul; tap lagi → sembunyi) + popup
+// tertutup. Chrome tidak muncul otomatis saat scroll-up, hanya lewat tap.
   const onStageClick = useCallback(() => {
     setSheetOpen(false);
     setSettingsOpen(false);
-    setHidden(false);
+    setHidden((h) => !h);
   }, []);
 
   return (
@@ -161,15 +207,13 @@ export function ReaderShell({
           className="nav-island reader-toolbar"
           onClick={(e) => { if (e.target === e.currentTarget) toggleChrome(); }}
         >
-          <div className="flex flex-1 justify-start gap-1">
+          <div className="flex items-center justify-center gap-1">
             {prevUrl ? (
               <Link href={prevUrl} aria-label="Chapter sebelumnya" onClick={stop} className="rbtn">{ChevronLeft}</Link>
             ) : (
               <span className="rbtn rbtn-disabled" aria-hidden="true">{ChevronLeft}</span>
             )}
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="relative">
+            <div className="relative reader-settings-anchor">
               <button
                 type="button"
                 aria-label="Pengaturan"
@@ -187,7 +231,7 @@ export function ReaderShell({
                       key={m}
                       type="button"
                       onClick={(e) => { stop(e); setMode(m); setSettingsOpen(false); }}
-                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm transition-colors ${
+                      className={`rbtn-mode flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-sm transition-colors ${
                         mode === m ? 'bg-bg-secondary text-primary' : 'text-secondary hover:bg-bg-secondary/60'
                       }`}
                     >
@@ -223,14 +267,29 @@ export function ReaderShell({
             >
               {DownloadIcon}
             </button>
-          </div>
-          <div className="flex flex-1 justify-end gap-1">
             {nextUrl && !nextDisabled ? (
               <Link href={nextUrl} aria-label="Chapter selanjutnya" onClick={stop} className="rbtn shrink-0">{ChevronRight}</Link>
             ) : (
               <span className="rbtn rbtn-disabled" aria-hidden="true">{ChevronRight}</span>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* ── Rail kanan: gulir atas / autoscroll / gulir bawah (autohide sama) ── */}
+      <div className={`reader-rail ${hidden ? 'reader-hidden' : ''}`}>
+        <div className="nav-island reader-rail-inner">
+          <button type="button" aria-label="Gulir ke atas" onClick={() => scrollBy(-1)} className="rbtn">{ChevronUp}</button>
+          <button
+            type="button"
+            aria-label={autoScroll ? 'Hentikan autoscroll' : 'Autoscroll'}
+            aria-pressed={autoScroll}
+            onClick={(e) => { stop(e); toggleAutoScroll(); }}
+            className={`rbtn ${autoScroll ? 'bg-accent text-zinc-950' : ''}`}
+          >
+            {autoScroll ? PauseIcon : PlayIcon}
+          </button>
+          <button type="button" aria-label="Gulir ke bawah" onClick={() => scrollBy(1)} className="rbtn">{ChevronDown}</button>
         </div>
       </div>
 
