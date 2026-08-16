@@ -15,14 +15,13 @@ Invoke skill ini **sebelum** edit kode, deploy, atau jawab pertanyaan struktur/m
 │  akun-2  manga-api-2   (primary)      │◄──►│  pages/, components/, lib/      │
 │  akun-3  manga-api-3   (primary)      │    │  @/lib/api.ts (getAuthApiUrl)   │
 └───────────────┬───────────────────────┘    └───────────────────────────────────────┘
-                │ D1 (3 DB, per-akun)
+                │ D1 (3 DB, sharded: chapter_pages by owner chapterId)
                 ├─ CACHE_KV (cache layer)
-                ├─ ASSETS_R2 (R2 bucket)
                 └─ MY_BROWSER (Cloudflare Browser binding)
 
 packages/
   db/        D1 client + schema + 10 migrations
-  shared/    Zod types + r2-routing (murmur3 ring) + http utils
+  shared/    Zod types + r2-routing (murmur3: B2 hash-pick + owner sharding) + http utils
   sources/   4 source adapters (komiku/bacakomik/thrive/manhwaindo)
   lb/        LB account crypto + provision + router
   vision/    pHash + hamming image identify
@@ -36,14 +35,12 @@ packages/
 | fallback | Thrive.moe | `thrive` | `__NEXT_DATA__` JSON | UA-only (Next.js SSG) |
 | fallback | ManhwaIndo.my | `manhwaindo` | regex HTML | Cloudflare Bot Fight → MY_BROWSER fallback |
 
-### Storage 3-tier (cache-aside, di `apps/api-cf/src/lib/storageEviction.ts`)
-1. **B2-A** (akun-1): `B2_CONFIG` secret, region `us-east-005`, host `s3.us-east-005.backblazeb2.com`
-2. **B2-B** (akun-2): entry pertama di `B2_ACCOUNTS` JSON array, region `us-east-005`
-3. **R2 ring** (akun-2/3): `R2_ACCOUNTS` JSON array, consistent-hashing murmur3_32 ring (32 vnodes/akun), `NEXT_PUBLIC_R2_DOMAINS` di frontend HARUS sama urutannya
-
-Upload: B2-A (idx=-1) → B2-B (idx=-2) → R2 ring (idx≥0). Semua gagal → proxy-only (browser load gambar langsung dari source CDN via `/api/reader/:source/page/:chapterId/:pageNo`).
-
-LRU eviction: tiap 100th chapter-detail request, `evictStaleStorage` jalankan. Hapus B2 objek `last_access > 30d` (atau `B2_EVICTION_DAYS` env) ketika quota > 80% (5000 rows ≈ 8GB). R2 ring pakai lifecycle rule 30hari (CF dashboard, tidak Worker-side).
+### Storage B2 multi-account (cache-aside, `apps/api-cf/src/lib/b2Config.ts` + `storageEviction.ts` + `b2Usage.ts`)
+- **B2 accounts** = `resolveB2Accounts(B2_CONFIG + B2_ACCOUNTS)` merge, dedup by `keyId`. Urutan = idx: **-1 = B2-A** (akun-1, bucket `manga-oktz-assets`), **-2 = B2-B** (akun-2, `manga-oktz-assets-2`), dst. Region `us-east-005`, host `s3.us-east-005.backblazeb2.com`. **R2 removed** — storage 100% B2 (`r2-routing.ts` hanya berisi `murmur3_32` + `b2KeyFor`).
+- **Upload** = hash-pick: `pickB2AccountIdx = murmur3_32(b2Key) % accounts.length` → mulai dari akun terpilih; upload gagal → wrap ke akun berikutnya (`(start+k)%len`). Idempoten (key sama → overwrite). Semua B2 gagal → proxy-only (serve gambar langsung dari source CDN, tanpa simpan).
+- **Row cache-aside (`chapter_pages`)** sharded by chapterId → owner D1: `ownerFor = murmur3_32(chapterId) % peers.length`. Row (b2Key + accountIdx) ditulis ke owner: self → local, peer → forward internal `/api/_internal/db/exec`; forward gagal → tulis lokal (row-healing fallback). Read: self → local, peer → `/api/_internal/db/query`.
+- **Usage** = KV `b2:usage:{idx}` (bytes, `addB2Usage`). Quota `B2_QUOTA_BYTES` (default 10 GiB).
+- **Eviction (usage-based)**: trigger lazy tiap 100th chapter-detail request (`eviction:tick`, TTL 24h) + cron akun-1 (`EVICTION_OWNER=1`, hourly, KV lock `eviction:lock` 10min). Evict objek `last_access > B2_EVICTION_DAYS` (default 30) ketika usage > 80% → turun ke 70%. Sync usage asli dari B2 bucket API (`b2NativeUsage`). Hapus B2 object (`b2DeleteObject`) + clear row di owner D1.
 
 ### Auth — KV-free signed HMAC cookie
 - **Google OAuth-only** — tidak ada password login. `apps/api-cf/src/lib/auth.ts`
@@ -91,7 +88,9 @@ export const rateLimitMutate   = makeLimiter(60, 3600);    // /bookmark POST/DEL
 | `/api/admin/lb/*` | `routes/admin/lb.ts` | `requireAdminSession` | rateLimitAdmin | LB settings/accounts/origins/provision |
 | `/api/admin/merge/*` | `routes/admin/merge.ts` | `requireAdminKey` | rateLimitAdmin | merge queue |
 | `/api/admin/scrape/*` | `routes/admin/scrape.ts` | `requireAdminKey` | rateLimitAdmin | scrape jobs |
-| `/api/_internal/db/exec` | `routes/internal.ts` | `x-db-forward-key`/`x-db-mirror-key` | rateLimit | cross-account D1 write forwarding |
+| `/api/_internal/db/exec` | `routes/internal.ts` | `x-db-forward-key`/`x-db-mirror-key` | rateLimit | cross-account D1 write forwarding (allowlist tabel; tolak DROP/ALTER/TRUNCATE) |
+| `/api/_internal/db/query` | `routes/internal.ts` | sama | rateLimit | SELECT-only owner read (sharded `chapter_pages`; `internalQuery`) |
+| `/api/_internal/kv/get` | `routes/internal.ts` | sama | rateLimit | KV peer-read cache fallback (`peerKvGet`), key-prefix allowlist `series:detail:`, `series:full:`, `chapters:list:`, `chapter:detail:` |
 
 ### DB write strategy (`apps/api-cf/src/lib/dbWrite.ts`)
 akun-2 = primary storage. akun-1 = fallback + mirror.
@@ -161,12 +160,12 @@ setAuthOrigin(origin: string): void  // dipanggil AuthForm setelah login sukses
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 export const DATA_API_URL = process.env.NEXT_PUBLIC_DATA_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
 ```
-`apiWithFailover` hanya untuk path publik yang di-allowlist (`/api/health`, `/api/search`, `/api/source-status`). `/api/reader/*` + `/api/series` tidak failover — butuh D1 local (storage lookup). Reader tetap tahan: R2/B2 URL langsung serve via browser, tanpa Worker proxy.
+`apiWithFailover` untuk path publik di-allowlist (`ORIGIN_PATH_ALLOWLIST`): `/api/reader/`, `/api/series`, `/api/search`, `/api/health`, `/api/source-status`. **Reader ikut round-robin** — `chapter_pages` shard-readable dari worker mana pun via owner forwarding (lihat §6). Health-aware circuit breaker: 2 gagal beruntun → skip origin 60s. Cursor `rr_index` di sessionStorage. Auth paths **tidak** di sini — sticky ke auth origin (cookie + D1 split).
 
 ### Runtime & build
 - **next-on-pages**: halaman dynamic (semua di `/app/`, kecuali homepage yang pure static) butuh `export const runtime = 'edge'` + `export const revalidate` (bisa `false` untuk no cache). Tanpa ini, next-on-pages build gagal karena function default ke nodejs runtime yang tidak tersedia di Pages Functions.
 - Homepage (`app/page.tsx`) + search (`app/search/page.tsx`) sudah punya `runtime='edge'`. Periksa semua dynamic route baru punya ini.
-- `next.config.mjs`: `transpilePackages: ['@manga-platform/shared']`, `images: { unoptimized: true }` (semua gambar pakai `<img>` langsung, bukan next/image — CDN R2/B2 tidak kompatibel dengan next/image optimizer)
+- `next.config.mjs`: `transpilePackages: ['@manga-platform/shared']`, `images: { unoptimized: true }` (semua gambar pakai `<img>` langsung, bukan next/image — CDN B2 tidak kompatibel dengan next/image optimizer)
 - Build: `npx next-on-pages --skip-build` (asumsi `next build` sudah jalan)
 
 ### Design tokens (OKLCH dark)
@@ -222,7 +221,20 @@ DELETE /api/user/bookmarks      requireSession + rateLimitMutate
 | `wrangler.origin.toml` | `manga-api-2` | akun-2 (`6a0bdfb8...`) | `manga-db` (`61cbf1b1-...`) | `cf560313...` |
 | `wrangler.origin3.toml` | `manga-api-3` | akun-3 (`ddc6f352...`) | `manga-db` (`160d0a4f-...`) | `0412740b...` |
 
-Semua punya `[[r2_buckets]]` binding `ASSETS_R2` → `manga-assets` / `manga-assets-dev`. `[[browser]]` binding `MY_BROWSER remote=true`.
+Semua punya `[[browser]]` binding `MY_BROWSER remote=true`. **Tidak ada** binding R2 (`ASSETS_R2` dihapus — storage 100% B2).
+
+**`[vars]` di ketiga toml (bukan secret — harus konsisten antar file):**
+```toml
+PEER_URLS    = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.workers.dev,https://manga-api-3.dwikaoktyffan.workers.dev"
+PEER_INDEX   = "0"   # akun-1 (wrangler.toml)
+PEER_INDEX   = "1"   # akun-2 (wrangler.origin.toml)
+PEER_INDEX   = "2"   # akun-3 (wrangler.origin3.toml)
+EVICTION_OWNER = "1" # HANYA akun-1 (cron eviction hourly ada di wrangler.toml [triggers])
+```
+> ⚠️ Jaga PEER vars di toml tetap sinkron dengan yang ter-deploy. Kasus nyata (2026-08-16):
+> `wrangler.toml` akun-1 tidak punya PEER vars (hanya di-set via `--var` saat deploy)
+> → kalau akun-1 di-deploy ulang dari file, `getPeers` kosong → `ownerFor` fallback self
+> → sharding chapter_pages rusak silent. Sudah diperbaiki: PEER vars masuk `[vars]` ke-3 toml.
 
 ### Secrets (via `scripts/sync-secrets.sh` → akun-2 + akun-3)
 ```
@@ -231,27 +243,28 @@ GOOGLE_CLIENT_SECRET Google OAuth
 LB_ENCRYPTION_KEY    AES-GCM token encrypt (lb/crypto.ts)
 ALLOWED_ORIGINS      Comma-separated, contoh: https://oktzz.xyz,https://*.manga-web-d32.pages.dev
 ADMIN_EMAILS         Comma-separated admin emails (role=admin auto-assign)
-B2_ACCOUNTS          JSON array: [{name,bucket,keyId,appKey,region,host}] — B2-B (akun-2)
-R2_ACCOUNTS          JSON array: [{account_id,access_key_id,secret_access_key,public_domain,bucket}]
+B2_ACCOUNTS          JSON array: [{name,bucket,keyId,appKey,region,host}] — B2-B (akun-2) dst, urutan = idx -1/-2/...
+R2_ACCOUNTS          LEGACY/removed (R2 tidak dipakai lagi — bisa dihapus dari secret)
 SCRAPE_API_KEY       admin scrape auth
 ADMIN_PASSWORD_HASH  (legacy, unused — OAuth-only now)
 DB_FORWARD_ENDPOINT  (cross-account write forward)
-DB_FORWARD_KEY       (cross-account write auth)
+DB_FORWARD_KEY       (cross-account write auth — header `x-db-forward-key`, internal /db/exec + /db/query + /kv/get)
 DB_MIRROR_ENDPOINT   (cross-account read mirror)
 DB_MIRROR_KEY        (mirror auth)
 B2_EVICTION_DAYS     (optional, default 30)
+B2_QUOTA_BYTES       (optional, default 10 GiB per akun)
 ```
+`PEER_URLS`/`PEER_INDEX`/`EVICTION_OWNER` → **`[vars]` toml** (bukan secret), lihat atas.
 akun-1 juga dapat `B2_CONFIG` (single legacy secret) yang di-merge dengan `B2_ACCOUNTS` via `resolveB2Accounts`.
 
 ### Frontend Pages (`apps/web`)
 Deploy via `npx next-on-pages` → Vercel Pages. `manga-web` project. Env vars:
 ```
-NEXT_PUBLIC_API_URL          = akun-1 worker URL (fallback)
-NEXT_PUBLIC_AUTH_API_URL     = akun-2 worker URL (primary auth origin)
-NEXT_PUBLIC_R2_DOMAINS       = comma-separated R2 public domains (urutan = akun ring index)
-NEXT_PUBLIC_R2_VNODES      = 32 (opsional, default 32)
+NEXT_PUBLIC_API_URL          = akun-1 worker URL (fallback + dev)
+NEXT_PUBLIC_AUTH_API_URL     = akun-2 worker URL (primary auth origin, sticky)
 NEXT_PUBLIC_SITE_URL         = frontend canonical URL (default https://manga-web-d32.pages.dev)
 ```
+`NEXT_PUBLIC_R2_DOMAINS` / `NEXT_PUBLIC_AUTH_FALLBACK` — legacy, tidak dibaca kode (R2 removed).
 
 ### Commands
 ```bash
@@ -273,9 +286,24 @@ npx wrangler deploy --config apps/api-cf/wrangler.origin3.toml   # akun-3
 # Deploy frontend (Pages)
 npm run build && npx next-on-pages
 
-# DB migrations (apply ke semua 3 D1)
-npx wrangler d1 execute manga-db --file packages/db/migrations/0010_bookmark_source.sql --config apps/api-cf/wrangler.toml
+# DB migrations (apply ke SEMUA 3 D1 — jangan lupa akun-2/3!)
+npx wrangler d1 execute manga-db --file packages/db/migrations/0010_bookmark_source.sql --config apps/api-cf/wrangler.toml        # akun-1
+npx wrangler d1 execute manga-db --file packages/db/migrations/0010_bookmark_source.sql --config apps/api-cf/wrangler.origin.toml  # akun-2
+npx wrangler d1 execute manga-db --file packages/db/migrations/0010_bookmark_source.sql --config apps/api-cf/wrangler.origin3.toml # akun-3
 ```
+
+> **⚠️ Migrasi HARUS ke semua 3 D1.** D1 tidak pakai `d1_migrations` tracking —
+> migration dijalankan manual via `--file`. Kasus nyata (2026-08-16):
+> `0007_relax_chapter_pages_fk` hanya diterapkan ke akun-1. Akun-2/3 masih enforce FK
+> `chapter_pages.chapter_id → chapters(id)` → `markPageB2Uploaded` (cache-aside row)
+> gagal **silent** (`catch(()=>{})` / `success:false`) → upload B2 sukses tapi row D1
+> tidak pernah tertulis → tiap 5min re-download + re-upload dari source. Verifikasi:
+> setelah upload, cek row muncul di owner D1.
+>
+> ✅ Sudah difix + diverifikasi (2026-08-16): 0007 dijalankan ke akun-2 & akun-3,
+> tes tulis FK-orphan via `/api/_internal/db/exec` sukses di kedua akun, row `chapter_pages`
+> p3 landing di owner dengan `r2_account_idx` benar. Periksa FK setiap akun baru
+> di-provision: `SELECT ... FROM chapter_pages WHERE chapter_id='<id-tanpa-row-chapters>'`.
 
 ---
 
@@ -291,21 +319,34 @@ Admin di `/admin/load-balancing` → POST `/api/admin/lb/accounts/provision`:
 1. Verify CF API token
 2. Create D1 database → run `schema.sql` + `0001_manga_data.sql` (embedded di KV, bukan fetch dari GitHub — SSRF/integrity risk)
 3. Create KV namespace
-4. Create R2 bucket (optional)
-5. Deploy Worker ESM bundle (`dist/worker.js` — dibuild via `build-worker-bundle.mjs`)
-6. Set secrets (inherit dari parent env: `ALLOWED_ORIGINS`, `SCRAPE_API_KEY`, `ADMIN_PASSWORD_HASH`, `LB_ENCRYPTION_KEY`)
-7. Encrypt + store token di D1 `lb_accounts` (AES-GCM, `packages/lb/crypto.ts`)
-8. Add origin row di D1 `lb_origins`
+4. Deploy Worker ESM bundle (`dist/worker.js` — dibuild via `build-worker-bundle.mjs`) — **tanpa binding R2/B2 bucket** (storage 100% B2 via secret)
+5. Set secrets (inherit dari parent env: `ALLOWED_ORIGINS`, `SCRAPE_API_KEY`, `ADMIN_PASSWORD_HASH`, `LB_ENCRYPTION_KEY`)
+6. Encrypt + store token di D1 `lb_accounts` (AES-GCM, `packages/lb/crypto.ts`)
+7. Add origin row di D1 `lb_origins`
 
 ### Storage routing (shared lib)
-`packages/shared/src/r2-routing.ts` — satu sumber mutlak. Jangan re-implement di Worker atau frontend.
+`packages/shared/src/r2-routing.ts` — satu sumber mutlak untuk hash. Jangan re-implement di Worker atau frontend.
 ```ts
 murmur3_32(key: string, seed=0): number       // pure JS, deterministik
-buildRing(accounts: string[], vnodes=32): RingNode[]  // 32 vnodes/akun
-accountFor(key: string, ring: RingNode[]): number     // binary search, wrap-around
-r2KeyFor(source, slug, chapterId, pageNo): string     // {source}/{slug}/{chapterId}/{pageNo}
+b2KeyFor(source, slug, chapterId, pageNo): string  // {source}/{slug}/{chapterId}/{pageNo}
 ```
-R2 key format `komiku/{slug}/...` identik dengan format lama — kompatibel penuh, key existing tetap valid.
+`buildRing`/`accountFor`/`r2KeyFor` (R2 ring) **dihapus** — R2 removed. Hash dipakai untuk:
+1. **B2 hash-pick**: `pickB2AccountIdx = murmur3_32(b2Key) % accounts.length` (`lib/b2Config.ts`)
+2. **Owner sharding**: `ownerFor(chapterId) = murmur3_32(chapterId) % peers.length` (`lib/peers.ts`)
+
+B2 key format `komiku/{slug}/...` identik dengan format lama — kompatibel penuh, key existing tetap valid.
+
+### Cross-account sharding (`apps/api-cf/src/lib/peers.ts`)
+- `getPeers(env)` parse `PEER_URLS` (comma-separated, ordered) + `PEER_INDEX` → array `{url,index,self}`.
+- `ownerFor(env, chapterId)` → owner worker. Self → operasi local; peer → forward HTTP.
+- `internalExec(env, url, {sql,params,table})` → POST `/api/_internal/db/exec` (header `x-db-forward-key`, timeout 8s, return `res.ok`).
+- `internalQuery(env, url, sql, params, table)` → POST `/api/_internal/db/query` (SELECT-only).
+- `peerKvGet(env, key)` → GET `/api/_internal/kv/get` tiap non-self peer, first-non-null.
+- Reader flows (routes/reader.ts):
+  - `upsertPageRow` — row `chapter_pages` ke owner; forward gagal → tulis lokal (row-healing).
+  - `readStoredPageRows` — baca row dari owner; kosong → frontend fallback ke proxy (re-upload + heal).
+  - `touchOwnerPage` — LRU touch last_access ke owner (best-effort).
+  - `touchChapterDetailKv` — injeksi `b2Url` ke KV `chapter:detail:` setelah upload (TTL 300s).
 
 ---
 
@@ -344,7 +385,7 @@ Pure fonksional, unit-testable:
 ## 8. Image identify (`packages/vision`)
 
 `/api/identify` (multipart upload) → pHash compare:
-1. Buffer body → upload ke R2 `uploads/{uuid}` (lifecycle 1h delete)
+1. Buffer body → upload ke B2 `uploads/{uuid}` (lifecycle rule hapus setelah 1h; `pickB2Account` hash-pick)
 2. Load `image_hashes` snapshot dari KV (`identify:hashes:snapshot`, 5min TTL — hindari O(n) D1 scan per request)
 3. `identifyImage(bytes, hashes)` — 64-bit pHash (OffscreenCanvas 32x32 → 8x8 DCT → median threshold), Hamming distance ≤ 8 = match
 4. Cache result di KV (`identify:{hashPrefix}`, 10min TTL)
@@ -369,7 +410,7 @@ font-src 'self' data:
 object-src 'none'; base-uri 'self'; frame-ancestors 'none'
 ```
 - Worker API tidak mengizinkan `unsafe-inline` script — CSP API agresif. Jika deploy URL baru, **harus** update CSP di `next.config.mjs` + `ALLOWED_ORIGINS` di semua Worker.
-- `images: { unoptimized: true }` — semua gambar pakai `<img src>` langsung, bukan next/image. R2/B2 presigned URL tidak kompatibel dengan next/image optimizer proxy.
+- `images: { unoptimized: true }` — semua gambar pakai `<img src>` langsung, bukan next/image. B2 presigned URL tidak kompatibel dengan next/image optimizer proxy.
 
 ### Middleware (bukan gate auth)
 `apps/web/middleware.ts` — pass-through. Session cookie `__Host-session` berada di API origin (bukan frontend domain), jadi `req.cookies` di frontend tidak bisa lihat. Auth gate dilakukan client-side via `fetchMe()`. Jangan tambahkan cookie-check ke sini — akan salah redirect admin yang sudah login.
@@ -390,19 +431,21 @@ object-src 'none'; base-uri 'self'; frame-ancestors 'none'
 | `ALLOWED_ORIGINS` | ✅ | CORS fail-closed |
 | `ADMIN_EMAILS` | ✅ | Google email → role=admin |
 | `SCRAPE_API_KEY` | ✅ | /api/scrape auth |
-| `B2_CONFIG` | akun-1 saja | Legacy single B2 account (B2-A) |
-| `B2_ACCOUNTS` | akun-2/3 | JSON array (B2-B + lanjutan) |
-| `R2_ACCOUNTS` | ✅ | JSON array R2 multi-account |
-| `R2_RING_VNODES` | opsional | default 32 |
+| `B2_CONFIG` | akun-1 saja | Legacy single B2 account (B2-A, merge dengan B2_ACCOUNTS) |
+| `B2_ACCOUNTS` | akun-2/3 | JSON array B2 (B2-B + lanjutan), urutan = idx -1/-2/... |
+| `R2_ACCOUNTS` | — | **Legacy/removed** (R2 tidak dipakai) |
+| `B2_QUOTA_BYTES` | opsional | default 10 GiB per akun |
 | `B2_EVICTION_DAYS` | opsional | default 30 |
+| `PEER_URLS` | `[vars]` toml | comma-separated 3 worker URLs (owner sharding) |
+| `PEER_INDEX` | `[vars]` toml | 0/1/2 — index worker ini di PEER_URLS |
+| `EVICTION_OWNER` | `[vars]` akun-1 | `"1"` → akun-1 jalankan cron eviction |
+| `DB_FORWARD_KEY` | ✅ secret | internal `/api/_internal` (owner D1) |
 
 ### Frontend (`apps/web`)
 | Env var | Required | Keterangan |
 |---------|----------|------------|
 | `NEXT_PUBLIC_API_URL` | dev | `http://localhost:8787` |
-| `NEXT_PUBLIC_AUTH_API_URL` | prod | akun-2 worker URL (primary auth) |
-| `NEXT_PUBLIC_R2_DOMAINS` | prod | comma-separated, urutan = R2 ring index |
-| `NEXT_PUBLIC_R2_VNODES` | opsional | default 32 |
+| `NEXT_PUBLIC_AUTH_API_URL` | prod | akun-2 worker URL (primary auth, sticky) |
 | `NEXT_PUBLIC_SITE_URL` | prod | canonical URL |
 
 ---
@@ -416,7 +459,7 @@ cd packages/db && tsx test/matching.test.mjs && tsx test/user-profile.test.mjs
 # Sources (pakai fixture HTML/JSON)
 cd packages/sources && tsx test/thrive.test.mjs && tsx test/bacakomik.test.mjs && tsx test/manhwaindo.test.mjs
 
-# R2 routing (murmur3 deterministik)
+# B2 routing (murmur3 hash-pick + b2KeyFor deterministik)
 cd packages/shared && tsx test/r2-routing.test.mjs
 
 # LB crypto + provision

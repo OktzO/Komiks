@@ -31,6 +31,8 @@ remote = true
 B2_CONFIG = ""
 B2_ACCOUNTS = ""
 EVICTION_OWNER = "1"
+PEER_URLS = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.workers.dev,https://manga-api-3.dwikaoktyffan.workers.dev"
+PEER_INDEX = "0"
 
 [triggers]
 crons = ["0 * * * *"]

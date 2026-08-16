@@ -1,12 +1,12 @@
 # Manga Platform
 
-Developer documentation. Updated 2026-08-15.
+Developer documentation. Updated 2026-08-16.
 
 Baca komik bahasa Indonesia dari **4 source independen** — Komiku (primary, rehost
 ke B2), BacaKomik.my, Thrive.moe, ManhwaIndo.my — yang di-aggregate ke 1 manga
 canonical ber-badge multi-source. Built on Cloudflare: **3 Worker round-robin (auth
-sticky)** + Next.js Pages + D1 + KV + B2 multi-account (primary) + R2 (fallback) +
-Browser remote (Puppeteer). KV-free OAuth auth.
+sticky, chapter_pages shard-readable)** + Next.js Pages + D1 (sharded) + KV + B2
+multi-account (100% — R2 removed) + Browser remote (Puppeteer). KV-free OAuth auth.
 
 ---
 
@@ -16,13 +16,13 @@ Browser remote (Puppeteer). KV-free OAuth auth.
 |---|---|
 | Frontend | Next.js 14 (App Router, Pages), `next-on-pages`, `runtime='edge'`, dark theme OKLCH |
 | API | 1 Worker Hono (`apps/api-cf`) + 2 Worker origin (akun-2/akun-3), round-robin 3 akun |
-| DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 10 migrasi |
+| DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 10 migrasi; `chapter_pages` **sharded** by chapterId → owner D1 (murmur3, cross-account forward) |
 | Cache | KV (`CACHE_KV`) per-akun, cache-aside (search/series/reader), TTL 30s–3600s |
-| Storage primary | Backblaze B2 multi-account: `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, **presigned GET 7 hari** (SigV4 query auth) |
-| Storage fallback | Cloudflare R2 multi-account hash-ring, public domain direct CDN |
-| Rehost | **Hanya Komiku** di-rehost ke B2/R2. BacaKomik/Thrive/ManhwaIndo tetap 100% proxy |
+| Storage | Backblaze B2 multi-account (100%, **R2 removed**): `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, hash-pick deterministik (`murmur3_32(key) % accounts.length`), **presigned GET 7 hari** (SigV4 query auth) |
+| Storage fallback | **Tidak ada** — semua B2 gagal → proxy-only (serve gambar langsung dari source CDN, tanpa simpan) |
+| Rehost | **Hanya Komiku** di-rehost ke B2. BacaKomik/Thrive/ManhwaIndo tetap 100% proxy |
 | Browser | Cloudflare Browser binding (`MY_BROWSER`, `remote=true`) — Puppeteer fetch fallback untuk BacaKomik & ManhwaIndo (Cloudflare Bot Fight) |
-| Eviction | LRU: hapus B2 objek `last_access > 30d` ketika quota > 80% (trigger tiap 100th detail req via `eviction:tick`) |
+| Eviction | Usage-based: KV `b2:usage:{idx}` vs `B2_QUOTA_BYTES` (default 10GiB); trigger tiap 100th chapter-detail (`eviction:tick`) + cron hourly akun-1 (`EVICTION_OWNER=1`); hapus B2 objek `last_access > 30d` ketika quota > 80% → turun ke 70% |
 
 **4 source adapter** (`packages/sources/`, interface `SourceAdapter`): `search | getSeries |
 listChapters | fetchPageUrls | scrapeUrl`. Komiku fetch+regex (no Puppeteer); Thrive parse
@@ -73,7 +73,7 @@ NEXT_PUBLIC_AUTH_API_URL=http://localhost:8787
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
-> `wrangler dev --local` memakai binding `preview_id`/preview bucket R2. Untuk origin
+> `wrangler dev --local` memakai binding `preview_id`/preview bucket. Untuk origin
 > akun-2/akun-3 dev pakai varian wrangler masingkin:
 > `npx wrangler dev --config apps/api-cf/wrangler.origin.toml --port 8788 --local`.
 
@@ -100,11 +100,11 @@ CLOUDFLARE_API_TOKEN="cfut_...akun3..." npx wrangler deploy --config apps/api-cf
 cd apps/web
 NEXT_PUBLIC_API_URL=https://manga-api.oktz.workers.dev \
 NEXT_PUBLIC_AUTH_API_URL=https://manga-api-2.tzok5555.workers.dev \
-NEXT_PUBLIC_AUTH_FALLBACK=https://manga-api-3.dwikaoktyffan.workers.dev \
 NEXT_PUBLIC_SITE_URL=https://manga-web-d32.pages.dev \
 npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static \
   --project-name manga-web --branch main
 ```
+(`NEXT_PUBLIC_AUTH_FALLBACK` / `NEXT_PUBLIC_R2_DOMAINS` — legacy, tidak dibaca kode.)
 
 ### Build bundle worker (untuk auto-provision LB)
 
@@ -129,37 +129,54 @@ npx wrangler kv key put --binding=CACHE_KV "provision:migration:latest" --path=p
 | `B2_ACCOUNTS` | JSON array 2-item (`b2-a`, `b2-b`) — `keyId`/`appKey`/`bucket`/`region` |
 | `B2_QUOTA_BYTES` | kuota per B2 akun (default `10737418240` = 10GB) |
 | `B2_EVICTION_DAYS` | LRU eviction threshold days (default `30`) |
-| `PEER_URLS` | comma-separated worker URLs (3), untuk owner-forward + round-robin |
-| `PEER_INDEX` | index worker ini di `PEER_URLS` (0/1/2) |
 | `DB_FORWARD_KEY` | secret bersama untuk internal `/api/_internal` (owner D1) |
-| `EVICTION_OWNER` | `"1"` → worker akun-1 menjalankan cron eviction |
+
+`PEER_URLS` / `PEER_INDEX` / `EVICTION_OWNER` = **`[vars]` di `wrangler*.toml`** (bukan secret),
+tiga file harus sinkron (lihat §3 bawah).
 
 > R2 removed — storage 100% B2 (`B2_CONFIG` + `B2_ACCOUNTS`).
 
-> Deploy migrasi schema baru ke semua akun setelah deploy worker:
-> `npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0010_bookmark_source.sql`
+> **`[vars]` toml (bukan secret)** — jaga sinkron dengan yang ter-deploy:
+> `PEER_URLS` (3 worker URLs), `PEER_INDEX` (`0` akun-1 / `1` akun-2 / `2` akun-3),
+> `EVICTION_OWNER="1"` (hanya akun-1, cron `[triggers]` ada di `wrangler.toml`).
+> Kasus nyata (2026-08-16): `wrangler.toml` akun-1 sempat tidak punya PEER vars
+> (hanya di-set via `--var` saat deploy) → deploy ulang dari file akan mematikan
+> sharding silent. Sudah diperbaiki: masuk `[vars]` ketiga toml.
+
+> ⚠️ **Migrasi schema baru harus dijalankan ke SEMUA 3 D1** (D1 tidak pakai
+> `d1_migrations` tracking). Kasus nyata: `0007_relax_chapter_pages_fk` hanya
+> diterapkan ke akun-1 → akun-2/3 masih enforce FK `chapter_pages.chapter_id →
+> chapters(id)` → cache-aside row gagal ditulis **silent** (upload B2 sukses,
+> row D1 tidak ada → re-download tiap 5min). ✅ Diverifikasi fix (2026-08-16):
+> 0007 dijalankan ke akun-2 & akun-3, tes tulis FK-orphan via `/api/_internal/db/exec`
+> sukses di keduanya. Setiap deploy migrasi, jalankan per akun:
+> `npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0010_bookmark_source.sql --config apps/api-cf/wrangler.toml` (akun-1)
+> `npx wrangler d1 execute manga-db --remote --file=... --config apps/api-cf/wrangler.origin.toml` (akun-2)
+> `npx wrangler d1 execute manga-db --remote --file=... --config apps/api-cf/wrangler.origin3.toml` (akun-3)
 
 ---
 
 ## 4. Arsitektur
 
-### 4.1 Storage — B2 multi-account (hash pick)
+### 4.1 Storage — B2 multi-account (hash pick, R2 removed)
 
 ```
 Upload (Komiku page baru, cache miss):   hash(key) → B2-A/B-B (deterministik, wrap on fail)
 Read  (cache miss):                     b2Url → /api/reader proxy
-
 b2Url  = https://s3.us-east-005.backblazeb2.com/{key}?X-Amz-Signature=... (SigV4, 7 hari, langsung B2, no Worker)
 proxy  = Worker stream (Komiku: +Referer https://komiku.org/; lain: plain)
 ```
 
 - Key deterministik: `{source}/{slug}/{chapterId}/{pageNo}` (tanpa ekstensi).
-- Hash-ring R2 dari slug: `packages/shared/src/r2-routing.ts` (MurmurHash3 + consistent hash).
-- `resolveB2Accounts()` merge `B2_CONFIG` (legacy) + `B2_ACCOUNTS` (array) → dedup by `keyId`.
-- R2 upload (Komiku) di-`waitUntil`; stream **clone dulu** sebelum `new Response(upstream.body)`.
+- `packages/shared/src/r2-routing.ts` (MurmurHash3 + `b2KeyFor`) — satu sumber hash. R2 ring (`buildRing`/`accountFor`) **dihapus**.
+- Hash-pick: `pickB2AccountIdx = murmur3_32(b2Key) % accounts.length` (`lib/b2Config.ts`). Mulai dari akun terpilih; gagal → wrap ke akun lain. Idempoten.
+- `resolveB2Accounts()` merge `B2_CONFIG` (legacy) + `B2_ACCOUNTS` (array) → dedup by `keyId`. Urutan = idx: -1 = B2-A (akun-1), -2 = B2-B (akun-2).
+- **`chapter_pages` sharded** by chapterId → owner D1 (`ownerFor = murmur3_32 % peers.length`, `lib/peers.ts`). Upload menulis row (b2Key + accountIdx) ke owner via forward `/api/_internal/db/exec`; forward gagal → tulis lokal (healing). Read owner → presigned GET.
+- B2 upload (Komiku) di-`waitUntil`; stream **clone dulu** sebelum `new Response(upstream.body)`.
 - BacaKomik/Thrive/ManhwaIndo = **100% proxy, tidak pernah disimpan.**
+- Eviction usage-based + cron: lihat table §1 `Eviction`.
 
-### 4.2 3 Worker round-robin (KV-free auth, sticky origin)
+### 4.2 3 Worker round-robin (KV-free auth, sticky origin + shard reads)
 
 ```
                     ┌──────────────────┐
@@ -169,14 +186,15 @@ Frontend ─────────▶│  CDN / WAF       │
   │ health-check akun-2→3→1  ▼
   │ sessionStorage('auth_origin')  sticky 60s
   │
-  ├─ allowlisted public path ──▶ round-robin origin (circuit-breaker 2 gagal → skip 60s)
+  ├─ allowlisted public path ──▶ round-robin origin (reader + series + search + health + source-status;
+  │                              circuit-breaker 2 gagal → skip 60s, cursor rr_index sessionStorage)
   └─ auth / user path ──────────▶ STICKY origin (cookie lives di origin Worker itu)
 ```
 
-- `manga-api` (akun-1) = fallback + host `oktzz.xyz`.
+- `manga-api` (akun-1) = fallback + host `oktzz.xyz` + cron eviction (`EVICTION_OWNER=1`).
 - `manga-api-2` (akun-2, primary), `manga-api-3` (akun-3, primary).
 - D1 split per-akun (tidak sinkron) → sticky origin untuk semua r/w user.
-- Publik (search/series/manga) BISA round-robin; reader/series (data) tidak (main API only).
+- **Reader/series/search/health/source-status BISA round-robin** — `chapter_pages` shard-readable dari worker mana pun via owner forwarding (`ORIGIN_PATH_ALLOWLIST` di `apps/web/lib/api.ts`). Auth paths tidak di allowlist.
 - CSP `connect-src` **wajib** include ke-3 worker domain.
 
 ### 4.3 KV-free OAuth auth (signed HMAC cookie)
@@ -291,7 +309,7 @@ Semua di satu Worker Hono (`apps/api-cf/src/index.ts`), mount `/api/*`.
 | GET | `/api/reader/:source/series/:sourceId/chapters?lang=id` | Chapter list (KV 300s) |
 | GET | `/api/reader/:source/series/:sourceId/sources` | Aggregated sources + auto-index D1 background (KV 600s) |
 | GET | `/api/reader/:source/chapter/:chapterId` | Chapter + page URL list (KV 300s) |
-| GET | `/api/reader/:source/page/:chapterId/:pageNo` | Image proxy (Komiku: +Referer, upload R2 background) |
+| GET | `/api/reader/:source/page/:chapterId/:pageNo` | Image proxy (Komiku: +Referer, upload B2 background) |
 
 ### Auth — OAuth only (password removed, commit `b2b9866`)
 
@@ -338,7 +356,7 @@ Semua di satu Worker Hono (`apps/api-cf/src/index.ts`), mount `/api/*`.
 | GET | `/api/admin/db` | session admin | admin | D1 size, row counts |
 | GET | `/api/admin/users` | session admin | admin | list (paginated) |
 | GET | `/api/admin/users/:id` | session admin | admin | detail |
-| GET | `/api/admin/usage` | session admin | admin | LB+R2 usage |
+| GET | `/api/admin/usage` | session admin | admin | LB+B2 usage |
 | GET | `/api/admin/jobs` | session admin | admin | scrape log |
 | GET | `/api/admin/source-detail/:source` | session admin | admin | per-source detail |
 | GET | `/api/admin/lb/*` | session admin | admin | LB set/accounts/origins/status/usage |
@@ -358,7 +376,7 @@ Semua di satu Worker Hono (`apps/api-cf/src/index.ts`), mount `/api/*`.
 Manga/
 ├── apps/
 │   ├── api-cf/                       # Worker tunggal (manga-api, akun-1 fallback)
-│   │   ├── wrangler.toml             #   — akun-1: DB + KV + R2 + Browser
+│   │   ├── wrangler.toml             #   — akun-1: DB + KV + Browser (no R2)
 │   │   ├── wrangler.origin.toml      #   — akun-2: DB + KV + Browser (no R2)
 │   │   ├── wrangler.origin3.toml     #   — akun-3: DB + KV + Browser (no R2)
 │   │   ├── package.json              #   — build:bundle (esbuild → dist/worker.js)
@@ -369,10 +387,12 @@ Manga/
 │   │       │   ├── auth.ts           # signed HMAC cookie (state+session), D1 sessions, requireSession/AdminKey/AdminSession
 │   │       │   ├── rateLimit.ts      # makeLimiter(limit,window) in-memory; rateLimit 60/min, rateLimitIdentify 10/min, rateLimitAdmin 600/min, rateLimitMutate 60/hr
 │   │       │   ├── retry.ts          # retryUpstream 429 backoff
-│   │   ├── b2Config.ts          # parse B2_ACCOUNTS + B2_CONFIG, resolveB2Accounts()
-│   │   │   ├── s3Upload.ts          # SigV4 signed PUT (B2+R2) no @aws-sdk
-│   │   │   ├── storageEviction.ts   # evictStaleStorage() LRU 30d @ quota>80%
-│   │   │   ├── dbWrite.ts           # D1 overflow detector
+│   │       │   ├── peers.ts          # PEER_URLS owner sharding + internalExec/Query + peerKvGet
+│   │       │   ├── b2Config.ts       # parse B2_ACCOUNTS + B2_CONFIG, resolveB2Accounts(), pickB2AccountIdx()
+│   │       │   ├── b2Usage.ts        # KV b2:usage tracker, quotaBytes, b2NativeUsage sync
+│   │       │   ├── s3Upload.ts       # SigV4 signed PUT + presigned GET + delete (B2) no @aws-sdk
+│   │       │   ├── storageEviction.ts# evictStaleStorage() usage-based 30d @ quota>80%, owner-sharded
+│   │       │   ├── dbWrite.ts        # D1 overflow detector
 │   │   │   └── komikuSlug.ts        # parse '<slug>-chapter-<num>'
 │   │       └── routes/
 │   │           ├── health.ts • search.ts • series.ts • reader.ts • origins.ts
@@ -385,13 +405,13 @@ Manga/
 │   │   │   ├── admin/{page,monitoring,users,[id],settings}/page.tsx
 │   │   │   └── [source]/s/[slug]/{page,loading,page.tsx}  # detail + reader
 │   │   ├── components/                   # MangaCard, TypeBadge, SourceBadge, SourceSwitcher, BookmarkButton, Reader, Skeleton, ConfirmModal, profile/*
-│   │   ├── lib/api.ts                    # client + round-robin failover + getAuthApiUrl() sticky + r2UrlFor()
+│   │   ├── lib/api.ts                    # client + round-robin failover (reader+series+search) + getAuthApiUrl() sticky
 │   │   ├── middleware.ts                 # NO-OP pass-through
 │   │   ├── next.config.mjs • tailwind.config.ts • globals.css
 │   │   └── .env.production
 ├── packages/
 │   ├── db/                               # schema.sql, migrations/0001..0010, index.ts (40+ helpers), matching.ts
-│   ├── shared/                           # types.ts (Zod), r2-routing.ts (MurmurHash3 ring)
+│   ├── shared/                           # types.ts (Zod), r2-routing.ts (murmur3 B2 hash-pick + owner sharding)
 │   ├── sources/                          # komiku/bacakomik/thrive/manhwaindo adapters + registry
 │   ├── lb/                               # crypto.ts, accounts.ts, router.ts, provision.ts
 │   └── vision/                           # phash.ts, hamming.ts, identify.ts
@@ -443,21 +463,20 @@ node packages/lb/test/provision.test.mjs         # unit crypto
 CLOUDFLARE_API_TOKEN="..." node scripts/smoke-db.mjs          # D1 schema
 CLOUDFLARE_API_TOKEN="..." node scripts/smoke-data-db.mjs     # data DB
 node scripts/smoke-user.mjs     # /api/user/* smoke
-node scripts/smoke-r2-db.mjs    # R2 multi-account
 ```
 
-### Migrasi D1 remote (semua akun)
+### Migrasi D1 remote (semua akun — jangan lupa akun-2/3!)
 ```bash
 export CLOUDFLARE_API_TOKEN="cfut_...akun1..."
-npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0010_bookmark_source.sql
-# ulangi per akun (CLOUDFLARE_ACCOUNT_ID + token masingkin)
+npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0010_bookmark_source.sql --config apps/api-cf/wrangler.toml
+# ulangi per akun (token akun-2 + --config wrangler.origin.toml, akun-3 + wrangler.origin3.toml)
 ```
 
 ### Setup akun B2 baru
 ```bash
 # Tambah entry baru ke secret B2_ACCOUNTS di semua 3 worker.
-# Urutan tidak berpengaruh (hash pick deterministik), tapi jaga B2_CONFIG
-# (legacy single) konsisten dengan B2_ACCOUNTS[0].
+# Urutan array menentukan idx (-1/-2/...). Hash-pick distribusi otomatis.
+# Jalankan juga di akun-1 via B2_CONFIG bila akun itu tidak punya B2_ACCOUNTS.
 ```
 
 ---
@@ -468,6 +487,7 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0010_boo
 - **`ALLOWED_ORIGINS` CORS cross-origin.** Frontend fetch ke `*.workers.dev` butuh origin match. Support wildcard subdomain `https://*.manga-web-d32.pages.dev`. Worker 500/exception → response **tanpa** CORS header → browser `TypeError: Failed to fetch` (bukan 5xx yang terlihat). Kalau admin/reader error fetch, cek dulu: domain frontend ada di allowlist? subdomain lama (`oktz.xyz` vs `oktzz.xyz`, `www.`) terlewat?
 - **Cookie `__Host-`** butuh `Path=/`, `Secure`, tidak ada `Domain`.** Cookie hanya diset API origin, bukan frontend origin. Frontend `middleware.ts` no-op; session guard pakai `credentials:'include'` fetch, bukan `req.cookies`.
 - **Komiku proxy butuh `Referer: https://komiku.org/`.** Image CDN komiku 403 tanpa Referer — set di `routes/reader.ts`.
+- **Migrasi D1 wajib ke 3 akun.** D1 tanpa `d1_migrations` tracking — `wrangler d1 execute --file` manual. Migrasi yang terlewat di akun-2/3 gagal **silent**: contoh `0007_relax_chapter_pages_fk` terlewat → `chapter_pages` masih enforce FK → `markPageB2Uploaded` catch error → upload B2 sukses tapi row D1 tidak ada. Verifikasi: setelah page baru di-upload, cek row di owner D1 (`SELECT ... FROM chapter_pages WHERE chapter_id=?`).
 - **B2 upload idempotent.** Key sama → overwrite; race aman. Background via `waitUntil`. Gagal → akun lain (wrap) → proxy-only.
 - **Clone stream sebelum `new Response(upstream.body)`.** Setelah dibaca stream terkunci (`ReadableStream.locked`).
 - **Bundle worker base64 ~143KB.** Jangan via argumen shell; pakai `--path=` (KV key put limit 1MB, tapi argumen CLI lebih kecil).
