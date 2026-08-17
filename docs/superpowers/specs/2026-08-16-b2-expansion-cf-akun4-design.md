@@ -14,8 +14,8 @@ Expand image storage from 2 B2 accounts to 4, register CF akun-3 worker as live 
 |---|---------|-------|--------|----------------------|------|
 | 1 | Kom | `005336d7589ff330000000003` (appKey `K0058cx...`) | `manga-oktz-assets` | `us-east-005` (200) | ✓ |
 | 2 | Boltz | `005b86aeb2be76b0000000005` (appKey `K005Q1/...`) | `manga-oktz-assets-2` | `us-east-005` (200) — **.dev.vars said eu-central-003, wrong** | ✓ |
-| 3 | Kom (new) | `0043b500e7326f40000000001` (appKey `***REMOVED***`, api004) | `manga-images-kom` (new, allPrivate) | `us-west-004` (200) | ✓ |
-| 4 | Manga (new) | `005e0a76e4467490000000001` (appKey `***REMOVED***`, api005) | `manga-images-akun4` (new, allPrivate) | `us-east-005` (200) | ✓ |
+| 3 | Kom (new) | `0043b500e7326f40000000001` (appKey `K00<REDACTED>`, api004) | `manga-images-kom` (new, allPrivate) | `us-west-004` (200) | ✓ |
+| 4 | Manga (new) | `005e0a76e4467490000000001` (appKey `K00<REDACTED>`, api005) | `manga-images-akun4` (new, allPrivate) | `us-east-005` (200) | ✓ |
 
 Notes:
 - `b2_create_bucket` supports **no `region` field** (`unknown field ...: region`) — bucket default region = account region (api004 → us-west-004, api005 → us-east-005).
@@ -26,10 +26,10 @@ Notes:
 ### CF accounts
 | # | email | account_id | token (.env) |
 |---|-------|-----------|-------------|
-| 1 | oktzoffc@gmail.com | `4ce21aec2dd478bf380b7b59990a9165` | `***REMOVED***` |
-| 2 | tzok5555@gmail.com | `6a0bdfb8bccff744bd738a57502d0380` | `***REMOVED***` |
-| 3 | dwikaoktyffan@gmail.com | `ddc6f3527032c6e929fddb587f438ca4` | `***REMOVED***` |
-| 4 | **Oktznih@outlook.com** (new) | `9befea142865276dab131815c729cd8f` | `***REMOVED***` (provided 2026-08-16) |
+| 1 | oktzoffc@gmail.com | `4ce21aec2dd478bf380b7b59990a9165` | `cfut_<REDACTED>` |
+| 2 | tzok5555@gmail.com | `6a0bdfb8bccff744bd738a57502d0380` | `cfut_<REDACTED>` |
+| 3 | dwikaoktyffan@gmail.com | `ddc6f3527032c6e929fddb587f438ca4` | `cfut_<REDACTED>` |
+| 4 | **Oktznih@outlook.com** (new) | `9befea142865276dab131815c729cd8f` | `cfut_<REDACTED>` (provided 2026-08-16) |
 
 - The `cfut_` key provided by user is a **Cloudflare API token, not a B2 key** (verified: B2 authorize fails in both positions; CF accounts API returns SUCCESS with account id `9befea14...`). All 3 legacy CF tokens also start `cfut_`. B2 app keys look like `K00...`. Stored as CF akun-4; exact role TBD (candidate for a future 4th worker / origin).
 - CF akun-3 worker (`manga-api-3.dwikaoktyffan.workers.dev`) is deployed & healthy but **not yet in `lb_origins`** (only ori_main + ori_tzok5555 registered; loader `/api/origins` returns 2 origins).
@@ -41,10 +41,10 @@ Order = hash-pick index `[-1, -2, ...]`. Dedup by keyId in `resolveB2Accounts` (
 
 ```json
 [
-  {"name":"kom","bucket":"manga-oktz-assets","keyId":"005336d7589ff330000000003","appKey":"***REMOVED***","region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"},
-  {"name":"boltz","bucket":"manga-oktz-assets-2","keyId":"005b86aeb2be76b0000000005","appKey":"***REMOVED***","region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"},
-  {"name":"kom-3","bucket":"manga-images-kom","keyId":"0043b500e7326f40000000001","appKey":"***REMOVED***","region":"us-west-004","host":"s3.us-west-004.backblazeb2.com"},
-  {"name":"manga-4","bucket":"manga-images-akun4","keyId":"005e0a76e4467490000000001","appKey":"***REMOVED***","region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"}
+  {"name":"kom","bucket":"manga-oktz-assets","keyId":"005336d7589ff330000000003","appKey":"K00<REDACTED>","region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"},
+  {"name":"boltz","bucket":"manga-oktz-assets-2","keyId":"005b86aeb2be76b0000000005","appKey":"K00<REDACTED>","region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"},
+  {"name":"kom-3","bucket":"manga-images-kom","keyId":"0043b500e7326f40000000001","appKey":"K00<REDACTED>","region":"us-west-004","host":"s3.us-west-004.backblazeb2.com"},
+  {"name":"manga-4","bucket":"manga-images-akun4","keyId":"005e0a76e4467490000000001","appKey":"K00<REDACTED>","region":"us-east-005","host":"s3.us-east-005.backblazeb2.com"}
 ]
 ```
 
@@ -53,18 +53,18 @@ Boltz region fix is a **real bug fix**: SigV4 probe shows bucket `manga-oktz-ass
 ### 2. .env additions (root)
 ```env
 # akun-4: Oktznih@outlook.com
-CF_TOKEN_AKUN4=***REMOVED***
+CF_TOKEN_AKUN4=cfut_<REDACTED>
 CF_ACCOUNT_ID_AKUN4=9befea142865276dab131815c729cd8f
 
 # akun B2 ke-3
 B2_KEY_ID_3=0043b500e7326f40000000001
 B2_KEY_NAME_3=Kom
-B2_APP_KEY_3=***REMOVED***
+B2_APP_KEY_3=K00<REDACTED>
 
 # akun B2 ke-4
 B2_KEY_ID_4=005e0a76e4467490000000001
 B2_KEY_NAME_4=Manga
-B2_APP_KEY_4=***REMOVED***
+B2_APP_KEY_4=K00<REDACTED>
 ```
 
 ### 3. Secret sync to all 3 workers

@@ -20,3 +20,10 @@ test-results/
 
 
 .env.deploy
+*.jpeg
+chunk-analysis.html
+lighthouse-report.html
+lighthouse-report.json
+homepage-check.png
+status-detail-betterstack.png
+status-thrive-after.png

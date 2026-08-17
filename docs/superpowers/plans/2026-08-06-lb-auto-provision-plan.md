@@ -18,7 +18,7 @@
 - Origin health check timeout 5s, KV cache 30s
 - Frontend origin list cache sessionStorage 60s
 - Typecheck: `npx tsc --noEmit -p apps/api-cf` (pre-existing error auth.ts/crypto.ts/caches.default OK, tidak dari perubahan kita)
-- Deploy: `export CLOUDFLARE_API_TOKEN=***REMOVED*** && npx wrangler deploy --config apps/api-cf/wrangler.toml`
+- Deploy: `export CLOUDFLARE_API_TOKEN=cfut_<REDACTED> && npx wrangler deploy --config apps/api-cf/wrangler.toml`
 
 ---
 
@@ -319,7 +319,7 @@ Expected: `apps/api-cf/dist/worker.js` exists, ~600KB
 - [ ] **Step 4: Seed bundle to KV (manual, one-time + on each deploy)**
 
 ```bash
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 BUNDLE=$(base64 -w0 apps/api-cf/dist/worker.js)
 npx wrangler kv key put --namespace-id=6205fceab7b64f9d80f6f67e4189316b "worker-bundle:latest" "$BUNDLE" 2>&1 | tail -3
 ```
@@ -414,7 +414,7 @@ Expected: no new errors
 - [ ] **Step 4: Deploy + test**
 
 ```bash
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 npx wrangler deploy --config apps/api-cf/wrangler.toml 2>&1 | tail -3
 curl -s --max-time 15 "https://manga-api.oktz.workers.dev/api/origins" | head -c 200
 ```
@@ -490,7 +490,7 @@ Expected: no new errors
 - [ ] **Step 4: Deploy + test (dry run, fake token)**
 
 ```bash
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 npx wrangler deploy --config apps/api-cf/wrangler.toml 2>&1 | tail -3
 curl -s --max-time 20 -X POST "https://manga-api.oktz.workers.dev/api/admin/lb/accounts/provision" \
   -H "x-admin-stepup: 1FfeJKxW+tCsXTMd4llLrbxA" \
@@ -681,7 +681,7 @@ cd apps/web
 rm -rf .next .vercel
 NEXT_PUBLIC_API_URL=https://manga-api.oktz.workers.dev NEXT_PUBLIC_DATA_API_URL=https://manga-api.oktz.workers.dev npx next build 2>&1 | tail -3
 npx next-on-pages 2>&1 | tail -2
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 npx wrangler pages deploy .vercel/output/static --project-name manga-web --branch main 2>&1 | tail -3
 ```
 
@@ -716,7 +716,7 @@ Expected: file exists, ~600KB
 - [ ] **Step 2: Seed bundle to KV**
 
 ```bash
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 BUNDLE=$(base64 -w0 apps/api-cf/dist/worker.js)
 npx wrangler kv key put --namespace-id=6205fceab7b64f9d80f6f67e4189316b "worker-bundle:latest" "$BUNDLE" 2>&1 | tail -3
 ```

@@ -19,7 +19,7 @@
 - All source switcher loads must be lazy (no pre-fetch on page load)
 - `runtime = 'edge'` required for dynamic Pages
 - No new npm dependencies
-- CF API tokens: akun-1 `***REMOVED***`, akun-2 `***REMOVED***`
+- CF API tokens: akun-1 `cfut_<REDACTED>`, akun-2 `cfut_<REDACTED>`
 
 ---
 
@@ -501,7 +501,7 @@ node scripts/build-worker-bundle.mjs
 - [ ] **Step 3: Deploy Worker to akun-1 (main)**
 
 ```bash
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 npx wrangler deploy --config apps/api-cf/wrangler.toml
 ```
 
@@ -512,7 +512,7 @@ Secrets persist from previous deploy. Only new binding DB_OVERFLOW needs the D1 
 - [ ] **Step 5: Run migrations on akun-2 D1 (primary)**
 
 ```bash
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 export CLOUDFLARE_ACCOUNT_ID=6a0bdfb8bccff744bd738a57502d0380
 npx wrangler d1 execute manga-db --remote --file=packages/db/schema.sql
 npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0001_manga_data.sql
@@ -529,7 +529,7 @@ rm -rf .next .vercel
 NEXT_PUBLIC_API_URL=https://manga-api.oktz.workers.dev \
 NEXT_PUBLIC_DATA_API_URL=https://manga-api.oktz.workers.dev \
 npx next-on-pages
-export CLOUDFLARE_API_TOKEN="***REMOVED***"
+export CLOUDFLARE_API_TOKEN="cfut_<REDACTED>"
 npx wrangler pages deploy .vercel/output/static --project-name manga-web --branch main
 ```
 

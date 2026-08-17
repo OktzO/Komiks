@@ -2,6 +2,22 @@
 
 Developer documentation. Updated 2026-08-16.
 
+## 1. Deskripsi Platform
+
+| Concern | Teknologi |
+|---|---|
+| Frontend | Next.js 14 (App Router, Pages), `next-on-pages`, `runtime='edge'`, dark theme OKLCH |
+| API | 1 Worker Hono (`apps/api-cf`) + 2 Worker origin (akun-2/akun-3), round-robin 3 akun |
+| DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 10 migrasi; `chapter_pages` **sharded** by chapterId → owner D1 (murmur3, cross-account forward) |
+| Cache | KV (`CACHE_KV`) per-akun, cache-aside (search/series/reader), TTL 30s–3600s |
+| Storage | Backblaze B2 multi-account (100%, **R2 removed**): `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, hash-pick deterministik (`murmur3_32(key) % accounts.length`), **presigned GET 7 hari** (SigV4 query auth) |
+| Storage fallback | **Tidak ada** — semua B2 gagal → proxy-only (serve gambar langsung dari source CDN, tanpa simpan) |
+| Rehost | **Hanya Komiku** di-rehost ke B2. BacaKomik/Thrive/ManhwaIndo tetap 100% proxy |
+| Browser | Cloudflare Browser binding (`MY_BROWSER`, `remote=true`) — Puppeteer fetch fallback untuk BacaKomik & ManhwaIndo (Cloudflare Bot Fight) |
+| Eviction | Usage-based: KV `b2:usage:{idx}` vs `B2_QUOTA_BYTES` (default 10GiB); trigger tiap 100th chapter-detail (`eviction:tick`) + cron hourly akun-1 (`EVICTION_OWNER=1`); hapus B2 objek `last_access > 30d` ketika quota > 80% → turun ke 70% |
+
+**4 source adapter** (`packages/sources/`, interface `SourceAdapter`): `search | getSeries | listChapters | fetchPageUrls | scrapeUrl`. Komiku fetch+regex (no Puppeteer); Thrive parse `__NEXT_DATA__`; BacaKomik/ManhwaIndo hybrid fetch → `MY_BROWSER` fallback. Semua di-scrape HTML — **tidak ada MangaDex API** (dihapus 2026-08-07).
+
 Baca komik bahasa Indonesia dari **4 source independen** — Komiku (primary, rehost
 ke B2), BacaKomik.my, Thrive.moe, ManhwaIndo.my — yang di-aggregate ke 1 manga
 canonical ber-badge multi-source. Built on Cloudflare: **3 Worker round-robin (auth

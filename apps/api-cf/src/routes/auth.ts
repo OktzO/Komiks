@@ -132,7 +132,12 @@ router.get('/google/callback', async (c: Context) => {
   // 3. Fetch user info
   let gUser: { id?: string; email: string; name?: string; picture?: string; verified_email?: boolean };
   if (tokenData.id_token) {
-    const payload = JSON.parse(atob(tokenData.id_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as typeof gUser;
+    const payload = JSON.parse(atob(tokenData.id_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as typeof gUser & { aud?: string; iss?: string; exp?: number };
+    // Token came straight from googleapis.com over TLS, but still bound it
+    // to our client + issuer before trusting identity claims.
+    if (payload.aud !== clientId || (payload.iss !== 'https://accounts.google.com' && payload.iss !== 'accounts.google.com') || (payload.exp ?? 0) < Math.floor(Date.now() / 1000)) {
+      return c.json({ error: 'invalid id_token' }, 400);
+    }
     gUser = payload;
   } else if (tokenData.access_token) {
     const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {

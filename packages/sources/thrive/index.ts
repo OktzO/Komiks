@@ -71,6 +71,14 @@ const toSeries = (d: ThriveDetail): Series => {
 };
 
 export const thriveAdapter = (env?: ThriveAdapterEnv) => {
+  // Local function (NOT a `this._fetchDetail` method): survives detached
+  // invocation (`const d = adapter.getSeriesDetail; d()`), which would
+  // otherwise drop `this` → TypeError → recorded as healthCheck failure.
+  const fetchDetail = async (sourceId: string): Promise<ThriveDetail | null> => {
+    const html = await fetchHtml(`${THRIVE_BASE}/title/${sourceId}/`);
+    return parseNextData<ThriveDetail>(html);
+  };
+
   return {
     sourceKey: 'thrive' as const,
 
@@ -140,7 +148,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
     },
 
     async listChapters(sourceId: string): Promise<Chapter[]> {
-      const data = await this._fetchDetail(sourceId);
+      const data = await fetchDetail(sourceId);
       if (!data?.chapterlist) return [];
       return data.chapterlist.map((c) => ({
         id: c.chapter_id,
@@ -156,7 +164,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
     async getSeriesDetail(sourceId: string, _opts?: { lang?: string }): Promise<{ series: Series; chapters: Chapter[] }> {
       // SINGLE fetch + SINGLE parseNextData — vs. getSeries + listChapters both
       // fetching /title/<id>/ separately.
-      const data = await this._fetchDetail(sourceId);
+      const data = await fetchDetail(sourceId);
       if (!data || !data.id) throw new Error(`thrive getSeriesDetail: no pageProps for ${sourceId}`);
       const series = toSeries(data);
       const chapters = (data.chapterlist || []).map((c) => ({
@@ -169,13 +177,6 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
         published_at: c.created_at ? new Date(c.created_at).getTime() : undefined,
       }));
       return { series, chapters };
-    },
-
-    // Shared detail-page fetch + __NEXT_DATA__ parse (used by getSeries,
-    // listChapters, getSeriesDetail) — eliminates duplicate parseNextData calls.
-    async _fetchDetail(sourceId: string): Promise<ThriveDetail | null> {
-      const html = await fetchHtml(`${THRIVE_BASE}/title/${sourceId}/`);
-      return parseNextData<ThriveDetail>(html);
     },
 
     async getChapter(chapterSourceId: string): Promise<Chapter> {

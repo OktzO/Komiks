@@ -29,7 +29,7 @@ remote = true
 # }]
 [vars]
 EVICTION_OWNER = "1"
-PEER_URLS = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.workers.dev,https://manga-api-3.dwikaoktyffan.workers.dev"
+PEER_URLS = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.workers.dev,https://manga-api-3.dwikaoktyffan.workers.dev,https://manga-api-4.oktznih.workers.dev"
 PEER_INDEX = "0"
 
 [triggers]

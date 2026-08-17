@@ -290,7 +290,12 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
         // which triggered intermittent 502s from Komiku's DDoS-guard edge.
         let r: { series: Series; chapters: Chapter[] };
         if (adapter.getSeriesDetail) {
-          const detail = adapter.getSeriesDetail;
+          // Bind explicitly: thriveAdapter.getSeriesDetail internally calls
+          // `this._fetchDetail`. Detaching (`const detail = adapter.getSeriesDetail`)
+          // drops `this` → TypeError: Cannot read properties of undefined
+          // (reading '_fetchDetail') → ~15% thrive "downtime" recorded as
+          // healthCheck failures. Bind once, call via the bound ref.
+          const detail = adapter.getSeriesDetail.bind(adapter);
           r = await retryUpstream(() => detail(sourceId, { lang }));
         } else {
           const [series, chapters] = await Promise.all([
@@ -600,7 +605,8 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   const n = Number(pageNo);
   if (!Number.isInteger(n) || n < 1 || n > 10000) return c.json({ error: 'bad page number' }, 400);
 
-  const retry = Number(c.req.query('retry')) || 0;
+  // Clamp: untrusted query param directly sized the upstream retry loop.
+  const retry = Math.min(Math.max(Number(c.req.query('retry')) || 0, 0), 2);
 
   const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
@@ -658,7 +664,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   // reset). Retry up to 2 times (reduced from 3 to cap CPU time) before
   // surfacing the error. Only accept HTTP 200.
   let upstream: Response | null = null;
-  let retryCount = Number(c.req.query('retry')) || 0;
+  const retryCount = retry;
   for (let attempt = 0; attempt < 2 + retryCount; attempt++) {
     try {
       const r = await fetch(page.url, {

@@ -8,9 +8,9 @@
 #   SCRAPE_API_KEY=xxx ADMIN_PASSWORD_HASH=xxx ./scripts/sync-secrets.sh
 set -euo pipefail
 
-# Tokens
-TOKEN2="***REMOVED***"
-TOKEN3="***REMOVED***"
+# Tokens — set via env, never commit: CF_TOKEN_AKUN2, CF_TOKEN_AKUN3
+TOKEN2="${CF_TOKEN_AKUN2:?set CF_TOKEN_AKUN2 env var}"
+TOKEN3="${CF_TOKEN_AKUN3:?set CF_TOKEN_AKUN3 env var}"
 
 # Helper: set secret via wrangler
 set_secret() {

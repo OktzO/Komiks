@@ -127,14 +127,14 @@ export const getSourceStatus = (): Promise<{ data: SourceStatus[] }> =>
 // supaya beban tersebar ke semua worker (bukan selalu mulai di index 0).
 // Hanya path publik yang boleh dipanggil ke origin — allowlist eksplisit.
 // D1 chapter_pages kini shard-readable dari worker mana pun (owner forwarding),
-// jadi reader/series/search/health/source-status boleh round-robin. Auth paths
-// TIDAK di sini — tetap sticky ke auth origin (cookie + D1 split).
+// jadi reader/series/search/health boleh round-robin. source-status TIDAK di
+// sini — data source_health di D1 tiap akun bisa beda (recordHealth per-akun),
+// jadi status page harus selalu baca dari akun-1 (konsisten).
 const ORIGIN_PATH_ALLOWLIST = [
   '/api/reader/',
   '/api/series',
   '/api/search',
   '/api/health',
-  '/api/source-status',
 ];
 
 export const getOrigins = async (): Promise<{ url: string }[]> => {

@@ -350,7 +350,10 @@ export const komikuAdapter = (env?: AdapterEnv) => {
     async healthCheck(): Promise<{ healthy: boolean; latency_ms: number; error?: string }> {
       const start = Date.now();
       try {
-        const res = await fetch(KOMIKU_BASE, { signal: AbortSignal.timeout(5000) });
+        const res = await fetch(KOMIKU_BASE, {
+          headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
+          signal: AbortSignal.timeout(5000),
+        });
         await drainResponse(res);
         return { healthy: res.ok, latency_ms: Date.now() - start };
       } catch (e) {

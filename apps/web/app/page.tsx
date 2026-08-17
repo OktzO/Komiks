@@ -108,7 +108,7 @@ async function HomeFeed() {
                   className="flex items-center gap-3 py-3 border-b border-border-subtle group"
                 >
                   <div className="w-11 h-14 shrink-0 overflow-hidden rounded border border-border-subtle bg-card">
-                    <CoverImage src={item.cover_image} alt="" title={item.title} className="h-full w-full" />
+                    <CoverImage src={item.cover_image} alt={item.title} title={item.title} className="h-full w-full" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm text-primary truncate group-hover:text-accent transition-colors">{item.title}</div>
@@ -157,9 +157,9 @@ export default function Home() {
                 type="search"
                 placeholder="Cari judul manga…"
                 className="w-full bg-transparent text-primary placeholder:text-muted outline-none py-1.5"
-                aria-label="Cari manga"
+                aria-label="Cari judul manga"
               />
-              <button type="submit" className="shrink-0 rounded-full bg-accent text-zinc-950 px-4 py-1.5 text-sm font-medium hover:opacity-90 transition-opacity">
+              <button type="submit" aria-label="Kirim pencarian" className="shrink-0 rounded-full bg-accent text-zinc-950 px-4 py-1.5 text-sm font-medium hover:opacity-90 transition-opacity">
                 Cari
               </button>
             </div>

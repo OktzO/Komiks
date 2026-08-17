@@ -248,7 +248,7 @@ Tambah `/api/auth`, `/api/user/me`, `/api/user/bookmark`, `/api/user/history`, `
 ```
 B2_ACCOUNTS=[
   {"name":"b2-a","keyId":"<existing-keyId-of-account-1>","appKey":"<existing-appKey>","bucket":"manga-oktz-assets","region":"us-east-005"},
-  {"name":"b2-b","keyId":"005b86aeb2be76b0000000004","appKey":"***REMOVED***","bucket":"manga-oktz-assets-2","region":"us-east-005"}
+  {"name":"b2-b","keyId":"005b86aeb2be76b0000000004","appKey":"K00<REDACTED>","bucket":"manga-oktz-assets-2","region":"us-east-005"}
 ]
 ```
 

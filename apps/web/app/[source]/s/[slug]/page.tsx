@@ -109,7 +109,7 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
             author: author && author !== '-' ? { '@type': 'Person', name: author } : undefined,
             genre: genres,
             inLanguage: 'id',
-          }),
+          }).replaceAll('<', '\\u003c'),
         }}
       />
       <Link href="/" prefetch={false} className="text-secondary text-sm hover:text-accent mb-4 inline-block">← Beranda</Link>
