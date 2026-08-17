@@ -31,6 +31,7 @@ remote = true
 EVICTION_OWNER = "1"
 PEER_URLS = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.workers.dev,https://manga-api-3.dwikaoktyffan.workers.dev,https://manga-api-4.oktznih.workers.dev"
 PEER_INDEX = "0"
+AUTH_PUBLIC_KEYS = '[{"kid":"manga-api","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"7t_Lay1YVxbVCkR7nNNMsNOTzOuy7B2GJNnGIaXgft4","y":"GmlK-twGCtCS2wXkZwllV2vO1ACUTPph75Pkh11yCTs","crv":"P-256"}},{"kid":"manga-api-2","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"TY2VCzF0ShaaZ7CWFmr8QQ1-4Y1kVBM_Bq68kIbh_1U","y":"fIe-sM7w-tAOeGKhT40D5-1lSkon4b0aYT0Qn96ZBN0","crv":"P-256"}},{"kid":"manga-api-3","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"0fJmUlRFoNlFu-TdYLhxA-US4-vYjSViLqCNaKg3ymY","y":"X5M9xNq0NjrwY0Udpg9MqgMI76XEaRCg_arDRWLh0rY","crv":"P-256"}},{"kid":"manga-api-4","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"rUDSZFmCL79QnJUnJsAmEu5RjuU8u0nh0CV6_FZXn0c","y":"rJdiYevESLD2cdGe_ncmrzu6PppMl3UbERk88t4I56U","crv":"P-256"}}]'
 
 [triggers]
 crons = ["0 * * * *"]

@@ -8,6 +8,8 @@ export interface Env {
   CACHE_KV: KVNamespace;
   MY_BROWSER: Fetcher;
   LB_ENCRYPTION_KEY: string;
+  AUTH_SIGNING_KEY?: string;
+  AUTH_PUBLIC_KEYS?: string;
   ALLOWED_ORIGINS?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;

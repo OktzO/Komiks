@@ -34,6 +34,7 @@ const ALLOWED_TABLES = new Set([
   'source_link',
   'source_health',
   'image_hashes',
+  'sessions',
 ]);
 
 router.post('/db/exec', async (c: Context) => {
@@ -88,7 +89,7 @@ router.post('/db/exec', async (c: Context) => {
   // Pass the isMirror flag through to writeLocal via header on internal Request —
   // writeLocal checks c.req.header('x-db-mirror') which is preserved here.
   const result = await writeLocal(c, table, sql, params);
-  if (result.ok) return c.json({ ok: true, target: 'local', mirror: isMirror });
+  if (result.ok) return c.json({ ok: true, target: 'local', mirror: isMirror, changes: result.changes ?? 0 });
 
   // If writeLocal returns ok=false because of size/limit, signal overflow
   if (result.error?.includes('RESOURCE_EXHAUSTED') || result.error?.includes('quota')) {

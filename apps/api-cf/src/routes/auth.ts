@@ -4,6 +4,7 @@ import { db } from '@manga-platform/db';
 import {
   createSession,
   getSessionUser,
+  revokeSessionForUser,
   setSessionCookie,
   clearSessionCookie,
   isAdminEmail,
@@ -17,17 +18,17 @@ import { writeWithFallback } from '../lib/dbWrite';
 export const router = new Hono<{ Bindings: Env }>();
 
 router.post('/logout', async (c: Context) => {
-  // Revoke session in D1 (best-effort) + clear cookie.
+  // Revoke session on its owner shard (best-effort) + clear cookie.
   const user = await getSessionUser(c).catch(() => null);
   if (user) {
-    // Extract sid from cookie payload for D1 revoke.
+    // Extract sid from cookie payload for shard revoke.
     const cookieVal = parseCookie(c.req.header('cookie') || '')['__Host-session'];
     if (cookieVal) {
       const [payloadB64] = cookieVal.split('.');
       try {
         const payloadStr = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'));
         const payload = JSON.parse(payloadStr) as { sid?: string };
-        if (payload.sid) await db(c.env.DB).revokeSession(payload.sid).catch(() => {});
+        if (payload.sid) await revokeSessionForUser(c.env, user.id, payload.sid).catch(() => {});
       } catch {}
     }
   }

@@ -8,6 +8,7 @@ export interface WriteResult {
   ok: boolean;
   target: 'local' | 'overflow';
   error?: string;
+  changes?: number;
 }
 
 // Tracks D1 usage in shared KV (per-worker-account). Used to detect when this
@@ -168,7 +169,7 @@ export const writeLocal = async (
       if (!isMirror) {
         c.executionCtx.waitUntil(mirrorToPeer(c, { sql, params, table, bytes }));
       }
-      return { ok: true, target: 'local' };
+      return { ok: true, target: 'local', changes: result.meta?.changes ?? 0 };
     }
     return { ok: false, target: 'local', error: 'success=false' };
   } catch (err) {

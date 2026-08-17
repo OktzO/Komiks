@@ -7,6 +7,8 @@ import {
   getSessionUser,
   listSessionsForUser,
   revokeSessionForUser,
+  revokeAllSessionsForUser,
+  getSessionRowForUser,
   clearSessionCookie,
 } from '../lib/auth';
 
@@ -198,8 +200,9 @@ router.delete('/sessions/:token', async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const sid = c.req.param('token');
 
-  // Verify ownership: D1 session must belong to this user.
-  const row = await db(c.env.DB).getSession(sid);
+  // Verify ownership on the session's owner shard (sessions are sharded by
+  // user_id — a forged sid from another user would fail this read).
+  const row = await getSessionRowForUser(c.env, user.id, sid);
   if (!row || row.user_id !== user.id) return c.json({ error: 'session not found' }, 404);
 
   await revokeSessionForUser(c.env, user.id, sid);
@@ -212,7 +215,7 @@ router.post('/sessions/revoke-all', async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const currentSid = getSessionSid(c);
 
-  const result = await db(c.env.DB).revokeAllUserSessions(user.id, currentSid);
+  const result = await revokeAllSessionsForUser(c.env, user.id, currentSid);
   return c.json({ data: { revoked: result.revoked } });
 });
 
