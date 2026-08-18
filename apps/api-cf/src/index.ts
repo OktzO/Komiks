@@ -23,8 +23,20 @@ import { syncB2UsageFromBuckets } from './lib/b2Usage';
 // CORS: allow credentials only when origin matches the allowlist.
 // Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
 // credentials header is emitted.
+//
+// CSRF guard: for state-changing methods, a cross-origin request whose Origin
+// fails the allowlist is REJECTED (403), not merely left without CORS headers.
+// SameSite=None cookie is sent on cross-site form POSTs, so the request would
+// otherwise execute server-side even though the browser can't read the reply.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const origin = c.req.header('origin');
+
+  if (origin && !SAFE_METHODS.has(c.req.method) && !allowedOriginFor(c.env, origin)) {
+    return c.json({ error: 'forbidden origin' }, 403);
+  }
+
   if (origin && allowedOriginFor(c.env, origin)) {
     c.res.headers.set('Access-Control-Allow-Origin', origin);
     c.res.headers.set('Access-Control-Allow-Credentials', 'true');
