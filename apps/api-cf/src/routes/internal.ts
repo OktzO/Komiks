@@ -149,6 +149,30 @@ router.post('/db/query', async (c: Context) => {
 // so a leaked forward key can't dump arbitrary KV.
 const KV_READ_ALLOW_PREFIXES = ['series:detail:', 'series:full:', 'chapters:list:', 'chapter:detail:'];
 
+// Cross-account push of the 12h homepage feed. Key allowlist + forward-key
+// auth, mirroring /kv/get.
+const KV_WRITE_ALLOW_PREFIXES = ['homepage:feed'];
+
+router.post('/kv/put', async (c: Context) => {
+  const key = c.req.header('x-db-forward-key');
+  if (!key || !c.env.DB_FORWARD_KEY || !constantTimeEqualStr(key, c.env.DB_FORWARD_KEY as string)) {
+    return c.json({ error: 'invalid forward key' }, 401);
+  }
+  let payload: { key?: string; value?: string; expirationTtl?: number };
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json({ error: 'invalid JSON' }, 400);
+  }
+  const { key: k, value, expirationTtl } = payload;
+  if (typeof k !== 'string' || typeof value !== 'string' || !KV_WRITE_ALLOW_PREFIXES.some((p) => k.startsWith(p))) {
+    return c.json({ error: 'key not allowed' }, 403);
+  }
+  if (value.length > 512 * 1024) return c.json({ error: 'payload too large' }, 413);
+  await c.env.CACHE_KV.put(k, value, expirationTtl ? { expirationTtl } : undefined).catch(() => null);
+  return c.json({ ok: true });
+});
+
 router.get('/kv/get', async (c: Context) => {
   const forwardKey = c.req.header('x-db-forward-key');
   const mirrorKey = c.req.header('x-db-mirror-key');

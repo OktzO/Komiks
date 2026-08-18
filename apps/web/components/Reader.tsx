@@ -1,6 +1,6 @@
 'use client';
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { getChapter } from '@/lib/api';
 
 // Virtualized scroll reader: renders only a viewport window + buffer instead
 // of all pages at once. This caps concurrent image-proxy Worker invocations
@@ -10,16 +10,18 @@ const WINDOW = 3; // pages rendered ahead of current viewport
 const BEHIND = 1;  // pages kept rendered behind current viewport
 
 export function Reader({
+  source,
   pages,
   apiUrl,
-  nextChapterUrl,
+  nextChapterId,
   mode: modeProp,
   onModeChange,
   onActivePage,
 }: {
+  source: string;
   pages: { proxyUrl: string; b2Url?: string | null }[];
   apiUrl: string;
-  nextChapterUrl?: string | null;
+  nextChapterId?: string | null;
   mode?: 'scroll' | 'page';
   onModeChange?: (m: 'scroll' | 'page') => void;
   onActivePage?: (i: number) => void;
@@ -30,7 +32,6 @@ export function Reader({
   const [visibleCount, setVisibleCount] = useState(Math.min(pages.length, WINDOW + BEHIND + 1));
   const [loaded, setLoaded] = useState<Record<number, boolean>>({});
   const retryTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
-  const router = useRouter();
 
   const activeMode = modeProp ?? mode;
   const switchMode = (m: 'scroll' | 'page') => {
@@ -99,12 +100,18 @@ export function Reader({
     return () => ioRef.current?.disconnect();
   }, [reportActive]);
 
-  // Prefetch next chapter image pages once user reaches the last rendered page.
+  // Prefetch bab berikutnya: max 1 bab, fire sekali, saat user tiba di
+  // halaman terakhir. Hanya menghangatkan KV/metadata via getChapter —
+  // gambar tetap lazy saat navigate. Gagal = silent fallback ke RSC normal.
+  const prefetchedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!nextChapterUrl || visibleCount < pages.length) return;
-    const t = setTimeout(() => { router.prefetch(nextChapterUrl); }, 800);
+    if (!nextChapterId || visibleCount < pages.length || prefetchedRef.current === nextChapterId) return;
+    prefetchedRef.current = nextChapterId;
+    const t = setTimeout(() => {
+      getChapter(source, nextChapterId).catch(() => {});
+    }, 800);
     return () => clearTimeout(t);
-  }, [visibleCount, pages.length, nextChapterUrl, router]);
+  }, [visibleCount, pages.length, nextChapterId, source]);
 
   // Track loaded state → show skeleton slot until image resolves.
   const markLoaded = useCallback((i: number) => {

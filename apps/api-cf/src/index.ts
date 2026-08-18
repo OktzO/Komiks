@@ -5,6 +5,7 @@ import { rateLimit, rateLimitIdentify, rateLimitAdmin } from './lib/rateLimit';
 import { router as healthRouter } from './routes/health';
 import { router as seriesRouter } from './routes/series';
 import { router as searchRouter } from './routes/search';
+import { router as homepageRouter } from './routes/homepage';
 import { router as mangaRouter } from './routes/manga';
 import { router as sourceStatusRouter } from './routes/sourceStatus';
 import { router as originsRouter } from './routes/origins';
@@ -19,6 +20,8 @@ import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
 import { evictStaleStorage } from './lib/storageEviction';
 import { syncB2UsageFromBuckets } from './lib/b2Usage';
+import { fetchHomepageFromSources } from './routes/homepage';
+import { peerKvSet } from './lib/peers';
 
 // CORS: allow credentials only when origin matches the allowlist.
 // Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
@@ -74,6 +77,7 @@ app.use('*', rateLimit);
 app.route('/api', healthRouter);
 app.route('/api', seriesRouter);
 app.route('/api', searchRouter);
+app.route('/api', homepageRouter);
 app.route('/api', mangaRouter);
 app.route('/api', sourceStatusRouter);
 app.route('/api', originsRouter);
@@ -126,6 +130,22 @@ export default {
         console.log(`[cron] eviction done: ${res.evicted} objects`);
       } finally {
         await kv.delete('eviction:lock').catch(() => {});
+      }
+      // 12h homepage feed refresh: scrape once → local KV → push all peers.
+      const lastStr = await kv.get('homepage:feed:last_updated').catch(() => null);
+      const lastMs = lastStr ? parseInt(lastStr, 10) : 0;
+      if (Date.now() - lastMs > 12 * 60 * 60 * 1000) {
+        try {
+          const feed = await fetchHomepageFromSources(env as Env);
+          const body = JSON.stringify({ ...feed, updated_at: Date.now() });
+          await kv.put('homepage:feed', body, { expirationTtl: 43200 });
+          await kv.put('homepage:feed:last_updated', String(Date.now()), { expirationTtl: 43200 });
+          const pushed = await peerKvSet(env as Env, 'homepage:feed', body, 43200);
+          await kv.put('homepage:feed:last_updated', String(Date.now()), { expirationTtl: 43200 });
+          console.log(`[cron] homepage feed refreshed (${feed.sources_queried.length} sources), pushed=${pushed}`);
+        } catch (e) {
+          console.error('[cron] homepage refresh failed:', e);
+        }
       }
     };
     ctx.waitUntil(run());

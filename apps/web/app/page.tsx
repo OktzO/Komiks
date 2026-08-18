@@ -1,4 +1,4 @@
-import { searchMerged } from '@/lib/api';
+import { fetchHomepage } from '@/lib/api';
 import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
 import { TypeBadge } from '@/components/TypeBadge';
@@ -20,13 +20,15 @@ async function HomeFeed() {
   let manga: any[] = [];
   let error: string | null = null;
   try {
-    const res = await searchMerged('');
+    const res = await fetchHomepage();
     manga = res.data;
   } catch (e: unknown) {
     error = e instanceof Error ? e.message : String(e);
   }
 
-  const popular = manga.slice(0, 10);
+  // Feed KV-cached 12 jam (cron); popularity dihitung cron — urutkan untuk
+  // section Populer, urutan asli (terbaru dulu) untuk Update Terbaru.
+  const popular = [...manga].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0)).slice(0, 10);
   const updates = manga.slice(10, 22);
 
   if (error) {

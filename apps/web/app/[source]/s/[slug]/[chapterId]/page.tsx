@@ -22,11 +22,6 @@ async function ChapterContent({ params }: { params: { source: string; slug: stri
   }
 
   const chapterNum = chapter.chapter_number ?? 0;
-  // Next-chapter prefetch URL (best-effort; chapter URLs follow the
-  // `<slug>-chapter-<n>` convention on most sources).
-  const nextChapterUrl = chapterNum > 0
-    ? `/${params.source}/s/${params.slug}/${params.slug}-chapter-${chapterNum + 1}`
-    : null;
 
   // URL storage datang dari server (D1 source of truth: b2Url presigned).
   // Page baru belum di-upload → null → Reader pakai proxy
@@ -44,7 +39,6 @@ async function ChapterContent({ params }: { params: { source: string; slug: stri
       seriesType={series?.type}
       pages={pages}
       apiUrl={API_URL}
-      nextChapterUrl={nextChapterUrl}
     />
   );
 }

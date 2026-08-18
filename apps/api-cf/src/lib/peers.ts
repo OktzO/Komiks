@@ -92,3 +92,29 @@ export const peerKvGet = async (env: Env, key: string): Promise<unknown | null> 
   }
   return null;
 };
+
+// KV write-forward to every non-self peer (homepage feed push). Best-effort:
+// returns true if at least one peer accepted the write; caller keeps its own
+// local KV regardless.
+export const peerKvSet = async (
+  env: Env,
+  key: string,
+  value: string,
+  expirationTtl?: number
+): Promise<boolean> => {
+  const k = forwardKey(env);
+  if (!k) return false;
+  const results = await Promise.allSettled(
+    getPeers(env)
+      .filter((p) => !p.self)
+      .map((peer) =>
+        fetch(`${peer.url}/api/_internal/kv/put`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-db-forward-key': k },
+          body: JSON.stringify({ key, value, expirationTtl }),
+          signal: AbortSignal.timeout(5000),
+        }).then((r) => r.ok)
+      )
+  );
+  return results.some((r) => r.status === 'fulfilled' && r.value);
+};

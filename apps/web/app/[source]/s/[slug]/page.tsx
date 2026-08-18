@@ -122,6 +122,8 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
             <img
               src={series.cover_image}
               alt={series.title}
+              loading="lazy"
+              decoding="async"
               className="w-36 h-52 object-cover rounded-xl border border-border-default shadow-lg"
             />
           </div>

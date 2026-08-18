@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Reader } from './Reader';
 import { SourceSwitcher } from './SourceSwitcher';
+import { WindowedList } from './WindowedList';
 import { getChapters } from '@/lib/api';
 
 interface PageUrl {
@@ -33,7 +34,6 @@ export function ReaderShell({
   seriesType,
   pages,
   apiUrl,
-  nextChapterUrl,
 }: {
   source: string;
   slug: string;
@@ -44,7 +44,6 @@ export function ReaderShell({
   seriesType?: string | null;
   pages: PageUrl[];
   apiUrl: string;
-  nextChapterUrl?: string | null;
 }) {
   const router = useRouter();
   const [hidden, setHidden] = useState(false);
@@ -136,9 +135,17 @@ export function ReaderShell({
   };
   const toggleAutoScroll = () => setAutoScroll((a) => !a);
 
-  const chapterUrl = (n: number) => `/${source}/s/${slug}/${slug}-chapter-${n}`;
-  const prevUrl = chapterNumber > 1 ? chapterUrl(chapterNumber - 1) : null;
-  const nextUrl = nextChapterUrl;
+  const chapterUrl = (id: string) => `/${source}/s/${slug}/${id}`;
+  // Next/prev dari daftar chapter asli (bukan tebakan slug-chapter-N):
+  // tetangga terdekat berdasarkan chapter_number, tahan gap + urutan apa pun.
+  const nextCh = chapters
+    .filter((c) => c.chapter_number > chapterNumber)
+    .sort((a, b) => a.chapter_number - b.chapter_number)[0];
+  const prevCh = chapters
+    .filter((c) => c.chapter_number < chapterNumber)
+    .sort((a, b) => b.chapter_number - a.chapter_number)[0];
+  const prevUrl = prevCh ? chapterUrl(prevCh.id) : null;
+  const nextUrl = nextCh ? chapterUrl(nextCh.id) : null;
   const maxNum = chapters.length
     ? Math.max(0, ...chapters.map((c) => c.chapter_number ?? 0))
     : 0;
@@ -314,7 +321,8 @@ export function ReaderShell({
                 {chapters.length === 0 ? (
                   <p className="px-3 py-6 text-center text-sm text-muted">Memuat daftar chapter…</p>
                 ) : (
-                  chapters.map((c) => {
+                  <WindowedList total={chapters.length} renderItem={(i) => {
+                    const c = chapters[i];
                     const isCurrent = c.id === chapterId;
                     return (
                       <Link
@@ -334,7 +342,7 @@ export function ReaderShell({
                         {c.title && <span className="ml-3 truncate text-xs text-muted">{c.title}</span>}
                       </Link>
                     );
-                  })
+                  }} />
                 )}
               </div>
             </div>
@@ -344,9 +352,10 @@ export function ReaderShell({
 
       <div className="reader-stage" onClick={onStageClick}>
         <Reader
+          source={source}
           pages={pages}
           apiUrl={apiUrl}
-          nextChapterUrl={nextChapterUrl}
+          nextChapterId={nextCh?.id ?? null}
           mode={mode}
           onModeChange={setMode}
           onActivePage={setActiveIdx}

@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { WindowedList } from './WindowedList';
 
 interface Ch { id: string; chapter_number: number; title?: string | null }
 
@@ -98,19 +99,22 @@ export function ChapterList({ chapters, source, slug }: { chapters: Ch[]; source
                 </div>
               </div>
               <div className="max-h-[70vh] overflow-y-auto divide-y divide-border-subtle pb-4">
-                {ordered.map((c) => (
-                  <Link
-                    key={c.id}
-                    href={linkHref(c)}
-                    className="flex items-center justify-between px-4 py-3 hover:bg-elevated text-sm transition-colors"
-                  >
-                    <span className="text-primary">Ch. {c.chapter_number}{c.title ? ` — ${c.title}` : ''}</span>
-                    <span className="text-muted text-xs flex items-center gap-1">
-                      Baca
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
-                    </span>
-                  </Link>
-                ))}
+                <WindowedList total={ordered.length} renderItem={(i) => {
+                  const c = ordered[i];
+                  return (
+                    <Link
+                      key={c.id}
+                      href={linkHref(c)}
+                      className="flex items-center justify-between px-4 py-3 hover:bg-elevated text-sm transition-colors"
+                    >
+                      <span className="text-primary">Ch. {c.chapter_number}{c.title ? ` — ${c.title}` : ''}</span>
+                      <span className="text-muted text-xs flex items-center gap-1">
+                        Baca
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+                      </span>
+                    </Link>
+                  );
+                }} />
               </div>
             </div>
           </div>

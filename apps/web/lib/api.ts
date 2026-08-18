@@ -86,11 +86,6 @@ export const getChapters = (source: string, sourceId: string, lang = 'id') =>
 export const getChapter = (source: string, chapterId: string) =>
   apiWithFailover<{ data: Chapter }>(`/api/reader/${source}/chapter/${chapterId}`).then((r) => r.data);
 
-// Local D1 series list — used by homepage instead of searchMerged('') to
-// avoid 2 upstream fetches + 2 source-health writes per homepage load.
-export const getSeriesList = (page = 1, limit = 24): Promise<Series[]> =>
-  apiWithFailover<Series[]>(`/api/series?page=${page}&limit=${limit}`);
-
 // ---- Data API (now merged into single manga-api Worker) ----------------------
 export interface MergedManga {
   slug: string;
@@ -115,6 +110,10 @@ export interface SourceStatus {
 export const searchMerged = (q: string): Promise<{ data: MergedManga[]; sources_queried: string[] }> =>
   apiWithFailover(`/api/search?q=${encodeURIComponent(q)}`);
 
+// Homepage feed: KV-cached 12 jam (cron akun-1 scrape + push cross-account).
+export const fetchHomepage = (): Promise<{ data: Array<MergedManga & { popularity?: number }>; sources_queried: string[] }> =>
+  apiWithFailover('/api/homepage');
+
 // Status + riwayat monitoring: selalu ke API utama (akun-1) supaya data
 // source_health konsisten (tidak round-robin ke D1 per-akun yang beda).
 // Update hanya pasif — tercatat saat ada aktivitas baca dari sumber (bukan polling).
@@ -134,6 +133,7 @@ const ORIGIN_PATH_ALLOWLIST = [
   '/api/reader/',
   '/api/series',
   '/api/search',
+  '/api/homepage',
   '/api/health',
 ];
 
