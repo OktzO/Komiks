@@ -17,16 +17,17 @@ export function WindowedList({
 }) {
   const [visible, setVisible] = useState(Math.min(total, PAGE));
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const ioRef = useRef<IntersectionObserver | null>(null);
 
   // Reset window saat daftar berubah.
   useEffect(() => {
     setVisible(Math.min(total, PAGE));
   }, [total]);
 
+  // Satu IntersectionObserver untuk seluruh umur komponen (bukan instance
+  // baru tiap ekspansi window) — amati ulang sentinel saat window bertambah.
   useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || visible >= total) return;
-    const io = new IntersectionObserver(
+    ioRef.current = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) setVisible((v) => Math.min(total, v + PAGE));
@@ -34,8 +35,16 @@ export function WindowedList({
       },
       { rootMargin: '200px' }
     );
-    io.observe(el);
-    return () => io.disconnect();
+    return () => {
+      ioRef.current?.disconnect();
+      ioRef.current = null;
+    };
+  }, [total]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || visible >= total) return;
+    ioRef.current?.observe(el);
   }, [visible, total]);
 
   if (total === 0) return null;

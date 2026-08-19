@@ -7,17 +7,28 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787
 // calls ikut origin yang dipilih (D1 split per-akun, data user harus konsisten).
 const AUTH_API_URL = process.env.NEXT_PUBLIC_AUTH_API_URL || API_URL;
 const AUTH_CACHE_KEY = 'auth_origin';
+// Module-level cache (5 min): hindari health-check berulang tiap mount
+// (BookmarkButton, Navbar, AuthForm, admin pages). Sticky sessionStorage
+// tetap prioritas utama; cache ini hanya menutup window sebelum login.
+let authOriginCache: { origin: string; at: number } | null = null;
 
 export async function getAuthApiUrl(): Promise<string> {
   if (typeof sessionStorage !== 'undefined') {
     const cached = sessionStorage.getItem(AUTH_CACHE_KEY);
     if (cached) return cached;
   }
+  if (authOriginCache && Date.now() - authOriginCache.at < 300000) {
+    return authOriginCache.origin;
+  }
   const candidate = AUTH_API_URL || API_URL;
   try {
     const res = await fetch(`${candidate}/api/health`, { signal: AbortSignal.timeout(4000) });
-    if (res.ok) return candidate;
+    if (res.ok) {
+      authOriginCache = { origin: candidate, at: Date.now() };
+      return candidate;
+    }
   } catch {}
+  authOriginCache = { origin: candidate, at: Date.now() };
   return candidate;
 }
 
@@ -137,9 +148,15 @@ const ORIGIN_PATH_ALLOWLIST = [
   '/api/health',
 ];
 
+// Module-level cache (60s): SSR render (detail page) juga butuh daftar origins,
+// sessionStorage tidak ada di server — tanpa cache ini tiap server render
+// melakukan 1 fetch /api/origins tambahan.
+let originsCache: { data: { url: string }[]; at: number } | null = null;
+
 export const getOrigins = async (): Promise<{ url: string }[]> => {
   const cached = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('origins') : null;
   if (cached) return JSON.parse(cached) as { url: string }[];
+  if (originsCache && Date.now() - originsCache.at < 60000) return originsCache.data;
   try {
     const res = await fetch(`${API_URL}/api/origins`, {
       signal: AbortSignal.timeout(8000),
@@ -152,6 +169,7 @@ export const getOrigins = async (): Promise<{ url: string }[]> => {
       sessionStorage.setItem('origins', JSON.stringify(data));
       setTimeout(() => sessionStorage.removeItem('origins'), 60000);
     }
+    originsCache = { data, at: Date.now() };
     return data;
   } catch {
     return [];
@@ -208,9 +226,9 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
 }
 
 // ---- Auth (Google OAuth via /api/auth/google/login) ------------------------
-import type { UserPreferences, SessionMeta, MeResponse } from '@manga-platform/shared/types';
+import type { UserPreferences, MeResponse } from '@manga-platform/shared/types';
 
-export type { UserPreferences, SessionMeta, MeResponse };
+export type { UserPreferences };
 
 export interface AuthUser {
   id: number;
@@ -287,42 +305,6 @@ export const deleteMe = async (confirm: string): Promise<void> => {
   }
 };
 
-export const listSessions = async (): Promise<SessionMeta[]> => {
-  const base = await getAuthApiUrl();
-  const res = await fetch(`${base}/api/user/sessions`, {
-    method: 'GET',
-    credentials: 'include',
-    cache: 'no-store',
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`listSessions → ${res.status}`);
-  const json = await res.json() as { data: SessionMeta[] };
-  return json.data ?? [];
-};
-
-export const revokeSession = async (token: string): Promise<void> => {
-  const base = await getAuthApiUrl();
-  const res = await fetch(`${base}/api/user/sessions/${encodeURIComponent(token)}`, {
-    method: 'DELETE',
-    credentials: 'include',
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`revokeSession → ${res.status}`);
-};
-
-export const revokeAllSessions = async (): Promise<{ revoked: number }> => {
-  const base = await getAuthApiUrl();
-  const res = await fetch(`${base}/api/user/sessions/revoke-all`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error(`revokeAllSessions → ${res.status}`);
-  const json = await res.json() as { data: { revoked: number } };
-  return json.data;
-};
-
 export const clearHistory = async (): Promise<{ deleted: number }> => {
   const base = await getAuthApiUrl();
   const res = await fetch(`${base}/api/user/history`, {
@@ -345,12 +327,6 @@ export const clearBookmarks = async (): Promise<{ deleted: number }> => {
   if (!res.ok) throw new Error(`clearBookmarks → ${res.status}`);
   const json = await res.json() as { data: { deleted: number } };
   return json.data;
-};
-
-export const getCurrentSessionToken = (): string | null => {
-  if (typeof document === 'undefined') return null;
-  const m = document.cookie.match(/(?:^|;\s*)__Host-session=([^;]+)/);
-  return m ? decodeURIComponent(m[1]) : null;
 };
 
 // ── Admin dashboard helpers ──

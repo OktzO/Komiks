@@ -97,6 +97,9 @@ a:hover { color: var(--accent); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .anim-slide-up { animation: slideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .anim-slide-up { animation: none; }
+}
 
 /* ── Navbar: scroll-triggered island + hamburger ── */
 #navbar {
@@ -361,19 +364,38 @@ a:hover { color: var(--accent); }
   .reader-top, .reader-bottom, .reader-rail, .reader-backdrop, .reader-sheet { transition: none !important; }
 }
 
-/* ── Skeleton shimmer ── */
-@keyframes shimmer {
-  from { background-position: 200% 0; }
-  to   { background-position: -200% 0; }
-}
+/* ── Skeleton shimmer ──
+   Transform-only (compositor thread). Sebelumnya: background-position
+   200%→-200% pada bg 200% → repaint per frame; band memantul kanan↔kiri,
+   2 ayunan per 1.6s (0.8s/ayunan), posisi band = triangle wave 0↔W.
+   Replikasi eksak: strip 2W dengan peak di translateX(0), ayunan
+   translateX 100%→50%→0→50%→100% per 0.8s. Warna/gradien sama persis. */
 .skeleton {
-  background: linear-gradient(90deg, oklch(14% 0 0) 25%, oklch(20% 0 0) 50%, oklch(14% 0 0) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.6s linear infinite;
+  position: relative;
+  overflow: hidden;
+  background: oklch(14% 0 0);
   border-radius: var(--radius);
 }
+.skeleton::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -100%;
+  width: 200%;
+  background: linear-gradient(90deg, oklch(14% 0 0) 25%, oklch(20% 0 0) 50%, oklch(14% 0 0) 75%);
+  animation: shimmer-sweep 0.8s linear infinite;
+  will-change: transform;
+}
+@keyframes shimmer-sweep {
+  0%   { transform: translateX(100%); }
+  25%  { transform: translateX(50%); }
+  50%  { transform: translateX(0); }
+  75%  { transform: translateX(50%); }
+  100% { transform: translateX(100%); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .skeleton { animation: none; }
+  .skeleton::after { animation: none; }
 }
 
 /* ── Route transition thin progress bar (YouTube/GitHub style) ── */
@@ -395,10 +417,6 @@ a:hover { color: var(--accent); }
 }
 
 /* ── Home hero: subtle glow on keyword ── */
-.text-glow {
-  color: var(--accent);
-  text-shadow: 0 0 24px oklch(98% 0 0 / 0.25);
-}
 
 /* ── Type badge: border hitam, text putih bercahaya ── */
 .type-badge-glow {
@@ -445,6 +463,7 @@ a:hover { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .anim-rise, .marquee-track { animation: none; }
   .marquee { overflow-x: auto; mask-image: none; -webkit-mask-image: none; }
+  .route-progress, .status-dot.live, .pulse-soft { animation: none; }
 }
 
 /* ── Profile page: anchor scroll offset (nav-island height) ── */
@@ -467,10 +486,6 @@ a:hover { color: var(--accent); }
 @keyframes pulse-soft {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
-}
-.pulse-soft { animation: pulse-soft 1.8s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .pulse-soft { animation: none; }
 }
 
 .num-refresh { transition: opacity 0.18s ease; }
@@ -498,7 +513,9 @@ a:hover { color: var(--accent); }
   overflow: hidden;
 }
 .quota-bar > span {
-  display: block; height: 100%;
+  display: block;
+  height: 100%;
   background: var(--accent);
-  transition: width 0.3s ease;
+  transform-origin: left;
+  transition: transform 0.3s ease;
 }

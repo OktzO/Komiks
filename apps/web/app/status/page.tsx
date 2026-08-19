@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getSourceStatus, type SourceStatus } from '@/lib/api';
-import { SourceBadge, sourceLabel, SOURCE_LABELS } from '@/components/SourceBadge';
+import { SourceBadge, sourceLabel, SOURCE_LABELS, SOURCE_ORDER } from '@/components/SourceBadge';
 
 export const runtime = 'edge';
 
@@ -12,8 +12,6 @@ function formatTimestamp(ts: number): string {
     day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
 }
-
-const SOURCE_ORDER: string[] = ['komiku', 'bacakomik', 'thrive', 'manhwaindo'];
 
 export default function StatusPage() {
   const [sources, setSources] = useState<SourceStatus[] | null>(null);
@@ -33,7 +31,7 @@ export default function StatusPage() {
   const ordered = SOURCE_ORDER
     .map((s) => sources?.find((x) => x.source === s))
     .filter(Boolean) as SourceStatus[];
-  const remaining = (sources ?? []).filter((s) => !SOURCE_ORDER.includes(s.source));
+  const remaining = (sources ?? []).filter((s) => !SOURCE_ORDER.includes(s.source as (typeof SOURCE_ORDER)[number]));
 
   const totalCount = sources?.length ?? 0;
   const healthyCount = sources?.filter((s) => s.healthy).length ?? 0;

@@ -11,7 +11,6 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 export const runtime = 'edge';
-export const revalidate = 300;
 
 // Shared loader — generateMetadata + page render berbagi satu fetch (React cache).
 const loadDetail = cache(async (source: string, sourceId: string) => {
@@ -154,6 +153,7 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
               chapterNumber={0}
               apiUrl={API_URL}
               mode="detail"
+              links={srcs?.sources ?? []}
             />
           </div>
         </div>

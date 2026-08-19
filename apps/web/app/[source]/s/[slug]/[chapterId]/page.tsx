@@ -4,21 +4,18 @@ import { ReaderShell } from '@/components/ReaderShell';
 import { ReaderSkeleton } from '@/components/Skeleton';
 import { Suspense } from 'react';
 
-export const revalidate = 60;
-
 async function ChapterContent({ params }: { params: { source: string; slug: string; chapterId: string } }) {
   let chapter;
-  try {
-    chapter = await getChapter(params.source, params.chapterId);
-  } catch (e) {
-    return <div className="p-8 text-error">Gagal memuat chapter: {String(e)}</div>;
-  }
-
   let series;
   try {
-    series = await getSeries(params.source, params.slug);
-  } catch {
-    series = null;
+    // Parallel: chapter + series metadata tidak saling bergantung — satu
+    // waterfall hilang (sebelumnya serial: chapter dulu, baru series).
+    [chapter, series] = await Promise.all([
+      getChapter(params.source, params.chapterId),
+      getSeries(params.source, params.slug).catch(() => null),
+    ]);
+  } catch (e) {
+    return <div className="p-8 text-error">Gagal memuat chapter: {String(e)}</div>;
   }
 
   const chapterNum = chapter.chapter_number ?? 0;

@@ -48,8 +48,9 @@ export function Reader({
   const handleImageError = useCallback((i: number) => {
     const current = retries[i] ?? 0;
     if (current < 2) {
+      clearTimeout(retryTimers.current[i]);
       retryTimers.current[i] = setTimeout(() => {
-        setRetries((prev) => ({ ...prev, [i]: current + 1 }));
+        setRetries((prev) => ({ ...prev, [i]: (prev[i] ?? 0) + 1 }));
       }, 1000);
     }
   }, [retries]);
@@ -82,11 +83,28 @@ export function Reader({
     [onActivePage]
   );
 
-  // Observer halaman aktif di mode scroll — pasif, satu IntersectionObserver.
+  // Observer halaman aktif di mode scroll — satu IntersectionObserver,
+  // re-observe semua img terpasang saat observer dibuat ulang.
   const ioRef = useRef<IntersectionObserver | null>(null);
+  const imgEls = useRef(new Map<number, HTMLElement>());
+  const activeModeRef = useRef(activeMode);
+  activeModeRef.current = activeMode;
+
+  const setImgRef = useCallback((i: number, el: HTMLElement | null) => {
+    const prev = imgEls.current.get(i);
+    if (prev && prev !== el) {
+      ioRef.current?.unobserve(prev);
+      imgEls.current.delete(i);
+    }
+    if (el) {
+      imgEls.current.set(i, el);
+      if (activeModeRef.current === 'scroll') ioRef.current?.observe(el);
+    }
+  }, []);
+
   useEffect(() => {
     if (!onActivePage) return;
-    ioRef.current = new IntersectionObserver(
+    const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
@@ -97,8 +115,26 @@ export function Reader({
       },
       { rootMargin: '0px 0px -12% 0px', threshold: 0.1 }
     );
-    return () => ioRef.current?.disconnect();
+    ioRef.current = io;
+    imgEls.current.forEach((el) => io.observe(el));
+    return () => {
+      io.disconnect();
+      ioRef.current = null;
+    };
   }, [reportActive]);
+
+  useEffect(() => {
+    if (!ioRef.current) return;
+    if (activeMode === 'scroll') imgEls.current.forEach((el) => ioRef.current?.observe(el));
+    else imgEls.current.forEach((el) => ioRef.current?.unobserve(el));
+  }, [activeMode]);
+
+  useEffect(() => {
+    const els = imgEls.current;
+    return () => {
+      els.clear();
+    };
+  }, [pages]);
 
   // Prefetch bab berikutnya: max 1 bab, fire sekali, saat user tiba di
   // halaman terakhir. Hanya menghangatkan KV/metadata via getChapter —
@@ -127,9 +163,7 @@ export function Reader({
         alt={`Halaman ${i + 1}`}
         loading="lazy"
         data-idx={i}
-        ref={(el) => {
-          if (el && ioRef.current && activeMode === 'scroll') ioRef.current.observe(el);
-        }}
+        ref={(el) => setImgRef(i, el)}
         className="max-w-full h-auto"
         onError={() => handleImageError(i)}
         onLoad={() => markLoaded(i)}

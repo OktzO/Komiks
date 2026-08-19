@@ -7,7 +7,6 @@ const sections = [
   { id: 'account', label: 'Akun' },
   { id: 'preferences', label: 'Preferensi' },
   { id: 'privacy', label: 'Privasi & Data' },
-  { id: 'sessions', label: 'Sesi Aktif' },
 ];
 
 interface SidebarProps {
@@ -21,7 +20,10 @@ export function Sidebar({ isAdmin }: SidebarProps) {
     const ids = [...sections.map((s) => s.id)];
     if (isAdmin) ids.push('admin');
 
-    const onScroll = () => {
+    let ticking = false;
+    let rafId = 0;
+    const update = () => {
+      ticking = false;
       let current = sections[0].id;
       for (const id of ids) {
         const el = document.getElementById(id);
@@ -32,9 +34,19 @@ export function Sidebar({ isAdmin }: SidebarProps) {
       }
       setActive(current);
     };
+    const onScroll = () => {
+      // rAF-throttle: getBoundingClientRect hanya 1x per frame,
+      // bukan per scroll event (hindari forced reflow).
+      if (ticking) return;
+      ticking = true;
+      rafId = requestAnimationFrame(update);
+    };
     window.addEventListener('scroll', onScroll, { passive: true });
     onScroll();
-    return () => window.removeEventListener('scroll', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(rafId);
+    };
   }, [isAdmin]);
 
   return (

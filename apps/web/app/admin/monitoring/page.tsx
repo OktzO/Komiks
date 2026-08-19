@@ -67,14 +67,18 @@ export default function AdminMonitoringPage() {
   const router = useRouter();
 
   useEffect(() => {
+    let alive = true;
     fetchMe().then((u) => {
+      if (!alive) return;
       setUser(u);
       setLoading(false);
       if (!u || u.role !== 'admin') router.replace('/');
     });
+    return () => { alive = false; };
   }, [router]);
 
   const loadAll = useCallback(async () => {
+    if (document.hidden) return; // tab background — jangan boros API/KV
     setRefreshing(true);
     try {
       const [pRes, dRes, sRes] = await Promise.all([
@@ -175,7 +179,7 @@ export default function AdminMonitoringPage() {
                     <div className="col-span-2 text-right">
                       {quotaPct != null ? (
                         <div className="quota-bar ml-auto" style={{ width: '80px' }}>
-                          <span style={{ width: `${quotaPct}%` }} />
+                          <span style={{ transform: `scaleX(${quotaPct / 100})` }} />
                         </div>
                       ) : (
                         <span className="text-xs text-muted">—</span>

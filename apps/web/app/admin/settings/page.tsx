@@ -39,11 +39,14 @@ export default function AdminSettingsPage() {
   }, []);
 
   useEffect(() => {
+    let alive = true;
     fetchMe().then((u) => {
+      if (!alive) return;
       setUser(u);
       setAuthLoading(false);
       if (!u || u.role !== 'admin') router.replace('/');
     });
+    return () => { alive = false; };
   }, [router]);
 
   useEffect(() => {
@@ -84,7 +87,18 @@ export default function AdminSettingsPage() {
       const j = await res.json() as any;
       const jobId = j.job_id;
       if (!jobId) throw new Error('no job_id returned');
+      let ticks = 0;
       const poll = setInterval(async () => {
+        if (document.hidden) return; // tab background — skip tick
+        // Cap: job yang stuck di status selain completed/failed (mis. hilang
+        // saat worker redeploy) tanpa ini bikin poll jalan selamanya.
+        if (++ticks > 100) {
+          clearInterval(poll);
+          provisionPollRef.current = null;
+          setProvisioning(false);
+          setError('Provision polling timeout — cek status akun manual.');
+          return;
+        }
         try {
           const st = await apiGet<{ data: any }>(`/api/admin/lb/accounts/${jobId}/provision-status`);
           const data = (st as any).data ?? st ?? null;

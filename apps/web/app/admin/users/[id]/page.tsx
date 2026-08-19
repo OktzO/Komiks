@@ -1,6 +1,6 @@
 'use client';
 export const runtime = 'edge';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
 import { fetchMe, apiGet, roleLabel, type AuthUser } from '@/lib/api';
@@ -49,12 +49,19 @@ export default function AdminUserDetailPage() {
   const bmLimit = 20;
 
   useEffect(() => {
+    let alive = true;
     fetchMe().then((u) => {
+      if (!alive) return;
       setUser(u);
       setLoading(false);
       if (!u || u.role !== 'admin') router.replace('/');
     });
+    return () => { alive = false; };
   }, [router]);
+
+  // Sequence counter: respons lambat dari request sebelumnya tidak boleh
+  // menimpa data page yang lebih baru saat paginasi cepat.
+  const bmSeq = useRef(0);
 
   const loadDetail = useCallback(async () => {
     if (!Number.isFinite(userId)) { setError('invalid user id'); return; }
@@ -69,10 +76,12 @@ export default function AdminUserDetailPage() {
 
   const loadBookmarks = useCallback(async () => {
     if (!Number.isFinite(userId)) return;
+    const seq = ++bmSeq.current;
     try {
       const res = await apiGet<{ data: BookmarkRow[]; total: number; page: number }>(
         `/api/admin/users/${userId}/bookmarks?page=${bmPage}&limit=${bmLimit}`
       );
+      if (seq !== bmSeq.current) return;
       setBookmarks(res.data || []);
       setBmTotal(res.total);
     } catch (e) {

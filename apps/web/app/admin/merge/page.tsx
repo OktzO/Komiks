@@ -28,11 +28,14 @@ export default function AdminMergePage() {
   const router = useRouter();
 
   useEffect(() => {
+    let alive = true;
     fetchMe().then((u) => {
+      if (!alive) return;
       setUser(u);
       setLoading(false);
       if (!u || u.role !== 'admin') router.replace('/');
     });
+    return () => { alive = false; };
   }, [router]);
 
   const load = useCallback(async () => {

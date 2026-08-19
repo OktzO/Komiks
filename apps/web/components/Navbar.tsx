@@ -16,18 +16,26 @@ export function Navbar() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const pathname = usePathname();
 
+  // Reader pages render null (Navbar tidak tampil) — skip fetchMe di sana.
+  const readerRoute = (() => {
+    const segments = pathname.split('/').filter(Boolean);
+    return segments.length === 4 && segments[1] === 's';
+  })();
+
   useEffect(() => {
+    if (readerRoute) return;
     let cancelled = false;
     fetchMe().then((u) => { if (!cancelled) setUser(u); });
     return () => { cancelled = true; };
-  }, [pathname]);
+  }, [pathname, readerRoute]);
 
   useEffect(() => {
     let ticking = false;
+    let rafId = 0;
     const onScroll = () => {
       if (ticking) return;
       ticking = true;
-      requestAnimationFrame(() => {
+      rafId = requestAnimationFrame(() => {
         const el = document.getElementById('navbar');
         if (!el) { ticking = false; return; }
         if (window.scrollY > 1) el.classList.add('navbar-scrolled');
@@ -36,7 +44,10 @@ export function Navbar() {
       });
     };
     window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(rafId);
+    };
   }, []);
 
   useEffect(() => { setOpen(false); }, [pathname]);
@@ -97,7 +108,7 @@ export function Navbar() {
               <Link href="/profile" className="px-3 py-3 text-base text-secondary hover:text-primary hover:bg-bg-secondary transition-colors">
                 Profile
               </Link>
-              <div className="mt-1 px-3 py-1.5 text-xs text-tertiary truncate" title={user.email}>
+              <div className="mt-1 px-3 py-1.5 text-xs text-muted truncate" title={user.email}>
                 {user.email}
                 {user.role === 'admin' && <span className="ml-2 text-accent">admin</span>}
               </div>

@@ -57,7 +57,7 @@ export function PreferencesSection({ user, onUpdate }: Props) {
             key={o.value}
             type="button"
             onClick={() => onChange(o.value)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
               active
                 ? 'bg-accent text-base'
                 : 'text-secondary hover:text-primary hover:bg-bg-secondary/60'

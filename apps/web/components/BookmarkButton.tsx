@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAuthApiUrl } from '@/lib/api';
 
@@ -12,6 +12,15 @@ export function BookmarkButton({ slug, size = 'md', title, cover, source }: { sl
   const [busy, setBusy] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [failed, setFailed] = useState(false);
+  const failedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      aliveRef.current = false;
+      if (failedTimer.current) clearTimeout(failedTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -54,6 +63,7 @@ export function BookmarkButton({ slug, size = 'md', title, cover, source }: { sl
     setOn(!prevOn); // optimistic
     try {
       const base = await getAuthApiUrl();
+      if (!aliveRef.current) return;
       const r =
         prevOn
           ? await fetch(`${base}/api/user/bookmark/${encodeURIComponent(slug)}`, {
@@ -65,6 +75,7 @@ export function BookmarkButton({ slug, size = 'md', title, cover, source }: { sl
               method: 'POST',
               credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
+              signal: AbortSignal.timeout(8000),
               body: JSON.stringify({
                 seriesSlug: slug,
                 title: title ?? undefined,
@@ -72,12 +83,14 @@ export function BookmarkButton({ slug, size = 'md', title, cover, source }: { sl
                 source: source ?? undefined,
               }),
             });
+      if (!aliveRef.current) return;
       if (r.status === 401) { setOn(false); router.push('/login'); return; }
-      if (!r.ok) { setOn(prevOn); setFailed(true); setTimeout(() => setFailed(false), 1500); }
+      if (!r.ok) { setOn(prevOn); setFailed(true); failedTimer.current = setTimeout(() => setFailed(false), 1500); }
     } catch {
+      if (!aliveRef.current) return;
       setOn(prevOn);
       setFailed(true);
-      setTimeout(() => setFailed(false), 1500);
+      failedTimer.current = setTimeout(() => setFailed(false), 1500);
     } finally {
       setBusy(false);
     }

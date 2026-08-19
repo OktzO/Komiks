@@ -30,18 +30,28 @@ export default function BookmarksPage() {
   const [clearing, setClearing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const load = async () => {
+  type LoadResult = { guest: boolean; items: BookmarkRow[] | null };
+
+  const load = async (): Promise<LoadResult> => {
     try {
       const base = await getAuthApiUrl();
       const r = await fetch(`${base}/api/user/bookmarks`, { credentials: 'include', signal: AbortSignal.timeout(8000) });
-      if (r.status === 401) { setError('guest'); return; }
+      if (r.status === 401) return { guest: true, items: null };
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
-      setItems(j.data || []);
-    } catch (e) { setError(String(e)); }
+      return { guest: false, items: (j.data || []) as BookmarkRow[] };
+    } catch (e) { throw e; }
   };
 
-  useEffect(() => { let alive = true; load().then(() => alive && setItems((x) => x)); return () => { alive = false }; }, []);
+  useEffect(() => {
+    let alive = true;
+    load().then((res) => {
+      if (!alive) return;
+      setItems(res.items);
+      if (res.guest) setError('guest');
+    }).catch((e) => { if (alive) setError(String(e)); });
+    return () => { alive = false };
+  }, []);
 
   const clearAll = async () => {
     setClearing(true);

@@ -33,11 +33,14 @@ export default function AdminUsersPage() {
   const limit = 20;
 
   useEffect(() => {
+    let alive = true;
     fetchMe().then((u) => {
+      if (!alive) return;
       setUser(u);
       setLoading(false);
       if (!u || u.role !== 'admin') router.replace('/');
     });
+    return () => { alive = false; };
   }, [router]);
 
   const loadUsers = useCallback(async () => {

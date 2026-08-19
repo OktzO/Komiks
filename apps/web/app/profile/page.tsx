@@ -16,11 +16,14 @@ export default function ProfilePage() {
   const router = useRouter();
 
   useEffect(() => {
+    let alive = true;
     fetchMe().then((u) => {
+      if (!alive) return;
       setUser(u);
       setLoading(false);
       if (!u) router.replace('/login');
     });
+    return () => { alive = false; };
   }, [router]);
 
   if (loading) {

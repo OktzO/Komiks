@@ -26,11 +26,55 @@ const SOURCE_ICONS: Record<string, string> = {
   manhwaindo: '/sources/manhwaindo.png',
 };
 
+// Coalescing cache: 2 instance (settings popup + chapter sheet) di reader
+// mount bersamaan dan fetch URL yang sama — bagi satu promise, bukan dua
+// request. Cache 30s, cukup untuk satu sesi baca.
+const inFlight = new Map<string, Promise<SourceLink[] | null>>();
+
+async function fetchSourceLinks(apiUrl: string, source: string, sourceId: string): Promise<SourceLink[] | null> {
+  const url = `${apiUrl}/api/reader/${source}/series/${encodeURIComponent(sourceId)}/sources`;
+  const hit = inFlight.get(url);
+  if (hit) return hit;
+  const p = fetch(url)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => (j?.data?.sources as SourceLink[] | undefined) ?? null)
+    .catch(() => null)
+    .finally(() => setTimeout(() => inFlight.delete(url), 30000));
+  inFlight.set(url, p);
+  return p;
+}
+
 function SourceIcon({ source, dim = 'h-4 w-4' }: { source: string; dim?: string }) {
   const src = SOURCE_ICONS[source];
   if (!src) return null;
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt="" className={`${dim} rounded-full object-cover ring-1 ring-white/15`} />;
+}
+
+// Per-slug source preference. Single JSON key + LRU cap (else a key per manga
+// slug grows localStorage unbounded for heavy readers).
+const PREF_KEY = 'src-prefs';
+const PREF_MAX = 50;
+
+function readPref(slug: string): string | null {
+  try {
+    const map = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') as Record<string, string>;
+    return map[slug] ?? null;
+  } catch { return null; }
+}
+
+function writePref(slug: string, source: string) {
+  try {
+    const map = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') as Record<string, string>;
+    // LRU: delete lalu re-insert → entry terbaru selalu di akhir object.
+    delete map[slug];
+    map[slug] = source;
+    const keys = Object.keys(map);
+    if (keys.length > PREF_MAX) {
+      for (const k of keys.slice(0, keys.length - PREF_MAX)) delete map[k];
+    }
+    localStorage.setItem(PREF_KEY, JSON.stringify(map));
+  } catch {}
 }
 
 export function SourceSwitcher({
@@ -41,6 +85,7 @@ export function SourceSwitcher({
   apiUrl,
   mode = 'reader',
   embedded = false,
+  links: initialLinks,
 }: {
   currentSource: string;
   sourceId: string;
@@ -49,30 +94,28 @@ export function SourceSwitcher({
   apiUrl: string;
   mode?: 'reader' | 'detail';
   embedded?: boolean;
+  links?: SourceLink[];
 }) {
   const router = useRouter();
-  const [links, setLinks] = useState<SourceLink[]>([]);
+  const [links, setLinks] = useState<SourceLink[]>(initialLinks ?? []);
   const [pref, setPref] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
   // Load aggregated sources from API (live-resolve when aggregation empty).
+  // Kalau data sudah datang dari server (prop links) → skip fetch.
   useEffect(() => {
+    if (initialLinks) return;
     let alive = true;
-    fetch(`${apiUrl}/api/reader/${currentSource}/series/${encodeURIComponent(sourceId)}/sources`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (!alive || !j?.data?.sources) return;
-        setLinks(j.data.sources);
-      })
-      .catch(() => {});
+    fetchSourceLinks(apiUrl, currentSource, sourceId).then((l) => {
+      if (alive && l) setLinks(l);
+    });
     return () => { alive = false; };
-  }, [apiUrl, currentSource, sourceId]);
+  }, [apiUrl, currentSource, sourceId, initialLinks]);
 
   // Load user preference.
   useEffect(() => {
     if (!canonicalSlug) return;
-    const saved = localStorage.getItem(`src-pref:${canonicalSlug}`);
-    setPref(saved);
+    setPref(readPref(canonicalSlug));
   }, [canonicalSlug]);
 
   // Close panel on route change.
@@ -86,7 +129,7 @@ export function SourceSwitcher({
     const link = links.find((l) => l.source === source);
     if (!link) return;
     if (source !== currentSource && canonicalSlug) {
-      localStorage.setItem(`src-pref:${canonicalSlug}`, source);
+      writePref(canonicalSlug, source);
       setPref(source);
     }
     if (mode === 'detail') {

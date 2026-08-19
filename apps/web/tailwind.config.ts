@@ -18,6 +18,7 @@ const config: Config = {
         secondary: "var(--text-secondary)",
         muted: "var(--text-muted)",
         accent: "var(--accent)",
+        "accent-hover": "var(--accent-hover)",
         success: "var(--success)",
         error: "var(--error)",
       },

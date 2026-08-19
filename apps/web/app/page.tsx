@@ -8,7 +8,6 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 
 export const runtime = 'edge';
-export const revalidate = 300;
 
 const GENRES = ['Action', 'Adventure', 'Comedy', 'Fantasy', 'Romance', 'School Life', 'Isekai', 'Drama', 'Horror', 'Sci-Fi'];
 

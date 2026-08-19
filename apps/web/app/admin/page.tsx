@@ -31,7 +31,7 @@ function Sparkline({ data, label }: { data: number[]; label: string }) {
         {data.map((v, i) => (
           <div
             key={i}
-            className="flex-1 bg-accent/60 rounded-sm min-w-[2px] transition-all hover:bg-accent"
+            className="flex-1 bg-accent/60 rounded-sm min-w-[2px] transition-colors hover:bg-accent"
             style={{ height: `${Math.max(4, (v / max) * 100)}%` }}
             title={`${v}`}
           />
@@ -68,14 +68,18 @@ export default function AdminOverviewPage() {
   const router = useRouter();
 
   useEffect(() => {
+    let alive = true;
     fetchMe().then((u) => {
+      if (!alive) return;
       setUser(u);
       setLoading(false);
       if (!u || u.role !== 'admin') router.replace('/');
     });
+    return () => { alive = false; };
   }, [router]);
 
   const loadOverview = useCallback(async () => {
+    if (document.hidden) return; // tab background — jangan boros API/KV
     setRefreshing(true);
     try {
       const res = await apiGet<{ data: Overview }>('/api/admin/overview');
