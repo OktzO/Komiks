@@ -17,6 +17,7 @@ coverage/
 .vercel/
 *.tsbuildinfo
 test-results/
+.open-next/
 
 
 .env.deploy
@@ -24,9 +25,6 @@ test-results/
 chunk-analysis.html
 lighthouse-report.html
 lighthouse-report.json
-homepage-check.png
-status-detail-betterstack.png
-status-thrive-after.png
 
 # ECDSA private auth keys (public part committed in wrangler [vars])
 apps/api-cf/.auth-keys.json

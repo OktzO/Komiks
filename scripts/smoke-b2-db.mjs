@@ -1,5 +1,5 @@
-// Smoke test D1 r2 storage: schema + migration 0002 di :memory: (node:sqlite).
-// Jalankan: node scripts/smoke-r2-db.mjs
+// Smoke test D1 B2 storage: schema + migration 0002 di :memory: (node:sqlite).
+// Jalankan: node scripts/smoke-b2-db.mjs
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,11 +9,13 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const schema = fs.readFileSync(path.resolve(here, '../packages/db/schema.sql'), 'utf8');
 const migration1 = fs.readFileSync(path.resolve(here, '../packages/db/migrations/0001_manga_data.sql'), 'utf8');
 const migration = fs.readFileSync(path.resolve(here, '../packages/db/migrations/0002_r2_storage.sql'), 'utf8');
+const dropR2LastAccess = fs.readFileSync(path.resolve(here, '../packages/db/migrations/0012_drop_r2_last_access.sql'), 'utf8');
 
 const db = new DatabaseSync(':memory:');
 db.exec(schema);
 db.exec(migration1);
 db.exec(migration);
+db.exec(dropR2LastAccess);
 
 let ok = true;
 const check = (name, got, expect) => {
@@ -23,30 +25,25 @@ const check = (name, got, expect) => {
 };
 
 // Seed minimal: series + chapter (FK chapter_pages → chapters → series)
-db.prepare(`INSERT INTO series (slug, title, type, status, language) VALUES ('smoke-r2', 'Smoke', 'manga', 'ongoing', 'id')`).run();
-db.prepare(`INSERT INTO chapters (id, series_slug, chapter_number, language) VALUES ('smoke-r2-chapter-1', 'smoke-r2', 1, 'id')`).run();
+db.prepare(`INSERT INTO series (slug, title, type, status, language) VALUES ('smoke-b2', 'Smoke', 'manga', 'ongoing', 'id')`).run();
+db.prepare(`INSERT INTO chapters (id, series_slug, chapter_number, language) VALUES ('smoke-b2-chapter-1', 'smoke-b2', 1, 'id')`).run();
 
-// markPageR2Uploaded: insert + upsert ulang (idempoten)
+// markPageB2Uploaded: insert + upsert ulang (idempoten). Kolom r2_key/r2_account_idx
+// dipakai B2 sebagai b2Key/accountIdx (nama kolom legacy, isi live).
 db.prepare(`INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
-  VALUES ('smoke-r2-chapter-1', 1, 'https://img.komiku.org/x.jpg', 'komiku/smoke-r2/smoke-r2-chapter-1/1', 0)
+  VALUES ('smoke-b2-chapter-1', 1, 'https://img.komiku.org/x.jpg', 'komiku/smoke-b2/smoke-b2-chapter-1/1', 0)
   ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`).run();
 db.prepare(`INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
-  VALUES ('smoke-r2-chapter-1', 1, 'https://img.komiku.org/x.jpg', 'komiku/smoke-r2/smoke-r2-chapter-1/1', 1)
+  VALUES ('smoke-b2-chapter-1', 1, 'https://img.komiku.org/x.jpg', 'komiku/smoke-b2/smoke-b2-chapter-1/1', 1)
   ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`).run();
-check('markPageR2Uploaded upsert idempoten (1 row)',
-  db.prepare('SELECT COUNT(*) c FROM chapter_pages WHERE chapter_id = ?').get('smoke-r2-chapter-1').c, 1);
+check('markPageB2Uploaded upsert idempoten (1 row)',
+  db.prepare('SELECT COUNT(*) c FROM chapter_pages WHERE chapter_id = ?').get('smoke-b2-chapter-1').c, 1);
 check('r2_account_idx ter-update ke 1',
-  db.prepare('SELECT r2_account_idx FROM chapter_pages WHERE chapter_id = ? AND page_number = 1').get('smoke-r2-chapter-1').r2_account_idx, 1);
+  db.prepare('SELECT r2_account_idx FROM chapter_pages WHERE chapter_id = ? AND page_number = 1').get('smoke-b2-chapter-1').r2_account_idx, 1);
 
-// touchLastAccess: insert lalu update
-db.prepare(`INSERT INTO r2_last_access (r2_key, account_idx, last_viewed, created_at) VALUES (?, ?, ?, ?)
-  ON CONFLICT(r2_key) DO UPDATE SET last_viewed = excluded.last_viewed, account_idx = excluded.account_idx`)
-  .run('komiku/smoke-r2/smoke-r2-chapter-1/1', 1, 1000, 1000);
-db.prepare(`INSERT INTO r2_last_access (r2_key, account_idx, last_viewed, created_at) VALUES (?, ?, ?, ?)
-  ON CONFLICT(r2_key) DO UPDATE SET last_viewed = excluded.last_viewed, account_idx = excluded.account_idx`)
-  .run('komiku/smoke-r2/smoke-r2-chapter-1/1', 1, 2000, 1000);
-check('touchLastAccess update last_viewed',
-  db.prepare('SELECT last_viewed FROM r2_last_access WHERE r2_key = ?').get('komiku/smoke-r2/smoke-r2-chapter-1/1').last_viewed, 2000);
+// Migration 0012 drop r2_last_access — pastikan tabel benar-benar hilang.
+check('r2_last_access table dropped',
+  db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='r2_last_access'").get(), undefined);
 
 // incrementLbUsage: insert + increment
 db.prepare(`INSERT INTO lb_usage (origin_url, date_key, req_count, updated_at) VALUES (?, ?, 1, ?)
@@ -62,9 +59,9 @@ const usageRow = db.prepare('SELECT origin_url, req_count FROM lb_usage WHERE da
 check('listLbUsage shape', usageRow, [{ origin_url: 'https://api1.example.com', req_count: 2 }]);
 
 if (ok) {
-  console.log('smoke-r2-db: ALL PASS');
+  console.log('smoke-b2-db: ALL PASS');
   process.exit(0);
 } else {
-  console.error('smoke-r2-db: FAILED');
+  console.error('smoke-b2-db: FAILED');
   process.exit(1);
 }

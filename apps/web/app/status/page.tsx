@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { getSourceStatus, type SourceStatus } from '@/lib/api';
 import { SourceBadge, sourceLabel, SOURCE_LABELS, SOURCE_ORDER } from '@/components/SourceBadge';
 
-export const runtime = 'edge';
 
 function formatTimestamp(ts: number): string {
   if (!ts) return '—';

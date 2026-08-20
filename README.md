@@ -8,9 +8,9 @@ Developer documentation. Updated 2026-08-16.
 
 | Concern | Teknologi |
 |---|---|
-| Frontend | Next.js 16.3 (App Router, Pages), `next-on-pages`, `runtime='edge'`, dark theme OKLCH |
+| Frontend | Next.js 16.3 (App Router), `@opennextjs/cloudflare` (Workers deploy, `nodejs_compat`), dark theme OKLCH |
 | API | 4 Cloudflare Workers (round-robin LB): akun-1 (fallback) + akun-2/3/4 (primary) |
-| DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 11 migrations + 1 backfill; `chapter_pages` **sharded** by chapterId → owner D1 (murmur3, cross-account forward) |
+| DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 12 migrations + 1 backfill; `chapter_pages` **sharded** by chapterId → owner D1 (murmur3, cross-account forward) |
 | Cache | KV (`CACHE_KV`) per-akun, cache-aside (search/series/reader), TTL 30s–3600s |
 | Storage | Backblaze B2 multi-account (100%, **R2 removed**): `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, hash-pick deterministik (`murmur3_32(key) % accounts.length`), **presigned GET 7 hari** (SigV4 query auth) |
 | Storage fallback | **Tidak ada** — semua B2 gagal → proxy-only (serve gambar langsung dari source CDN, tanpa simpan) |
@@ -98,8 +98,8 @@ cd apps/web
 NEXT_PUBLIC_API_URL=https://manga-api.oktz.workers.dev \
 NEXT_PUBLIC_AUTH_API_URL=https://manga-api-2.tzok5555.workers.dev \
 NEXT_PUBLIC_SITE_URL=https://manga-web-d32.pages.dev \
-npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static \
-  --project-name manga-web --branch main
+npx opennextjs-cloudflare build && npx wrangler deploy \
+  --name manga-web --branch main
 ```
 (`NEXT_PUBLIC_AUTH_FALLBACK` / `NEXT_PUBLIC_R2_DOMAINS` — legacy, tidak dibaca kode.)
 
@@ -137,7 +137,12 @@ empat file harus sinkron (lihat §3 bawah).
 > `PEER_URLS` (4 worker URLs), `PEER_INDEX` (`0` akun-1 / `1` akun-2 / `2` akun-3 / `3` akun-4),
 > `EVICTION_OWNER="1"` (hanya akun-1, cron `[triggers]` ada di `wrangler.toml`).
 >
-> ⚠️ **`scripts/sync-secrets.sh` belum support akun-4** — hanya sync ke akun-2 + akun-3. Untuk akun-4, set manual: `CLOUDFLARE_API_TOKEN=<token-akun-4> npx wrangler secret put <NAME> --config apps/api-cf/wrangler.origin4.toml`.
+> ⚠️ **Set secret manual per-akun** — `scripts/sync-secrets.sh` sudah dihapus (jarang dipakai). Untuk set secret di akun lain, jalankan langsung:
+> ```bash
+> CLOUDFLARE_API_TOKEN=$CF_TOKEN_AKUN2 npx wrangler secret put <NAME> --config apps/api-cf/wrangler.origin.toml
+> CLOUDFLARE_API_TOKEN=$CF_TOKEN_AKUN3 npx wrangler secret put <NAME> --config apps/api-cf/wrangler.origin3.toml
+> CLOUDFLARE_API_TOKEN=$CF_TOKEN_AKUN4 npx wrangler secret put <NAME> --config apps/api-cf/wrangler.origin4.toml
+> ```
 
 > ⚠️ **Migrasi schema baru harus dijalankan ke SEMUA 4 D1** (D1 tidak pakai
 > `d1_migrations` tracking). Kasus nyata: `0007_relax_chapter_pages_fk` hanya
@@ -416,7 +421,7 @@ Manga/
 │   ├── sources/                          # komiku/bacakomik/thrive/manhwaindo adapters + registry
 │   ├── lb/                               # crypto.ts, accounts.ts, router.ts, provision.ts
 │   └── vision/                           # phash.ts, hamming.ts, identify.ts
-├── scripts/                              # build-worker-bundle.mjs, deploy-worker-api.sh, smoke-*
+├── scripts/                              # build-worker-bundle.mjs, gen-auth-keys.mjs, smoke-*
 ├── docs/                                 # DEPLOY.md, ADDING-ACCOUNT.md, specs
 ├── package.json • turbo.json
 └── README.md                             # ini file
@@ -484,9 +489,9 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0011_ser
 
 ## 9. Gotchas
 
-- **`next-on-pages` butuh `runtime='edge'`.** Halaman dinamis (`search`, `[source]/s/[slug]/*`, `admin/*`) wajib `export const runtime = 'edge'` + `revalidate`. Tanpa itu build Pages error.
+- **OpenNext + Cloudflare Workers** (`@opennextjs/cloudflare`) adalah build pipeline pengganti `@cloudflare/next-on-pages`. Semua halaman App Router (termasuk `search`, `[source]/s/[slug]/*`, `admin/*`) jalan di runtime `nodejs_compat` — **tidak perlu** `export const runtime = 'edge'` lagi. Build: `npx opennextjs-cloudflare build`, deploy via `wrangler deploy` (config `apps/web/wrangler.jsonc`).
 - **`ALLOWED_ORIGINS` CORS cross-origin.** Frontend fetch ke `*.workers.dev` butuh origin match. Support wildcard subdomain `https://*.manga-web-d32.pages.dev`. Worker 500/exception → response **tanpa** CORS header → browser `TypeError: Failed to fetch` (bukan 5xx yang terlihat). Kalau admin/reader error fetch, cek dulu: domain frontend ada di allowlist? subdomain lama (`oktz.xyz` vs `oktzz.xyz`, `www.`) terlewat?
-- **Cookie `__Host-`** butuh `Path=/`, `Secure`, tidak ada `Domain`.** Cookie hanya diset API origin, bukan frontend origin. Frontend `middleware.ts` no-op; session guard pakai `credentials:'include'` fetch, bukan `req.cookies`.
+- **Cookie `__Host-`** butuh `Path=/`, `Secure`, tidak ada `Domain`.** Cookie hanya diset API origin, bukan frontend origin. Session guard pakai `credentials:'include'` fetch dari page-level client component, bukan `req.cookies` middleware.
 - **Komiku proxy butuh `Referer: https://komiku.org/`.** Image CDN komiku 403 tanpa Referer — set di `routes/reader.ts`.
 - **Migrasi D1 wajib ke 4 akun.** D1 tanpa `d1_migrations` tracking — `wrangler d1 execute --file` manual. Migrasi yang terlewat di akun-2/3/4 gagal **silent**: contoh `0007_relax_chapter_pages_fk` terlewat → `chapter_pages` masih enforce FK → `markPageB2Uploaded` catch error → upload B2 sukses tapi row D1 tidak ada. Verifikasi: setelah page baru di-upload, cek row di owner D1 (`SELECT ... FROM chapter_pages WHERE chapter_id=?`).
 - **B2 upload idempotent.** Key sama → overwrite; race aman. Background via `waitUntil`. Gagal → akun lain (wrap) → proxy-only.

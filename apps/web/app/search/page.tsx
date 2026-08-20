@@ -1,4 +1,3 @@
-export const runtime = 'edge';
 import { SourceBadge } from '@/components/SourceBadge';
 import { searchMerged } from '@/lib/api';
 import Link from 'next/link';
@@ -81,8 +80,9 @@ async function Results({ q }: { q: string }) {
   );
 }
 
-export default function SearchPage({ searchParams }: { searchParams: { q?: string } }) {
-  const q = searchParams.q?.trim();
+export default async function SearchPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+  const sp = await searchParams;
+  const q = sp.q?.trim();
 
   return (
     <main className="max-w-3xl mx-auto px-4 py-8">

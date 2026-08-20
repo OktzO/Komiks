@@ -1,5 +1,4 @@
 'use client';
-export const runtime = 'edge';
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchMe, apiGet, apiPost, roleLabel, type AuthUser } from '@/lib/api';

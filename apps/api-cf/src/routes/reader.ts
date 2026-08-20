@@ -305,7 +305,7 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
           r = { series, chapters };
         }
         const { series, chapters } = r;
-        // Index chapterId → slug (KV 1 jam) supaya R2 cache-aside bisa resolve
+        // Index chapterId → slug (KV 1 jam) supaya B2 cache-aside bisa resolve
         // slug dari chapterId (thrive pakai uuid yang tidak bisa di-parse).
         //
         // KV WRITE THROTTLE: Previously this loop wrote a KV key for EVERY chapter
@@ -705,21 +705,21 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   headers.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
   setCorsHeaders(c.env, headers, c.req.header('origin'));
 
-  // Cache-aside R2 (semua source — komiku + bacakomik + thrive + manhwaindo):
+  // Cache-aside B2 (semua source — komiku + bacakomik + thrive + manhwaindo):
   // clone stream SEBELUM Response dibuat — setelah `new Response(upstream.body)`
   // stream terkunci dan clone() melempar "ReadableStream locked to a reader".
-  // Upload di background; request berikutnya diserve langsung dari R2 tanpa
+  // Upload di background; request berikutnya diserve langsung dari B2 tanpa
   // lewat Worker. Upload idempoten (key sama → overwrite).
-  // Buffer body (bukan stream): PUT stream tanpa Content-Length ditolak R2
+  // Buffer body (bukan stream): PUT stream tanpa Content-Length ditolak B2
   // (411 Length Required) untuk sebagian upstream — gambar chapter kecil,
   // buffer aman di limit 128MB.
   const slug = await resolveKomikuSlug(c, chapterId);
-  let r2Upload: Promise<void> | null = null;
+  let bgUpload: Promise<void> | null = null;
   if (slug) {
     const contentType = upstream.headers.get('content-type') || 'image/jpeg';
     const buf = await new Response(upstream.clone().body).arrayBuffer();
     if (buf.byteLength > 0) {
-      r2Upload = uploadToStorage(c, { source, slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body: buf }).catch(() => {});
+      bgUpload = uploadToStorage(c, { source, slug, chapterId, pageNo: n, imageUrl: page.url, contentType, body: buf }).catch(() => {});
     }
   }
 
@@ -735,7 +735,7 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
     c.executionCtx.waitUntil(cache.put(upstreamReq, response.clone()).catch(() => {}));
   }
 
-  if (r2Upload) c.executionCtx.waitUntil(r2Upload);
+  if (bgUpload) c.executionCtx.waitUntil(bgUpload);
 
   return response;
 });

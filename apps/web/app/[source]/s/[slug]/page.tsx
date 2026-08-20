@@ -10,7 +10,6 @@ import { Suspense, cache } from 'react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-export const runtime = 'edge';
 
 // Shared loader — generateMetadata + page render berbagi satu fetch (React cache).
 const loadDetail = cache(async (source: string, sourceId: string) => {
@@ -24,15 +23,17 @@ const loadDetail = cache(async (source: string, sourceId: string) => {
   return { series: s, srcs: src, allSources };
 });
 
-export async function generateMetadata({ params, searchParams }: { params: { source: string; slug: string }; searchParams: { id?: string } }): Promise<Metadata> {
-  const sourceId = searchParams.id ?? params.slug;
+export async function generateMetadata({ params, searchParams }: { params: Promise<{ source: string; slug: string }>; searchParams: Promise<{ id?: string }> }): Promise<Metadata> {
+  const { source, slug } = await params;
+  const sp = await searchParams;
+  const sourceId = sp.id ?? slug;
   try {
-    const { series } = await loadDetail(params.source, sourceId);
+    const { series } = await loadDetail(source, sourceId);
     const desc = (series.synopsis ?? '').replace(/\s+/g, ' ').trim().slice(0, 160) || undefined;
     return {
       title: `${series.title} - Manga`,
       description: desc,
-      alternates: { canonical: `/${params.source}/s/${params.slug}` },
+      alternates: { canonical: `/${source}/s/${slug}` },
       openGraph: {
         title: series.title,
         description: desc,
@@ -42,12 +43,14 @@ export async function generateMetadata({ params, searchParams }: { params: { sou
       },
     };
   } catch {
-    return { title: params.slug.replace(/-/g, ' ') };
+    return { title: slug.replace(/-/g, ' ') };
   }
 }
 
-async function DetailContent({ params, searchParams }: { params: { source: string; slug: string }; searchParams: { id?: string } }) {
-  const sourceId = searchParams.id ?? params.slug;
+async function DetailContent({ params, searchParams }: { params: Promise<{ source: string; slug: string }>; searchParams: Promise<{ id?: string }> }) {
+  const { source, slug } = await params;
+  const sp = await searchParams;
+  const sourceId = sp.id ?? slug;
   if (!sourceId) return <div className="p-8 text-error">Missing ?id=mangaId</div>;
 
   let series: Awaited<ReturnType<typeof getSeriesDetail>>;
@@ -56,7 +59,7 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
   try {
     // Fetch detail + aggregated sources in parallel so the header can show
     // every source that hosts this manga (badges), not just the current one.
-    const loaded = await loadDetail(params.source, sourceId);
+    const loaded = await loadDetail(source, sourceId);
     series = loaded.series;
     srcs = loaded.srcs;
     allSources = loaded.allSources;
@@ -69,7 +72,7 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
   // Merge genre + author dari source lain (source aktif bisa kosong).
   let genres: string[] = series.genres ?? [];
   let author: string | null | undefined = series.author;
-  const otherLinks = srcs?.sources?.filter((x) => x.source !== params.source) ?? [];
+  const otherLinks = srcs?.sources?.filter((x) => x.source !== source) ?? [];
   if (otherLinks.length > 0) {
     const extras = await Promise.allSettled(
       otherLinks.slice(0, 3).map((link) =>
@@ -147,9 +150,9 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
           {/* Source picker — independent source switch */}
           <div className="mt-3 flex justify-center md:justify-start">
             <SourceSwitcher
-              currentSource={params.source}
+              currentSource={source}
               sourceId={sourceId}
-              canonicalSlug={params.slug}
+              canonicalSlug={slug}
               chapterNumber={0}
               apiUrl={API_URL}
               mode="detail"
@@ -228,15 +231,15 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
       <div className="border-t border-border-subtle my-4" />
 
       {/* Chapter list — toggle button + slide-up panel */}
-      <ChapterList chapters={chapters} source={params.source} slug={params.slug} />
+      <ChapterList chapters={chapters} source={source} slug={slug} />
 
       {/* Toolbox — floating bottom bar (sticky saat scroll): bookmark + Mulai Baca */}
       {startChapterId && (
         <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
           <div className="nav-island flex w-full max-w-md items-center gap-2 rounded-xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.45)]">
-            <BookmarkButton slug={params.slug} title={series.title} cover={series.cover_image} source={params.source} />
+            <BookmarkButton slug={slug} title={series.title} cover={series.cover_image} source={source} />
             <Link
-              href={`/${params.source}/s/${params.slug}/${startChapterId}?mangaId=${params.slug.split('--').pop()}`}
+              href={`/${source}/s/${slug}/${startChapterId}?mangaId=${slug.split('--').pop()}`}
               prefetch={false}
               className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-white bg-white px-5 text-sm font-semibold text-black hover:opacity-90 transition-opacity"
             >
@@ -253,7 +256,7 @@ async function DetailContent({ params, searchParams }: { params: { source: strin
 }
 
 // Shell instan: user langsung lihat skeleton, data fetch di background.
-export default function SeriesDetail({ params, searchParams }: { params: { source: string; slug: string }; searchParams: { id?: string } }) {
+export default function SeriesDetail({ params, searchParams }: { params: Promise<{ source: string; slug: string }>; searchParams: Promise<{ id?: string }> }) {
   return (
     <main className="max-w-2xl mx-auto px-4 pb-28">
       <Suspense fallback={<DetailSkeleton />}>

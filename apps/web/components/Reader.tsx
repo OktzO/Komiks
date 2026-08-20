@@ -26,18 +26,13 @@ export function Reader({
   onModeChange?: (m: 'scroll' | 'page') => void;
   onActivePage?: (i: number) => void;
 }) {
-  const [mode, setMode] = useState<'scroll' | 'page'>('scroll');
   const [idx, setIdx] = useState(0);
   const [retries, setRetries] = useState<Record<number, number>>({});
   const [visibleCount, setVisibleCount] = useState(Math.min(pages.length, WINDOW + BEHIND + 1));
   const [loaded, setLoaded] = useState<Record<number, boolean>>({});
   const retryTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
-  const activeMode = modeProp ?? mode;
-  const switchMode = (m: 'scroll' | 'page') => {
-    if (onModeChange) onModeChange(m);
-    setMode(m);
-  };
+  const activeMode = modeProp ?? 'scroll';
 
   // Storage-first: B2 presigned (primary) → proxy.
   // Proxy sekaligus meng-upload ke storage di background → request berikutnya

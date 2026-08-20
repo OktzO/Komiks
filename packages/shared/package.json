@@ -12,9 +12,9 @@
     "./entities": "./src/entities.ts"
   },
   "dependencies": {
-    "zod": "3.22.3"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "typescript": "^5.5.4"
+    "typescript": "^5.9.3"
   }
 }

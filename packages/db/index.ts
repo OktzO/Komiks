@@ -57,7 +57,6 @@ export interface Db {
   addAuditLog: (params: { accountId?: string | null; originId?: string | null; action: string; userId?: number | null }) => Promise<{ success: boolean }>;
   upsertSeries: (params: { slug: string; title: string; external_id?: string | null; source: string; synopsis?: string | null; type: string; status?: string; author?: string | null; artist?: string | null; cover_image?: string | null; genres?: string[]; tags?: string[]; alt_titles?: string | null; source_url?: string | null; cover_r2_key?: string | null; language?: string | null }) => Promise<{ slug: string }>;
   addImageHash: (params: { seriesSlug: string; hash: string; r2Key?: string | null; imageType: 'cover' | 'page' }) => Promise<{ id: number }>;
-  getImageHashesByPrefix: (prefix: string) => Promise<Array<{ series_slug: string; hash: string; r2_key: string | null }>>;
   getAllImageHashes: () => Promise<Array<{ series_slug: string; hash: string; r2_key: string | null }>>;
   createScrapeJob: (params: { id: string; source: string; sourceUrl?: string | null; query?: string | null; createdBy?: number | null }) => Promise<{ id: string }>;
   updateScrapeJob: (id: string, params: { status: string; seriesSlug?: string | null; error?: string | null; completedAt?: number | null }) => Promise<{ success: boolean }>;
@@ -79,12 +78,8 @@ export interface Db {
   mergeSeries: (targetSlug: string, sourceSlug: string) => Promise<{ success: boolean }>;
 
   // ── Admin monitoring (0006) ──
-  upsertProviderAccount: (params: { provider: string; label: string; status?: string; lastSuccessAt?: number | null; lastFailureAt?: number | null; lastError?: string | null; requests24h?: number; failures24h?: number; quotaUsedBytes?: number | null; quotaLimitBytes?: number | null }) => Promise<{ id: string }>;
   listProviderAccounts: () => Promise<ListResult<{ id: string; provider: string; label: string; status: string; last_success_at: number | null; last_failure_at: number | null; last_error: string | null; requests_24h: number; failures_24h: number; quota_used_bytes: number | null; quota_limit_bytes: number | null; updated_at: number }>>;
-  getProviderAccount: (id: string) => Promise<Result<{ id: string; provider: string; label: string; status: string; last_success_at: number | null; last_failure_at: number | null; last_error: string | null; requests_24h: number; failures_24h: number; quota_used_bytes: number | null; quota_limit_bytes: number | null; updated_at: number }>>;
-  logScrapeJob: (params: { source: string; providerAccountId?: string | null; status: string; itemsScraped?: number; durationMs?: number | null; errorMessage?: string | null; startedAt: number; finishedAt?: number | null }) => Promise<{ id: string }>;
   listScrapeJobsLog: (params: { source?: string; status?: string; from?: number; to?: number; page?: number; limit?: number }) => Promise<{ data: Array<{ id: string; source: string; provider_account_id: string | null; status: string; items_scraped: number; duration_ms: number | null; error_message: string | null; started_at: number; finished_at: number | null }>; total: number; page: number }>;
-  insertDbUsageSnapshot: (params: { dbName: string; rowsOrObjects?: number | null; sizeBytes?: number | null }) => Promise<{ id: string }>;
   getDbUsageTrend: (days?: number) => Promise<Array<{ db_name: string; points: Array<{ ts: number; size_bytes: number | null; rows_or_objects: number | null }> }>>;
   getAdminOverview: () => Promise<{ usersTotal: number; bookmarksTotal: number; scrape24h: { success: number; failed: number }; providers: { healthy: number; degraded: number; down: number } }>;
   listUsersAdmin: (params: { q?: string; page?: number; limit?: number }) => Promise<{ data: Array<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>; total: number; page: number }>;
@@ -438,11 +433,6 @@ export const db = (client: D1Database): Db => {
       (await prep('INSERT INTO image_hashes (series_slug, hash, r2_key, image_type) VALUES (?1, ?2, ?3, ?4) RETURNING id')
         .bind(p.seriesSlug, p.hash, p.r2Key ?? null, p.imageType).first<Row>()) as { id: number },
 
-    getImageHashesByPrefix: async (prefix) => {
-      const { results } = await prep('SELECT series_slug, hash, r2_key FROM image_hashes WHERE hash LIKE ?1').bind(`${prefix}%`).all<Row>();
-      return (results ?? []) as unknown as Array<{ series_slug: string; hash: string; r2_key: string | null }>;
-    },
-
     getAllImageHashes: async () => {
       const { results } = await prep('SELECT series_slug, hash, r2_key FROM image_hashes').all<Row>();
       return (results ?? []) as unknown as Array<{ series_slug: string; hash: string; r2_key: string | null }>;
@@ -666,55 +656,9 @@ export const db = (client: D1Database): Db => {
 
     // ── Admin monitoring (0006) ──
 
-    upsertProviderAccount: async (p) => {
-      const id = crypto.randomUUID();
-      const row = await prep(
-        `INSERT INTO provider_accounts (id, provider, label, status, last_success_at, last_failure_at, last_error, requests_24h, failures_24h, quota_used_bytes, quota_limit_bytes, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, unixepoch())
-         ON CONFLICT(provider, label) DO UPDATE SET
-           status = excluded.status,
-           last_success_at = COALESCE(excluded.last_success_at, provider_accounts.last_success_at),
-           last_failure_at = COALESCE(excluded.last_failure_at, provider_accounts.last_failure_at),
-           last_error = COALESCE(excluded.last_error, provider_accounts.last_error),
-           requests_24h = excluded.requests_24h,
-           failures_24h = excluded.failures_24h,
-           quota_used_bytes = COALESCE(excluded.quota_used_bytes, provider_accounts.quota_used_bytes),
-           quota_limit_bytes = COALESCE(excluded.quota_limit_bytes, provider_accounts.quota_limit_bytes),
-           updated_at = unixepoch()
-         RETURNING id`
-      ).bind(id, p.provider, p.label, p.status ?? 'unknown', p.lastSuccessAt ?? null, p.lastFailureAt ?? null, p.lastError ?? null, p.requests24h ?? 0, p.failures24h ?? 0, p.quotaUsedBytes ?? null, p.quotaLimitBytes ?? null).first<Row>();
-      return { id: (row?.id as string) ?? id };
-    },
-
     listProviderAccounts: async () => {
       const { results } = await prep('SELECT * FROM provider_accounts ORDER BY updated_at DESC').all<Row>();
       return (results ?? []) as unknown as ListResult<{ id: string; provider: string; label: string; status: string; last_success_at: number | null; last_failure_at: number | null; last_error: string | null; requests_24h: number; failures_24h: number; quota_used_bytes: number | null; quota_limit_bytes: number | null; updated_at: number }>;
-    },
-
-    getProviderAccount: async (id) => {
-      const row = await prep('SELECT * FROM provider_accounts WHERE id = ?1 LIMIT 1').bind(id).first<Row>();
-      return fromRow(row as Row | null);
-    },
-
-    logScrapeJob: async (p) => {
-      const id = crypto.randomUUID();
-      // Insert log row.
-      await prep(
-        `INSERT INTO scrape_jobs_log (id, source, provider_account_id, status, items_scraped, duration_ms, error_message, started_at, finished_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
-      ).bind(id, p.source, p.providerAccountId ?? null, p.status, p.itemsScraped ?? 0, p.durationMs ?? null, p.errorMessage ?? null, p.startedAt, p.finishedAt ?? null).run();
-      // Bump provider_accounts counters if linked.
-      if (p.providerAccountId) {
-        const now = Math.floor(Date.now() / 1000);
-        if (p.status === 'success') {
-          await prep('UPDATE provider_accounts SET requests_24h = requests_24h + 1, last_success_at = ?1, status = ?2, updated_at = unixepoch() WHERE id = ?3')
-            .bind(now, 'healthy', p.providerAccountId).run();
-        } else if (p.status === 'failed' || p.status === 'partial') {
-          await prep('UPDATE provider_accounts SET requests_24h = requests_24h + 1, failures_24h = failures_24h + 1, last_failure_at = ?1, last_error = ?2, status = ?3, updated_at = unixepoch() WHERE id = ?4')
-            .bind(now, (p.errorMessage ?? '').slice(0, 200), p.status === 'partial' ? 'degraded' : 'down', p.providerAccountId).run();
-        }
-      }
-      return { id };
     },
 
     listScrapeJobsLog: async (p) => {
@@ -736,13 +680,6 @@ export const db = (client: D1Database): Db => {
         total,
         page,
       };
-    },
-
-    insertDbUsageSnapshot: async (p) => {
-      const id = crypto.randomUUID();
-      await prep('INSERT INTO db_usage_snapshot (id, db_name, rows_or_objects, size_bytes, captured_at) VALUES (?1, ?2, ?3, ?4, unixepoch())')
-        .bind(id, p.dbName, p.rowsOrObjects ?? null, p.sizeBytes ?? null).run();
-      return { id };
     },
 
     getDbUsageTrend: async (days = 7) => {

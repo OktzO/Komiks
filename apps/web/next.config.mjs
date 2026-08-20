@@ -14,7 +14,6 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
   transpilePackages: ['@manga-platform/shared'],
   images: {
     unoptimized: true,

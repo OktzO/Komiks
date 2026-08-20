@@ -153,7 +153,7 @@ const ORIGIN_PATH_ALLOWLIST = [
 // melakukan 1 fetch /api/origins tambahan.
 let originsCache: { data: { url: string }[]; at: number } | null = null;
 
-export const getOrigins = async (): Promise<{ url: string }[]> => {
+const getOrigins = async (): Promise<{ url: string }[]> => {
   const cached = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('origins') : null;
   if (cached) return JSON.parse(cached) as { url: string }[];
   if (originsCache && Date.now() - originsCache.at < 60000) return originsCache.data;
@@ -176,8 +176,11 @@ export const getOrigins = async (): Promise<{ url: string }[]> => {
   }
 };
 
-// Round-robin cursor. Persisted in sessionStorage so consecutive page loads
-// rotate across workers instead of always starting at index 0.
+// Round-robin cursor (client only). Persisted in sessionStorage so consecutive
+// page loads rotate across workers instead of always starting at index 0.
+// NOT used on the server: sessionStorage doesn't exist there and a fixed
+// fallback (prev=0) would pin every SSR request to the same origin index,
+// skewing ~100% of SSR load onto a single worker.
 const getNextRrIndex = (len: number): number => {
   const key = 'rr_index';
   const prev = typeof sessionStorage !== 'undefined' ? Number(sessionStorage.getItem(key)) || 0 : 0;
@@ -189,6 +192,33 @@ const getNextRrIndex = (len: number): number => {
 // Circuit state per origin: gagal beruntun → skip 60s.
 const failures = new Map<string, { count: number; until: number }>();
 
+const isCircuitOpen = (url: string, now: number): boolean => {
+  const s = failures.get(url);
+  return !!(s && s.until > now);
+};
+
+// Build the ordered attempt list for one request.
+// - Client: cursor rotation (unchanged behavior); open origins are skipped
+//   inside the fetch loop.
+// - Server (SSR, stateless edge): random rotation per request over HEALTHY
+//   origins only, so load spreads evenly and an open origin is never picked
+//   first. If every origin is open (edge case), fall back to the full pool —
+//   never fail hard — and log the event for investigation.
+const buildOriginOrder = (origins: { url: string }[]): { url: string }[] => {
+  if (typeof sessionStorage === 'undefined') {
+    const now = Date.now();
+    const healthy = origins.filter((o) => !isCircuitOpen(o.url, now));
+    const pool = healthy.length > 0 ? healthy : origins;
+    if (healthy.length === 0) {
+      console.warn('[apiWithFailover] all origins circuit-open — using full pool (may add latency)');
+    }
+    const start = Math.floor(Math.random() * pool.length);
+    return [...pool.slice(start), ...pool.slice(0, start)];
+  }
+  const start = getNextRrIndex(origins.length);
+  return [...origins.slice(start), ...origins.slice(0, start)];
+};
+
 export async function apiWithFailover<T>(path: string): Promise<T> {
   if (!ORIGIN_PATH_ALLOWLIST.some((p) => path.startsWith(p))) {
     return api<T>(path); // non-publik → main API saja
@@ -197,10 +227,8 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
   if (origins.length === 0) return api<T>(path);
 
   const now = Date.now();
-  const start = getNextRrIndex(origins.length);
   // Rotate across ALL origins (not a fixed 2-attempt cap) so load spreads.
-  for (let k = 0; k < origins.length; k++) {
-    const origin = origins[(start + k) % origins.length];
+  for (const origin of buildOriginOrder(origins)) {
     const state = failures.get(origin.url);
     if (state && state.until > now) continue; // circuit open → skip
     try {

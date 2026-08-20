@@ -1,4 +1,3 @@
-export { phash, ahash, hashImage } from './phash.js';
-export { hammingDistance } from './hamming.js';
+export { hashImage } from './phash.js';
 export { identifyImage } from './identify.js';
-export type { Candidate, ImageHashRow } from './identify.js';
+export type { ImageHashRow } from './identify.js';

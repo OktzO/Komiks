@@ -1,24 +1,15 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, use } from 'react';
 import { getSourceStatus, type SourceStatus } from '@/lib/api';
 import { SourceBadge, sourceLabel, SOURCE_LABELS } from '@/components/SourceBadge';
 
-export const runtime = 'edge';
 
 const VALID = ['komiku', 'bacakomik', 'thrive', 'manhwaindo'] as const;
 const HISTORY_MAX = 40;
 
 type Check = { healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number };
 
-function fmtRel(ts: number): string {
-  if (!ts) return '—';
-  const d = Math.max(0, Math.floor(Date.now() / 1000 - ts));
-  if (d < 60) return `${d} dtk lalu`;
-  if (d < 3600) return `${Math.floor(d / 60)} mnt lalu`;
-  if (d < 86400) return `${Math.floor(d / 3600)} jam lalu`;
-  return `${Math.floor(d / 86400)} hari lalu`;
-}
 function fmtDate(ts: number): string {
   if (!ts) return '—';
   return new Date(ts * 1000).toLocaleString('id-ID', {
@@ -49,8 +40,8 @@ function buildIncidents(checks: Check[]): Incident[] {
   return list.reverse(); // terbaru dulu
 }
 
-export default function SourceMonitorPage({ params }: { params: { source: string } }) {
-  const source = params.source;
+export default function SourceMonitorPage({ params }: { params: Promise<{ source: string }> }) {
+  const { source } = use(params);
   const [[data, checks], setState] = useState<[SourceStatus | null, Check[]]>([null, []]);
   const [error, setError] = useState<string | null>(null);
 

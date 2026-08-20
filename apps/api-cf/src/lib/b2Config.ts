@@ -54,8 +54,10 @@ export const parseB2Config = (raw: string | undefined): B2Account | null => {
 // Resolve account by r2_account_idx value from D1 chapter_pages.
 // -1 → B2-A (index 0), -2 → B2-B (index 1), etc.
 // Returns null if idx out of range.
+// Defensive: legacy R2-ring indices (idx >= 0) are rejected since R2 storage
+// was removed — only negative B2 indices are valid.
 export const b2AccountForIdx = (accounts: B2Account[], idx: number): B2Account | null => {
-  if (idx >= 0) return null; // R2 ring, not B2
+  if (idx >= 0) return null; // legacy R2 index — B2-only storage now
   const arrIdx = -(idx + 1); // -1 → 0, -2 → 1
   if (arrIdx < 0 || arrIdx >= accounts.length) return null;
   return accounts[arrIdx];

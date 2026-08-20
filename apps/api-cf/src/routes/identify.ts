@@ -24,9 +24,6 @@ const getHashSet = async (c: Context): Promise<HashSet> => {
   const cached = await c.env.CACHE_KV.get(HASH_SET_KEY, { type: 'json' }).catch(() => null);
   if (cached) return cached as HashSet;
   const db = getDb(c);
-  // Bound the scan — only covers series indexed recently. For larger tables
-  // use getImageHashesByPrefix via a prefix index. ponytail: ceiling = table
-  // size; upgrade to prefix-partitioned lookup when image_hashes > 10k rows.
   const allHashes = await db.getAllImageHashes();
   c.executionCtx.waitUntil(
     c.env.CACHE_KV.put(HASH_SET_KEY, JSON.stringify(allHashes), { expirationTtl: HASH_SET_TTL }).catch(() => {})
