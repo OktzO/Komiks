@@ -5,10 +5,11 @@ import Link from 'next/link';
 import { Reader } from './Reader';
 import { SourceSwitcher } from './SourceSwitcher';
 import { WindowedList } from './WindowedList';
-import { getChapters } from '@/lib/api';
+import { getChapters, imgOriginFor } from '@/lib/api';
 
 interface PageUrl {
   proxyUrl: string;
+  imgUrl?: string | null;
   b2Url?: string | null;
 }
 
@@ -156,7 +157,7 @@ export function ReaderShell({
   const downloadCurrent = useCallback(() => {
     const p = pages[activeIdx];
     if (!p) return;
-    const url = p.b2Url ?? `${apiUrl}${p.proxyUrl}`;
+    const url = p.imgUrl ? `${imgOriginFor(p.imgUrl)}${p.imgUrl}` : `${apiUrl}${p.proxyUrl}`;
     const ext = (url.split('?')[0].match(/\.([a-z0-9]{2,5})$/i)?.[1] ?? '').toLowerCase();
     const a = document.createElement('a');
     a.href = url;

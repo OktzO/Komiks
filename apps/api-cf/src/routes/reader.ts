@@ -8,14 +8,17 @@ import type { Env, Context } from '../lib/context';
 import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
-import { resolveB2Accounts, pickB2AccountIdx, type B2Account } from '../lib/b2Config.ts';
+import { resolveB2Accounts, pickB2AccountIdx, b2AccountForIdx, type B2Account } from '../lib/b2Config.ts';
 import { addB2Usage, usageRatio } from '../lib/b2Usage';
 import { ownerFor, internalExec, internalQuery, peerKvGet } from '../lib/peers';
-import { b2PutObject, b2PresignedGet } from '../lib/s3Upload.ts';
+import { b2PutObject, b2GetObject } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
+// Router untuk /img/* (image proxy). Terpisah dari router utama supaya
+// index.ts bisa mount di path sendiri sebelum rate limit (image = high volume).
+export const imgRouter = new Hono<{ Bindings: Env }>();
 
 // Fail-closed CORS origin for image responses. Returns null when no origin
 // matches — callers should omit the header entirely in that case.
@@ -128,43 +131,6 @@ const resolveKomikuSlug = async (c: Context, chapterId: string): Promise<string 
   return parsed;
 };
 
-// Update chapter:detail KV cache setelah upload sukses — biar request
-// berikutnya dapat b2Url langsung (KV TTL 300s, tanpa refresh).
-const touchChapterDetailKv = async (
-  c: Context,
-  source: string,
-  chapterId: string,
-  pageNo: number,
-  b2Accounts: B2Account[],
-  b2Key: string,
-  accountIdx: number
-): Promise<void> => {
-  const key = `chapter:detail:${source}:${chapterId}`;
-  const raw = await c.env.CACHE_KV.get(key).catch(() => null);
-  if (!raw) return;
-  try {
-    const parsed = JSON.parse(raw) as { data?: { pages?: Array<{ proxyUrl: string; b2Url?: string | null }> } };
-    if (!parsed.data?.pages) return;
-    const idx = pageNo - 1;
-    if (idx < 0 || idx >= parsed.data.pages.length) return;
-    // accountIdx < 0 → B2 account -(idx+1). R2 path removed.
-    if (accountIdx < 0 && b2Accounts.length > 0) {
-      const arrIdx = -(accountIdx + 1);
-      const b2 = b2Accounts[arrIdx];
-      if (b2) parsed.data.pages[idx].b2Url = await b2PresignedGet(b2, b2Key).catch(() => null);
-    }
-    await c.env.CACHE_KV.put(key, JSON.stringify(parsed), { expirationTtl: 300 }).catch(() => {});
-  } catch { /* corrupt cache → ignore, next refresh repopulates */ }
-};
-
-// Resolve B2 account for a given accountIdx (negative = B2).
-const b2AccountByIdx = (b2Accounts: B2Account[], accountIdx: number): B2Account | null => {
-  if (accountIdx >= 0 || b2Accounts.length === 0) return null;
-  const arrIdx = -(accountIdx + 1);
-  if (arrIdx < 0 || arrIdx >= b2Accounts.length) return null;
-  return b2Accounts[arrIdx];
-};
-
 // Upsert chapter_pages row to the OWNER D1 (sharded by chapterId). Self →
 // local write; peer → internal /db/exec; on forward failure write locally as
 // row-healing fallback (design "Error handling: Owner down → tulis lokal").
@@ -248,7 +214,6 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
       const res = await b2PutObject(b2, b2Key, opts.body as ArrayBuffer, opts.contentType);
       if (res.ok) {
         await upsertPageRow(c, opts.chapterId, opts.pageNo, opts.imageUrl, b2Key, accountIdx);
-        await touchChapterDetailKv(c, opts.source, opts.chapterId, opts.pageNo, b2Accounts, b2Key, accountIdx);
         const bytes = (opts.body as ArrayBuffer).byteLength || 0;
         if (bytes > 0) c.executionCtx.waitUntil(addB2Usage(c.env.CACHE_KV, i, bytes));
         return;
@@ -554,27 +519,16 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     const chapter = await retryUpstream(() => adapter.getChapter(chapterId));
     const pages = await fetchPageUrlsWithCache(c, source, chapterId);
     const proxyBase = `/api/reader/${source}/page/${encodeURIComponent(chapterId)}`;
-    // Storage lookup: object yang sudah di-upload → URL langsung (B2 presigned)
-    // biar serve tidak lewat Worker. chapter_pages di-shard ke owner D1, jadi
-    // baca lewat readStoredPageRows (self → lokal; peer → internal /db/query).
-    // Object new → null → frontend pakai proxy (yang sekaligus meng-upload).
-    const storedRows = await readStoredPageRows(c, chapterId);
-    const storedByPage = new Map<number, { r2Key: string; accountIdx: number }>();
-    for (const row of storedRows) storedByPage.set(row.page_number, { r2Key: row.r2_key, accountIdx: row.r2_account_idx });
-    const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
+    const imgBase = `/img/${source}/${encodeURIComponent(chapterId)}`;
     const data = {
       ...chapter,
-      // B2 presign per page — Promise.all biar paralel.
-      pages: await Promise.all(pages.map(async (_, i) => {
+      // imgUrl → proxy /img/* (B2-first, server-side). b2Url dihapus: presigned
+      // URL ke browser membocorkan bucket/keyId B2 + nol cache di zone. Klien
+      // lama yang masih kirim b2Url:null → fallback ke proxyUrl (proxy CDN).
+      pages: pages.map((_, i) => {
         const pageNo = i + 1;
-        const row = storedByPage.get(pageNo);
-        let b2Url: string | null = null;
-        if (row && row.accountIdx < 0) {
-          const b2 = b2AccountByIdx(b2Accounts, row.accountIdx);
-          if (b2) b2Url = await b2PresignedGet(b2, row.r2Key).catch(() => null);
-        }
-        return { proxyUrl: `${proxyBase}/${pageNo}`, b2Url };
-      })),
+        return { proxyUrl: `${proxyBase}/${pageNo}`, imgUrl: `${imgBase}/${pageNo}`, b2Url: null };
+      }),
     };
     // LRU touch: update last_access untuk pages yang diakses (background).
     c.executionCtx.waitUntil((async () => {
@@ -599,15 +553,24 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
   }
 });
 
-// Image proxy: GET /api/reader/:source/page/:chapterId/:pageNo
-router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
-  const { source, chapterId, pageNo } = c.req.param();
-  const n = Number(pageNo);
-  if (!Number.isInteger(n) || n < 1 || n > 10000) return c.json({ error: 'bad page number' }, 400);
+// Lenient hotlink guard: reject only referers from a non-allowlisted origin.
+// Missing/malformed referer is allowed — the site sets Referrer-Policy:
+// no-referrer, so legit requests arrive without a referer.
+const refererAllowed = (env: Env, referer: string | undefined): boolean => {
+  if (!referer) return true;
+  try { return allowedOriginFor(env, new URL(referer).origin) !== null; }
+  catch { return true; }
+};
 
-  // Clamp: untrusted query param directly sized the upstream retry loop.
-  const retry = Math.min(Math.max(Number(c.req.query('retry')) || 0, 0), 2);
-
+// Core source-CDN image proxy (shared by /api/reader/*/page/* and /img/*).
+// fetchPageUrls → SSRF guard → edge cache → retry fetch → B2 cache-aside upload.
+const servePageImage = async (
+  c: Context,
+  source: string,
+  chapterId: string,
+  n: number,
+  retry: number
+): Promise<Response> => {
   const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
 
@@ -738,4 +701,65 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   if (bgUpload) c.executionCtx.waitUntil(bgUpload);
 
   return response;
+};
+
+// Image proxy (legacy path): GET /api/reader/:source/page/:chapterId/:pageNo
+router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
+  const { source, chapterId, pageNo } = c.req.param();
+  const n = Number(pageNo);
+  if (!Number.isInteger(n) || n < 1 || n > 10000) return c.json({ error: 'bad page number' }, 400);
+
+  // Clamp: untrusted query param directly sized the upstream retry loop.
+  const retry = Math.min(Math.max(Number(c.req.query('retry')) || 0, 0), 2);
+
+  return servePageImage(c, source, chapterId, n, retry);
+});
+
+// Image proxy: GET /img/:source/:chapterId/:pageNo
+// B2-first: object yang sudah di-upload diserve dari B2 dengan signed request
+// server-side (credential tidak pernah ke browser). Miss / B2 down → fallback
+// ke servePageImage (source CDN + cache-aside upload). Digunakan frontend
+// (oktzz.xyz/img/*) sehingga lewat zone → Cloudflare cache rules bisa bekerja.
+imgRouter.get('/:source/:chapterId/:pageNo', async (c: Context) => {
+  const { source, chapterId, pageNo } = c.req.param();
+  const n = Number(pageNo);
+  if (!Number.isInteger(n) || n < 1 || n > 10000) return c.json({ error: 'bad page number' }, 400);
+  const retry = Math.min(Math.max(Number(c.req.query('retry')) || 0, 0), 2);
+
+  if (!refererAllowed(c.env, c.req.header('referer'))) {
+    return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } });
+  }
+
+  // B2-first: baca row dari owner D1 (sharded); row ada → serve dari B2.
+  const slug = await resolveKomikuSlug(c, chapterId);
+  if (slug) {
+    const b2Key = b2KeyFor(source, slug, chapterId, n);
+    const rows = await readStoredPageRows(c, chapterId);
+    const row = rows.find((r) => r.page_number === n);
+    if (row && row.r2_key === b2Key && row.r2_account_idx < 0) {
+      const b2 = b2AccountForIdx(resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS), row.r2_account_idx);
+      if (b2) {
+        try {
+          const res = await b2GetObject(b2, row.r2_key);
+          if (res.ok) {
+            const h = new Headers();
+            h.set('Content-Type', res.headers.get('content-type') || 'image/jpeg');
+            // Immutable: chapter yang sudah publish tidak berubah. Edge cache
+            // (cache rule /img/*) menyerap request berikutnya tanpa Worker.
+            h.set('Cache-Control', 'public, max-age=31536000, immutable');
+            setCorsHeaders(c.env, h, c.req.header('origin'));
+            const resp = new Response(res.body, { status: 200, headers: h });
+            if (typeof caches !== 'undefined') {
+              const cache = (caches as unknown as { default: Cache }).default;
+              c.executionCtx.waitUntil(cache.put(c.req.raw, resp.clone()).catch(() => {}));
+            }
+            c.executionCtx.waitUntil(touchOwnerPage(c, chapterId, n).catch(() => {}));
+            return resp;
+          }
+        } catch { /* B2 down/limit → fallback ke source proxy */ }
+      }
+    }
+  }
+
+  return servePageImage(c, source, chapterId, n, retry);
 });

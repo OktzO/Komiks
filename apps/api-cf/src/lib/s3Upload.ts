@@ -98,6 +98,31 @@ export const b2PresignedGet = async (
   return `https://${b2.host}${path}?${query}&X-Amz-Signature=${signature}`;
 };
 
+// GET object with header signing (server-side). Same SigV4 chain as the
+// presigned path but the credential never leaves the Worker — the browser
+// only ever sees the proxied response, never an X-Amz URL.
+export const b2GetObject = async (b2: B2Account, key: string): Promise<Response> => {
+  const dateISO = new Date().toISOString();
+  const amzDate = dateISO.replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const path = `/${b2.bucket}/${encodePath(key)}`;
+  const payloadHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'; // sha256("")
+  const canonicalHeaders = `host:${b2.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = `GET\n${path}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+  const scope = `${dateStamp}/${b2.region}/${SERVICE}/aws4_request`;
+  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalRequest)))}`;
+  const keyBuf = await signingKey(b2.appKey, dateStamp, b2.region);
+  const signature = hex(await hmac(keyBuf, stringToSign));
+  return fetch(`https://${b2.host}${path}`, {
+    headers: {
+      Authorization: `AWS4-HMAC-SHA256 Credential=${b2.keyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+    },
+  });
+};
+
 // DELETE object (AWS SigV4). Used by storage eviction.
 export const b2DeleteObject = async (b2: B2Account, key: string): Promise<boolean> => {
   const dateISO = new Date().toISOString();

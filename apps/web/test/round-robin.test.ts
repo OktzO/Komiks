@@ -118,4 +118,28 @@ console.warn = origWarn;
 assert.ok(warned.some((w) => w.includes('all origins circuit-open')), 'T4 FAIL: fallback warning not logged');
 console.log('T4 PASS - all-open fallback to main API, warning logged, no hard error');
 
+// T5: image origin picker (imgOriginFor) — hash-stable per path, distribusi
+// merata, retry geser worker (failover), eksklusi origin utama (akun-1).
+const { imgOriginFor } = await import('../lib/api');
+const MAIN = 'https://main-api.test'; // = NEXT_PUBLIC_API_URL (akun-1) — harus dieksklusi
+const pool = [...ORIGINS, MAIN].map((url) => ({ url }));
+(globalThis as any).sessionStorage = {
+  getItem: (k: string) => (k === 'origins' ? JSON.stringify(pool) : null),
+  setItem: () => {},
+  removeItem: () => {},
+};
+const seen: Record<string, number> = {};
+for (let i = 0; i < 600; i++) {
+  const origin = imgOriginFor(`/img/komiku/ch-${i}/1`);
+  assert.ok(origin !== MAIN, 'T5 FAIL: main API origin (akun-1) must be excluded');
+  seen[origin] = (seen[origin] ?? 0) + 1;
+}
+assert.ok(Object.keys(seen).length === 4, `T5 FAIL: expected 4 non-main origins, got ${Object.keys(seen).length}`);
+const vals = Object.values(seen);
+assert.ok(Math.min(...vals) / Math.max(...vals) > 0.3, 'T5 FAIL: distribution skew too high');
+assert.equal(imgOriginFor('/img/komiku/ch-1/1'), imgOriginFor('/img/komiku/ch-1/1'), 'T5 FAIL: same path must map to same origin');
+assert.notEqual(imgOriginFor('/img/komiku/ch-1/1', 1), imgOriginFor('/img/komiku/ch-1/1', 0), 'T5 FAIL: retry should shift to another origin');
+console.log(`T5 PASS - imgOriginFor: 4 origins (main excluded), dist=${JSON.stringify(seen)}, retry shifts\n`);
+(globalThis as any).sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+
 console.log('\nALL TESTS PASSED');

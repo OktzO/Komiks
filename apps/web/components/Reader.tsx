@@ -1,6 +1,6 @@
 'use client';
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { getChapter } from '@/lib/api';
+import { getChapter, imgOriginFor } from '@/lib/api';
 
 // Virtualized scroll reader: renders only a viewport window + buffer instead
 // of all pages at once. This caps concurrent image-proxy Worker invocations
@@ -19,7 +19,7 @@ export function Reader({
   onActivePage,
 }: {
   source: string;
-  pages: { proxyUrl: string; b2Url?: string | null }[];
+  pages: { proxyUrl: string; imgUrl?: string | null; b2Url?: string | null }[];
   apiUrl: string;
   nextChapterId?: string | null;
   mode?: 'scroll' | 'page';
@@ -34,11 +34,13 @@ export function Reader({
 
   const activeMode = modeProp ?? 'scroll';
 
-  // Storage-first: B2 presigned (primary) → proxy.
-  // Proxy sekaligus meng-upload ke storage di background → request berikutnya
-  // dapat URL langsung dari chapter detail lagi.
-  const urls = pages.map((p) => p.b2Url ?? `${apiUrl}${p.proxyUrl}`);
-  const fallbackUrls = pages.map((p) => `${apiUrl}${p.proxyUrl}`);
+  // Round-robin /img/*: hash stabil per halaman → worker sama (cache hangat),
+  // retry>0 → geser ke worker lain (failover). Akun-1 (origin utama) dieksklusi.
+  const pageImageUrl = (p: { proxyUrl: string; imgUrl?: string | null; b2Url?: string | null }, retry = 0): string => {
+    const base = p.imgUrl ? imgOriginFor(p.imgUrl, retry) : apiUrl;
+    return `${base}${p.imgUrl ?? p.proxyUrl}${retry > 0 ? `?retry=${retry}` : ''}`;
+  };
+  const urls = pages.map((p) => pageImageUrl(p, 0));
 
   const handleImageError = useCallback((i: number) => {
     const current = retries[i] ?? 0;
@@ -154,7 +156,7 @@ export function Reader({
       {!loaded[i] && <div className="skeleton absolute inset-0" aria-hidden="true" />}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={r > 0 ? `${fallbackUrls[i]}?retry=${r}` : u}
+        src={r > 0 ? pageImageUrl(pages[i], r) : u}
         alt={`Halaman ${i + 1}`}
         loading="lazy"
         data-idx={i}

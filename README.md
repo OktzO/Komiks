@@ -12,9 +12,9 @@ Developer documentation. Updated 2026-08-16.
 | API | 4 Cloudflare Workers (round-robin LB): akun-1 (fallback) + akun-2/3/4 (primary) |
 | DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 13 migrations + 1 backfill; `chapter_pages` **sharded** by chapterId → owner D1 (murmur3, cross-account forward) |
 | Cache | KV (`CACHE_KV`) per-akun, cache-aside (search/series/reader), TTL 30s–3600s |
-| Storage | Backblaze B2 multi-account (100%, **R2 removed**): `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, hash-pick deterministik (`murmur3_32(key) % accounts.length`), **presigned GET 7 hari** (SigV4 query auth) |
+| Storage | Backblaze B2 multi-account (100%, **R2 removed**): `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, hash-pick deterministik (`murmur3_32(key) % accounts.length`), diserve **server-side** via `/img` proxy (`b2GetObject`, SigV4 header) — **presigned URL TIDAK lagi dikirim ke browser** (2026-08-21) |
 | Storage fallback | **Tidak ada** — semua B2 gagal → proxy-only (serve gambar langsung dari source CDN, tanpa simpan) |
-| Rehost | **Hanya Komiku** di-rehost ke B2. BacaKomik/Thrive/ManhwaIndo tetap 100% proxy |
+| Rehost | **Semua source** (Komiku, BacaKomik, Thrive, ManhwaIndo) di-upload ke B2 cache-aside oleh `/img` proxy saat pertama kali diserve |
 | Browser | Cloudflare Browser binding (`MY_BROWSER`, `remote=true`) — Puppeteer fetch fallback untuk BacaKomik & ManhwaIndo (Cloudflare Bot Fight) |
 | Eviction | Usage-based: KV `b2:usage:{idx}` vs `B2_QUOTA_BYTES` (default 10GiB); trigger tiap 100th chapter-detail (`eviction:tick`) + cron hourly akun-1 (`EVICTION_OWNER=1`); hapus B2 objek `last_access > 30d` ketika quota > 80% → turun ke 70% |
 
@@ -91,6 +91,12 @@ CLOUDFLARE_API_TOKEN="cfut_...akun3..." npx wrangler deploy --config apps/api-cf
 CLOUDFLARE_API_TOKEN="cfut_...akun4..." npx wrangler deploy --config apps/api-cf/wrangler.origin4.toml
 ```
 
+> ⚠️ **Deploy worker pakai wrangler 3.114** (root `node_modules`), bukan wrangler 4.
+> **Workers Cache aktif** (`[cache] enabled = true` di keempat toml) — setting sudah
+> persist di env, dan toml declare ulang tiap deploy. ⚠️ Jangan deploy cache-block via
+> wrangler ≥4.69 + `compatibility_date` lama (`2024-08-01`) — pernah bikin worker 500
+> (error 1042). Wrangler 3 meng-ignore blok `[cache]` (cache tetap ON).
+
 ### Frontend (Pages)
 
 > ⚠️ **Butuh Node.js ≥ 22** — `wrangler 4` (dependency `apps/web`) hard-require Node 22.
@@ -165,22 +171,24 @@ empat file harus sinkron (lihat §3 bawah).
 
 ## 4. Arsitektur
 
-### 4.1 Storage — B2 multi-account (hash pick, R2 removed)
+### 4.1 Storage — B2 multi-account (hash pick, R2 removed, served via /img proxy)
 
 ```
-Upload (Komiku page baru, cache miss):   hash(key) → B2-A/B-B (deterministik, wrap on fail)
-Read  (cache miss):                     b2Url → /api/reader proxy
-b2Url  = https://s3.us-east-005.backblazeb2.com/{key}?X-Amz-Signature=... (SigV4, 7 hari, langsung B2, no Worker)
-proxy  = Worker stream (Komiku: +Referer https://komiku.org/; lain: plain)
+Upload (cache miss):   proxy /img fetch source CDN → hash(key) → B2-A/B-B (deterministik, wrap on fail)
+Serve  (cache hit):    /img → read row owner D1 → b2GetObject (SigV4 header, server-side) → stream ke client
+frontend <img src> = https://{manga-api-2/3/4...workers.dev}/img/{source}/{chapterId}/{pageNo}
+                      ^ round-robin hash per halaman (imgOriginFor), akun-1 dieksklusi, fallback oktzz.xyz
+b2Url (presigned langsung B2) = DIHAPUS — credential/bucket tak pernah ke client (2026-08-21)
 ```
 
 - Key deterministik: `{source}/{slug}/{chapterId}/{pageNo}` (tanpa ekstensi).
 - `packages/shared/src/r2-routing.ts` (MurmurHash3 + `b2KeyFor`) — satu sumber hash. R2 ring (`buildRing`/`accountFor`) **dihapus**.
 - Hash-pick: `pickB2AccountIdx = murmur3_32(b2Key) % accounts.length` (`lib/b2Config.ts`). Mulai dari akun terpilih; gagal → wrap ke akun lain. Idempoten.
 - `resolveB2Accounts()` merge `B2_CONFIG` (legacy) + `B2_ACCOUNTS` (array) → dedup by `keyId`. Urutan = idx: -1 = B2-A (akun-1), -2 = B2-B (akun-2).
-- **`chapter_pages` sharded** by chapterId → owner D1 (`ownerFor = murmur3_32 % peers.length`, `lib/peers.ts`). Upload menulis row (b2Key + accountIdx) ke owner via forward `/api/_internal/db/exec`; forward gagal → tulis lokal (healing). Read owner → presigned GET.
-- B2 upload (Komiku) di-`waitUntil`; stream **clone dulu** sebelum `new Response(upstream.body)`.
-- BacaKomik/Thrive/ManhwaIndo = **100% proxy, tidak pernah disimpan.**
+- **`chapter_pages` sharded** by chapterId → owner D1 (`ownerFor = murmur3_32 % peers.length`, `lib/peers.ts`). Upload menulis row (b2Key + accountIdx) ke owner via forward `/api/_internal/db/exec`; forward gagal → tulis lokal (healing). Read owner → `/img` serve dari B2.
+- **`/img/*` image proxy B2-first** (`routes/reader.ts`, `imgRouter`): row ada → `b2GetObject` (SigV4 header, credential di Worker saja) + `Cache-Control: public, max-age=31536000, immutable`. Miss/B2 down → `servePageImage` (fetch source CDN + cache-aside upload background). Hotlink guard `refererAllowed` (referer non-allowlist → 403; missing referer allowed — site pakai `Referrer-Policy: no-referrer`).
+- B2 upload semua source di-`waitUntil`; stream **clone dulu** sebelum `new Response(upstream.body)`.
+- **Workers Cache** (`[cache] enabled=true`, 4 worker): cache per-Worker, TTL ikut `Cache-Control` response. Zone Cache Rules **tidak berlaku** untuk response Worker. `/img` → `cf-cache-status: HIT` setelah request pertama. Cache key include Worker version → reset tiap deploy.
 - Eviction usage-based + cron: lihat table §1 `Eviction`.
 
 ### 4.2 4 Worker round-robin (KV-free auth, sticky origin + shard reads)
@@ -195,6 +203,8 @@ Frontend ─────────▶│  CDN / WAF       │
   │
   ├─ allowlisted public path ──▶ round-robin origin (reader + series + search + health + source-status;
   │                              circuit-breaker 2 gagal → skip 60s, cursor rr_index sessionStorage)
+  ├─ images /img/* ──────────────▶ round-robin hash ke worker 2/3/4 (imgOriginFor, akun-1 dieksklusi;
+  │                              retry geser worker = failover; fallback oktzz.xyz)
   └─ auth / user path ──────────▶ STICKY origin (cookie lives di origin Worker itu)
 ```
 
@@ -316,8 +326,14 @@ Semua di satu Worker Hono (`apps/api-cf/src/index.ts`), mount `/api/*`.
 | GET | `/api/reader/:source/series/:sourceId` | Series detail (KV 600s) |
 | GET | `/api/reader/:source/series/:sourceId/chapters?lang=id` | Chapter list (KV 300s) |
 | GET | `/api/reader/:source/series/:sourceId/sources` | Aggregated sources + auto-index D1 background (KV 600s) |
-| GET | `/api/reader/:source/chapter/:chapterId` | Chapter + page URL list (KV 300s) |
-| GET | `/api/reader/:source/page/:chapterId/:pageNo` | Image proxy (Komiku: +Referer, upload B2 background) |
+| GET | `/api/reader/:source/chapter/:chapterId` | Chapter + page URL list (KV 300s) — returns `imgUrl` + `proxyUrl`, `b2Url:null` |
+| GET | `/api/reader/:source/page/:chapterId/:pageNo` | Image proxy (legacy — source CDN + upload B2 background; core `servePageImage`) |
+
+### Image proxy (B2-first, `/img/*`, via zone oktzz.xyz, Workers Cache)
+
+| Method | Path | Deskripsi |
+|---|---|---|
+| GET | `/img/:source/:chapterId/:pageNo` | B2-first server-side, `Cache-Control: immutable 1y`, hotlink guard, fallback `servePageImage`. Frontend round-robin hash ke worker 2/3/4 (`imgOriginFor`; akun-1 dieksklusi), fallback `IMG_BASE_URL` |
 
 ### Auth — OAuth only (password removed, commit `b2b9866`)
 
@@ -406,7 +422,7 @@ Manga/
 │   │       │   ├── peers.ts          # PEER_URLS owner sharding + internalExec/Query + peerKvGet
 │   │       │   ├── b2Config.ts       # parse B2_ACCOUNTS + B2_CONFIG, resolveB2Accounts(), pickB2AccountIdx()
 │   │       │   ├── b2Usage.ts        # KV b2:usage tracker, quotaBytes, b2NativeUsage sync
-│   │       │   ├── s3Upload.ts       # SigV4 signed PUT + presigned GET + delete (B2) no @aws-sdk
+│   │       │   ├── s3Upload.ts       # SigV4 signed PUT + GET (b2GetObject server-side) + delete (B2) no @aws-sdk; presigned helper legacy
 │   │       │   ├── storageEviction.ts# evictStaleStorage() usage-based 30d @ quota>80%, owner-sharded
 │   │       │   ├── dbWrite.ts        # D1 overflow detector
 │   │       │   ├── securityEvents.ts # recordSecurityEvent() best-effort → security_events (rate_limit/blocked_origin)
@@ -516,7 +532,9 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0011_ser
 - **Clone stream sebelum `new Response(upstream.body)`.** Setelah dibaca stream terkunci (`ReadableStream.locked`).
 - **Bundle worker base64 ~143KB.** Jangan via argumen shell; pakai `--path=` (KV key put limit 1MB, tapi argumen CLI lebih kecil).
 - **D1 per-akun tidak sinkron.** User di akun-1 mungkin tidak ada di akun-2/3/4 → sticky auth origin wajib. Search/series (public) boleh round-robin karena D1 read-only snapshot konsisten cukup.
-- **B2 presigned GET 7 hari.** Jangan pakai B2 S3 client key di frontend — presigned URL cukup (exp 7 hari). S3 `appKey` hanya di secret Worker.
+- **B2 presigned URL TIDAK dikirim ke client lagi (2026-08-21).** Semua serve lewat `/img` proxy server-side (`b2GetObject`). Bucket name + keyId B2 tidak pernah bocor di HTML. S3 `appKey` hanya di secret Worker.
+- **Workers Cache + `noStoreMw`.** `[cache] enabled=true` di 4 worker → GET semua route di-cache ikut `Cache-Control`. Route per-user (`/api/auth/*`, `/api/user/*`, `/api/admin/*`, `/api/_internal/*`) WAJIB `no-store` (via `noStoreMw` di `index.ts`) — kalau lupa, data per-user ke-cache heuristic 2 jam → bocor antar user.
+- **Zone Cache Rules tidak berlaku untuk response Worker.** Kalau mau cache gambar, jangan bikin Cache Rule dashboard — pakai Workers Cache (TTL dari `Cache-Control`). `cf-cache-status: HIT` = tanda Workers Cache aktif.
 - **`rateLimit` in-memory per-isolate.** Tidak konsisten lintas isolate; cukup untuk anti-abuse. `rateLimitMutate` (60/hr) hanya ke write bookmark — GET bookmark tetap subjek global 60/min saja.
 - **Scrape `/api/scrape` pakai per-route `requireAdminKey`.** Jangan `router.use('*')` (akan blokir semua subroute). Header `x-admin-api-key` = `SCRAPE_API_KEY`.
 

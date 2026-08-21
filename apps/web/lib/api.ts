@@ -1,6 +1,12 @@
+import { murmur3_32 } from '@manga-platform/shared/r2-routing';
+
 // API_URL must be set in production via NEXT_PUBLIC_API_URL. The localhost
 // fallback is only for local dev (wrangler dev on :8787).
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8787';
+
+// Image proxy fallback base: situs sendiri (oktzz.xyz). Dipakai bila pool origin
+// /img kosong (semua worker lain down). Priority utama: round-robin worker.
+export const IMG_BASE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://oktzz.xyz';
 
 // Auth API: primary akun-2, fallback akun-3, last resort akun-1 (main).
 // Sticky origin via sessionStorage — setelah login, semua /api/auth/* + /api/user/*
@@ -65,7 +71,7 @@ export interface Chapter {
   language: string;
   pages_count: number;
   published_at?: number | null;
-  pages?: { proxyUrl: string; b2Url?: string | null }[];
+  pages?: { proxyUrl: string; imgUrl?: string | null; b2Url?: string | null }[];
 }
 
 // 12s timeout prevents Cloudflare Pages Function timeout (30s) from
@@ -187,6 +193,39 @@ const getNextRrIndex = (len: number): number => {
   const next = (prev + 1) % len;
   if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(key, String(next));
   return next;
+};
+
+// Image proxy origin picker — round-robin /img/* ke worker, EXCEPT origin
+// utama (akun-1, = API_URL) yang sering penuh (test + web lain di akun itu).
+// Hash deterministik per path → halaman selalu ke worker yang sama (Workers
+// Cache per-worker hangat). `retry > 0` → geser ke worker lain (failover saat
+// worker down/429). Pool kosong → fallback IMG_BASE_URL (oktzz.xyz).
+// sessionStorage 'origins' dihapus getOrigins() tiap 60s — simpan module cache
+// supaya tidak flip balik ke akun-1 di tengah sesi; warm ulang async bila kosong.
+let imgOriginsFallback: string[] | null = null;
+let imgOriginsWarming = false;
+
+export const imgOriginFor = (imgPath: string, retry = 0): string => {
+  let os: string[] | null = null;
+  if (typeof sessionStorage !== 'undefined') {
+    const c = sessionStorage.getItem('origins');
+    if (c) {
+      try { os = (JSON.parse(c) as { url: string }[]).map((o) => o.url); } catch { os = null; }
+    }
+  }
+  if (os === null) os = imgOriginsFallback;
+  else imgOriginsFallback = os;
+
+  const pool = (os ?? []).filter((u) => u !== API_URL);
+  if (pool.length === 0) {
+    if (!imgOriginsWarming) {
+      imgOriginsWarming = true;
+      getOrigins().catch(() => {}).finally(() => { imgOriginsWarming = false; });
+    }
+    return IMG_BASE_URL;
+  }
+  const idx = (murmur3_32(imgPath) + retry) % pool.length;
+  return pool[idx];
 };
 
 // Circuit state per origin: gagal beruntun → skip 60s.

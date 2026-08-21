@@ -15,7 +15,7 @@ import { router as monitoringAdminRouter } from './routes/admin/monitoring';
 import { router as dashboardAdminRouter } from './routes/admin/dashboard';
 import { router as scrapeRouter } from './routes/admin/scrape';
 import { router as mergeAdminRouter } from './routes/admin/merge';
-import { router as readerRouter } from './routes/reader';
+import { router as readerRouter, imgRouter } from './routes/reader';
 import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
@@ -76,6 +76,14 @@ const securityHeadersMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) 
   c.res.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
 };
 
+// Per-user / sensitive routes: Wajib no-store. Workers Cache aktif di worker ini
+// (cache.enabled), dan tanpa header ini response per-user (GET /me, bookmark,
+// history, admin, internal) ke-cache heuristic 2 jam → data bocor antar user.
+const noStoreMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  await next();
+  if (!c.res.headers.has('Cache-Control')) c.res.headers.set('Cache-Control', 'no-store');
+};
+
 export const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', securityHeadersMw);
@@ -83,6 +91,10 @@ app.use('*', corsMw);
 // Internal router mounts BEFORE the global rate limit — cross-account peer
 // calls (akun-1→2→3) share Worker egress IPs and must not be throttled.
 app.route('/api/_internal', internalRouter);
+app.use('/api/_internal/*', noStoreMw);
+// /img/* (image proxy) also before the rate limit: high-volume image serving
+// absorbed by edge cache — a per-IP 60/min cap would break the reader.
+app.route('/img', imgRouter);
 app.use('*', rateLimit);
 app.route('/api', healthRouter);
 app.route('/api', seriesRouter);
@@ -98,6 +110,10 @@ app.route('/api/admin/merge', mergeAdminRouter);
 app.use('/api/admin', rateLimitAdmin);
 app.route('/api/admin', monitoringAdminRouter);
 app.route('/api/admin', dashboardAdminRouter);
+// Per-user/session data + admin: no-store (lihat noStoreMw di atas).
+app.use('/api/auth/*', noStoreMw);
+app.use('/api/user/*', noStoreMw);
+app.use('/api/admin/*', noStoreMw);
 app.route('/api/reader', readerRouter);
 app.route('/api/auth', authRouter);
 app.route('/api/user', userRouter);
