@@ -33,7 +33,7 @@
 html, body {
   background: var(--bg-base);
   color: var(--text-primary);
-  font-family: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: var(--font-geist-sans), 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -476,7 +476,7 @@ a:hover { color: var(--accent); }
 :root {
   --radius-admin: 6px;
   --radius-admin-sm: 4px;
-  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
   --bg-admin-panel: oklch(14% 0 0);
 }
 

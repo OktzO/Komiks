@@ -30,16 +30,26 @@ export async function generateMetadata({ params, searchParams }: { params: Promi
   try {
     const { series } = await loadDetail(source, sourceId);
     const desc = (series.synopsis ?? '').replace(/\s+/g, ' ').trim().slice(0, 160) || undefined;
+    const url = `/${source}/s/${slug}`;
+    const images = series.cover_image ? [{ url: series.cover_image, alt: series.title }] : [{ url: '/og.png', width: 1200, height: 630, alt: series.title }];
     return {
-      title: `${series.title} - Manga`,
+      title: series.title,
       description: desc,
-      alternates: { canonical: `/${source}/s/${slug}` },
+      alternates: { canonical: url },
       openGraph: {
         title: series.title,
         description: desc,
         type: 'website',
         locale: 'id_ID',
-        images: series.cover_image ? [{ url: series.cover_image }] : undefined,
+        siteName: 'Manga',
+        url,
+        images,
+      },
+      twitter: {
+        card: 'summary_large_image',
+        title: series.title,
+        description: desc,
+        images: images.map((i) => i.url),
       },
     };
   } catch {

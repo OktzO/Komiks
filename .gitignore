@@ -11,6 +11,7 @@ coverage/
 .playwright-mcp/
 .superpowers/
 *.png
+!apps/web/public/og.png
 .env
 
 # build artefacts

@@ -27,6 +27,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
+          "var(--font-geist-sans)",
           "Geist",
           "Inter",
           "system-ui",
@@ -36,6 +37,7 @@ const config: Config = {
           "sans-serif",
         ],
         display: [
+          "var(--font-geist-sans)",
           "Geist",
           "Inter",
           "system-ui",
