@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
-import { Env, json, allowedOriginFor } from './lib/context';
+import { Env, json, allowedOriginFor, Context } from './lib/context';
 import { rateLimit, rateLimitIdentify, rateLimitAdmin } from './lib/rateLimit';
 import { router as healthRouter } from './routes/health';
 import { router as seriesRouter } from './routes/series';
@@ -12,6 +12,7 @@ import { router as originsRouter } from './routes/origins';
 import { router as identifyRouter } from './routes/identify';
 import { router as lbAdminRouter } from './routes/admin/lb';
 import { router as monitoringAdminRouter } from './routes/admin/monitoring';
+import { router as dashboardAdminRouter } from './routes/admin/dashboard';
 import { router as scrapeRouter } from './routes/admin/scrape';
 import { router as mergeAdminRouter } from './routes/admin/merge';
 import { router as readerRouter } from './routes/reader';
@@ -19,9 +20,13 @@ import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
 import { evictStaleStorage } from './lib/storageEviction';
-import { syncB2UsageFromBuckets } from './lib/b2Usage';
+import { syncB2UsageFromBuckets, getB2Usage } from './lib/b2Usage';
+import { writeWithFallback } from './lib/dbWrite';
+import { recordSecurityEvent } from './lib/securityEvents';
 import { fetchHomepageFromSources } from './routes/homepage';
 import { peerKvSet } from './lib/peers';
+import { resolveB2Accounts } from './lib/b2Config';
+import { client as dbClient } from '@manga-platform/db';
 
 // CORS: allow credentials only when origin matches the allowlist.
 // Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
@@ -37,6 +42,11 @@ const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const origin = c.req.header('origin');
 
   if (origin && !SAFE_METHODS.has(c.req.method) && !allowedOriginFor(c.env, origin)) {
+    recordSecurityEvent(c, {
+      type: 'blocked_origin',
+      severity: 'high',
+      message: `forbidden origin on ${c.req.method} ${c.req.path}`,
+    });
     return c.json({ error: 'forbidden origin' }, 403);
   }
 
@@ -87,6 +97,7 @@ app.route('/api/admin/merge', mergeAdminRouter);
 // requireAdminSession (session.role===admin) enforced inside router. rateLimitAdmin applies to all /api/admin/*.
 app.use('/api/admin', rateLimitAdmin);
 app.route('/api/admin', monitoringAdminRouter);
+app.route('/api/admin', dashboardAdminRouter);
 app.route('/api/reader', readerRouter);
 app.route('/api/auth', authRouter);
 app.route('/api/user', userRouter);
@@ -128,6 +139,7 @@ export default {
         await syncB2UsageFromBuckets(env as Env);
         const res = await evictStaleStorage(env as Env);
         console.log(`[cron] eviction done: ${res.evicted} objects`);
+        await snapshotUsage(env as Env);
       } finally {
         await kv.delete('eviction:lock').catch(() => {});
       }
@@ -150,4 +162,35 @@ export default {
     };
     ctx.waitUntil(run());
   },
+};
+
+// Hourly usage snapshot → db_usage_snapshot (admin dashboard trend charts).
+// B2: one row per account (bytes from KV counter, reconciled by cron above).
+// D1: real row count across main tables. Written via writeWithFallback so rows
+// land on the primary DB (akun-2) where the admin dashboard reads them.
+const snapshotUsage = async (env: Env): Promise<void> => {
+  try {
+    const fakeCtx = { env, executionCtx: { waitUntil: (p: Promise<unknown>) => void p } } as unknown as Context;
+    const now = Math.floor(Date.now() / 1000);
+    const dbLocal = dbClient(env.DB);
+    const tables = ['series', 'chapters', 'chapter_pages', 'users', 'bookmarks', 'reading_history', 'sessions', 'source_health', 'manga_source_link', 'scrape_jobs', 'lb_usage'];
+    let rows = 0;
+    for (const t of tables) {
+      const r = await env.DB.prepare(`SELECT COUNT(*) AS c FROM ${t}`).first<{ c: number }>().catch(() => null);
+      rows += r?.c ?? 0;
+    }
+    await writeWithFallback(fakeCtx, 'db_usage_snapshot',
+      'INSERT INTO db_usage_snapshot (id, db_name, rows_or_objects, size_bytes, captured_at) VALUES (?1, ?2, ?3, ?4, ?5)',
+      [`d1:${now}`, 'd1', rows, null, now]);
+
+    const accounts = resolveB2Accounts(env.B2_CONFIG, env.B2_ACCOUNTS);
+    for (let i = 0; i < accounts.length; i++) {
+      const bytes = await getB2Usage(env.CACHE_KV, i).catch(() => 0);
+      await writeWithFallback(fakeCtx, 'db_usage_snapshot',
+        'INSERT INTO db_usage_snapshot (id, db_name, rows_or_objects, size_bytes, captured_at) VALUES (?1, ?2, ?3, ?4, ?5)',
+        [`b2:${accounts[i].name}:${now}`, `b2:${accounts[i].name}`, null, bytes, now]);
+    }
+  } catch (e) {
+    console.error('[cron] snapshot usage failed:', e);
+  }
 };

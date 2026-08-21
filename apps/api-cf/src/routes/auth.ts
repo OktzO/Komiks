@@ -157,6 +157,12 @@ router.get('/google/callback', async (c: Context) => {
   const existing = await db(c.env.DB).getUserByEmail(email);
   const avatarUrl = gUser.picture ?? null;
 
+  // Moderated accounts cannot sign in. Sessions are already revoked on ban;
+  // this blocks re-login until the admin restores the account.
+  if (existing && (existing.status === 'banned' || existing.status === 'suspended')) {
+    return c.json({ error: 'account suspended', reason: existing.status }, 403);
+  }
+
   if (!existing) {
     await writeWithFallback(c, 'users',
       'INSERT INTO users (email, name, password_hash, role, avatar_url) VALUES (?1, ?2, ?3, ?4, ?5)',

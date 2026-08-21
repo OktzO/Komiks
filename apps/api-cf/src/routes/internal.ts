@@ -35,6 +35,8 @@ const ALLOWED_TABLES = new Set([
   'source_health',
   'image_hashes',
   'sessions',
+  'security_events',
+  'db_usage_snapshot',
 ]);
 
 router.post('/db/exec', async (c: Context) => {

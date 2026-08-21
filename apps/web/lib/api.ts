@@ -389,3 +389,17 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   if (!res.ok) throw new Error(`apiPost ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
+
+export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  const base = await getAuthApiUrl();
+  const res = await fetch(`${base}${path}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(12000),
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`apiPatch ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}

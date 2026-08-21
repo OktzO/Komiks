@@ -10,7 +10,7 @@ Developer documentation. Updated 2026-08-16.
 |---|---|
 | Frontend | Next.js 16.3 (App Router), `@opennextjs/cloudflare` (Workers deploy, `nodejs_compat`), dark theme OKLCH |
 | API | 4 Cloudflare Workers (round-robin LB): akun-1 (fallback) + akun-2/3/4 (primary) |
-| DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 12 migrations + 1 backfill; `chapter_pages` **sharded** by chapterId → owner D1 (murmur3, cross-account forward) |
+| DB | Cloudflare D1 (SQLite), schema `packages/db/schema.sql` + 13 migrations + 1 backfill; `chapter_pages` **sharded** by chapterId → owner D1 (murmur3, cross-account forward) |
 | Cache | KV (`CACHE_KV`) per-akun, cache-aside (search/series/reader), TTL 30s–3600s |
 | Storage | Backblaze B2 multi-account (100%, **R2 removed**): `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, hash-pick deterministik (`murmur3_32(key) % accounts.length`), **presigned GET 7 hari** (SigV4 query auth) |
 | Storage fallback | **Tidak ada** — semua B2 gagal → proxy-only (serve gambar langsung dari source CDN, tanpa simpan) |
@@ -92,6 +92,11 @@ CLOUDFLARE_API_TOKEN="cfut_...akun4..." npx wrangler deploy --config apps/api-cf
 ```
 
 ### Frontend (Pages)
+
+> ⚠️ **Butuh Node.js ≥ 22** — `wrangler 4` (dependency `apps/web`) hard-require Node 22.
+> `wrangler 3` (dependency `apps/api-cf`) **tidak bisa** deploy frontend: hasil bundle
+> beda → runtime error `Failed to load external module ... app-page-turbo.runtime.prod.js`
+> → semua halaman 500. Pastikan PATH memakai Node 22 (contoh: symlink node22 ke depan PATH).
 
 ```bash
 cd apps/web
@@ -194,7 +199,7 @@ Frontend ─────────▶│  CDN / WAF       │
 ```
 
 - `manga-api` (akun-1) = fallback + host `oktzz.xyz` + cron eviction (`EVICTION_OWNER=1`).
-- `manga-api-2` (akun-2, primary), `manga-api-3` (akun-3, primary).
+- `manga-api-2` (akun-2, primary), `manga-api-3` (akun-3, primary), `manga-api-4` (akun-4, primary, deploy penuh 2026-08-21).
 - D1 split per-akun (tidak sinkron) → sticky origin untuk semua r/w user.
 - **Reader/series/search/health/source-status BISA round-robin** — `chapter_pages` shard-readable dari worker mana pun via owner forwarding (`ORIGIN_PATH_ALLOWLIST` di `apps/web/lib/api.ts`). Auth paths tidak di allowlist.
 - CSP `connect-src` **wajib** include ke-3 worker domain.
@@ -360,9 +365,15 @@ Semua di satu Worker Hono (`apps/api-cf/src/index.ts`), mount `/api/*`.
 | GET | `/api/admin/db` | session admin | admin | D1 size, row counts |
 | GET | `/api/admin/users` | session admin | admin | list (paginated) |
 | GET | `/api/admin/users/:id` | session admin | admin | detail |
+| PATCH | `/api/admin/users/:id` | session admin | admin | set `{status,role}` (ban/suspend/activate/demote); ban → revoke semua session |
 | GET | `/api/admin/usage` | session admin | admin | LB+B2 usage |
 | GET | `/api/admin/jobs` | session admin | admin | scrape log |
 | GET | `/api/admin/source-detail/:source` | session admin | admin | per-source detail |
+| GET | `/api/admin/dashboard/storage` | session admin | admin | B2 current per akun + D1 estimate + trend 30d (db_usage_snapshot) |
+| GET | `/api/admin/dashboard/source-health` | session admin | admin | per-source uptime/success + chapters scraped 7d |
+| GET | `/api/admin/dashboard/requests?days=` | session admin | admin | request count per origin per hari (lb_usage) |
+| GET | `/api/admin/security-events` | session admin | admin | feed insiden (rate_limit/blocked_origin), filter `resolved` |
+| PATCH | `/api/admin/security-events/:id` | session admin | admin | resolve insiden |
 | GET | `/api/admin/lb/*` | session admin | admin | LB set/accounts/origins/status/usage |
 | POST | `/api/admin/lb/accounts/provision` | session admin | admin | auto-provision akun baru |
 | GET | `/api/admin/merge/queue` | session admin | admin | list queue |
@@ -398,17 +409,21 @@ Manga/
 │   │       │   ├── s3Upload.ts       # SigV4 signed PUT + presigned GET + delete (B2) no @aws-sdk
 │   │       │   ├── storageEviction.ts# evictStaleStorage() usage-based 30d @ quota>80%, owner-sharded
 │   │       │   ├── dbWrite.ts        # D1 overflow detector
+│   │       │   ├── securityEvents.ts # recordSecurityEvent() best-effort → security_events (rate_limit/blocked_origin)
 │   │       │   ├── readThroughCache.ts # two-tier KV cache + circuit breaker + peer fallback
 │   │       │   └── komikuSlug.ts        # parse '<slug>-chapter-<num>'
 │   │       └── routes/
 │   │           ├── health.ts • search.ts • series.ts • reader.ts • origins.ts
 │   │           ├── manga.ts • identify.ts • auth.ts • user.ts
-│   │           └── admin/{monitoring,lb,merge,scrape}.ts
+│   │           └── admin/{monitoring,lb,merge,scrape,dashboard}.ts
 │   ├── web/                              # Next.js 14 frontend (Pages)
 │   │   ├── app/                          # App Router (runtime='edge' + revalidate di halaman dinamis)
 │   │   │   ├── page.tsx                  # Home: hero + marquee + populer + genre + update (revalidate 300s)
 │   │   │   ├── search/page.tsx • login/page.tsx • bookmark/page.tsx • history/page.tsx • status/page.tsx
-│   │   │   ├── admin/{page,monitoring,users,[id],settings}/page.tsx
+│   │   │   ├── admin/                    # bento-grid dashboard dark (2026-08-21): KPI strip, storage trend, source health, gauge, LB accounts, recent users, security feed
+│   │   │   │   ├── page.tsx              # dashboard utama (A–G, SVG chart custom tanpa library)
+│   │   │   │   ├── users/{page,[id]}.tsx # + status badge + ban/suspend/activate/role + confirm dialog
+│   │   │   │   └── monitoring/, merge/, settings/
 │   │   │   └── [source]/s/[slug]/{page,loading,page.tsx}  # detail + reader
 │   │   ├── components/                   # MangaCard, TypeBadge, SourceBadge, SourceSwitcher, BookmarkButton, Reader, Skeleton, ConfirmModal, profile/*
 │   │   ├── lib/api.ts                    # client + round-robin failover (reader+series+search) + getAuthApiUrl() sticky
@@ -439,7 +454,7 @@ npm run dev:web      # turbo → apps/web npx next dev
 
 ### Type-check
 ```bash
-cd apps/api-cf && npx tsc --noEmit       # pre-existing error auth.ts/crypto OK
+cd apps/api-cf && npx tsc --noEmit       # 1 pre-existing error: packages/db/index.ts mergeSeriesInto (for...of D1Result) — build produksi pakai esbuild, tidak terpengaruh
 cd apps/web && npx tsc --noEmit
 cd packages/db && npx tsc --noEmit
 cd packages/sources && npx tsc --noEmit
@@ -494,6 +509,9 @@ npx wrangler d1 execute manga-db --remote --file=packages/db/migrations/0011_ser
 - **Cookie `__Host-`** butuh `Path=/`, `Secure`, tidak ada `Domain`.** Cookie hanya diset API origin, bukan frontend origin. Session guard pakai `credentials:'include'` fetch dari page-level client component, bukan `req.cookies` middleware.
 - **Komiku proxy butuh `Referer: https://komiku.org/`.** Image CDN komiku 403 tanpa Referer — set di `routes/reader.ts`.
 - **Migrasi D1 wajib ke 4 akun.** D1 tanpa `d1_migrations` tracking — `wrangler d1 execute --file` manual. Migrasi yang terlewat di akun-2/3/4 gagal **silent**: contoh `0007_relax_chapter_pages_fk` terlewat → `chapter_pages` masih enforce FK → `markPageB2Uploaded` catch error → upload B2 sukses tapi row D1 tidak ada. Verifikasi: setelah page baru di-upload, cek row di owner D1 (`SELECT ... FROM chapter_pages WHERE chapter_id=?`).
+- **Migration 0013 (admin dashboard)**: `users.status` (active/suspended/banned) + tabel `security_events`. Sudah di-apply ke 4 D1 (2026-08-21). Ban user → `requireAdminSession` tolak (status != active) + `getSessionUser` login ditolak + session di-revoke. `security_events` diisi otomatis: 429 rate-limit (`rate_limit`) + Origin CORS ditolak (`blocked_origin`), best-effort via `writeWithFallback` → mendarat di primary DB akun-2.
+- **Snapshot B2/D1** → `db_usage_snapshot` ditulis cron hourly akun-1 (`snapshotUsage()` di `index.ts`, via `writeWithFallback`). Dashboard storage trend butuh ≥2 titik (isi 1/jam) — jangan tes chart saat baru deploy.
+- **Frontend deploy butuh Node ≥ 22** (wrangler 4). Wrangler 3 salah deploy → 500 semua halaman (liat §3 Frontend).
 - **B2 upload idempotent.** Key sama → overwrite; race aman. Background via `waitUntil`. Gagal → akun lain (wrap) → proxy-only.
 - **Clone stream sebelum `new Response(upstream.body)`.** Setelah dibaca stream terkunci (`ReadableStream.locked`).
 - **Bundle worker base64 ~143KB.** Jangan via argumen shell; pakai `--path=` (KV key put limit 1MB, tapi argumen CLI lebih kecil).

@@ -33,7 +33,7 @@ export interface Db {
   createUser: (params: { email: string; name?: string | null; passwordHash: string; role?: string }) => Promise<Result<{ id: number }>>;
   getUserById: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string }>>;
   getUserProfileById: (id: number) => Promise<Result<MeResponse>>;
-   getUserByEmail: (email: string) => Promise<Result<{ id: number; email: string; password_hash: string | null; role: string }>>;
+   getUserByEmail: (email: string) => Promise<Result<{ id: number; email: string; password_hash: string | null; role: string; status: string }>>;
    updateUserProfile: (userId: number, params: { displayName?: string | null; bio?: string | null; preferences?: Record<string, unknown> }) => Promise<{ success: boolean }>;
    deleteUserAccount: (userId: number) => Promise<{ success: boolean }>;
    clearUserHistory: (userId: number) => Promise<{ success: boolean; deleted: number }>;
@@ -82,8 +82,8 @@ export interface Db {
   listScrapeJobsLog: (params: { source?: string; status?: string; from?: number; to?: number; page?: number; limit?: number }) => Promise<{ data: Array<{ id: string; source: string; provider_account_id: string | null; status: string; items_scraped: number; duration_ms: number | null; error_message: string | null; started_at: number; finished_at: number | null }>; total: number; page: number }>;
   getDbUsageTrend: (days?: number) => Promise<Array<{ db_name: string; points: Array<{ ts: number; size_bytes: number | null; rows_or_objects: number | null }> }>>;
   getAdminOverview: () => Promise<{ usersTotal: number; bookmarksTotal: number; scrape24h: { success: number; failed: number }; providers: { healthy: number; degraded: number; down: number } }>;
-  listUsersAdmin: (params: { q?: string; page?: number; limit?: number }) => Promise<{ data: Array<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>; total: number; page: number }>;
-  getUserDetail: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>>;
+  listUsersAdmin: (params: { q?: string; page?: number; limit?: number }) => Promise<{ data: Array<{ id: number; email: string; name: string | null; role: string; status: string; created_at: number; last_login_at: number | null; bookmark_count: number }>; total: number; page: number }>;
+  getUserDetail: (id: number) => Promise<Result<{ id: number; email: string; name: string | null; role: string; status: string; created_at: number; last_login_at: number | null; bookmark_count: number }>>;
   listUserBookmarksAdmin: (userId: number, params: { page?: number; limit?: number }) => Promise<{ data: Array<{ series_slug: string; title: string | null; cover_image: string | null; added_at: number }>; total: number; page: number }>;
   getProviderHealthBuckets: (providerAccountId: string, hours: number) => Promise<Array<{ started_at: number; status: string; items_scraped: number; duration_ms: number | null }>>;
 
@@ -97,6 +97,17 @@ export interface Db {
   touchPageLastAccess: (chapterId: string, pageNo: number) => Promise<{ success: boolean }>;
   listStalePages: (accountIdx: number, staleBeforeTs: number, limit: number) => Promise<Array<{ chapter_id: string; page_number: number; r2_key: string; r2_account_idx: number; last_access: number | null }>>;
   clearPageStorage: (chapterId: string, pageNo: number) => Promise<{ success: boolean }>;
+
+  // ── Admin dashboard (0013) — moderation + security feed ──
+  getUserStatusAdmin: (id: number) => Promise<Result<{ id: number; role: string; status: string }>>;
+  updateUserAdmin: (id: number, params: { status?: string; role?: string }) => Promise<{ success: boolean }>;
+  addSecurityEvent: (params: { type: string; severity?: string; message?: string | null; ip?: string | null; path?: string | null }) => Promise<{ id: number }>;
+  listSecurityEvents: (params: { resolved?: boolean; page?: number; limit?: number }) => Promise<{ data: Array<{ id: number; type: string; severity: string; message: string | null; ip: string | null; path: string | null; resolved: number; created_at: number; resolved_at: number | null }>; total: number; page: number }>;
+  resolveSecurityEvent: (id: number) => Promise<{ success: boolean }>;
+  getSourceHealthSummary: () => Promise<Array<{ source: string; total: number; healthy: number; uptime_pct: number | null; last_checked_at: number | null; last_healthy: number | null; last_error: string | null }>>;
+  countScrapedChaptersBySource: (since: number) => Promise<Array<{ source: string; chapters: number; last_scraped_at: number | null }>>;
+  listLbUsageRange: (fromDate: string, toDate: string) => Promise<Array<{ origin_url: string; date_key: string; req_count: number }>>;
+  insertUsageSnapshot: (params: { dbName: string; rowsOrObjects?: number | null; sizeBytes?: number | null; capturedAt?: number }) => Promise<{ success: boolean }>;
 }
 
 export const db = (client: D1Database): Db => {
@@ -216,8 +227,8 @@ export const db = (client: D1Database): Db => {
     },
 
      getUserByEmail: async (email) =>
-       fromRow<{ id: number; email: string; password_hash: string | null; role: string }>(
-         await prep('SELECT id, email, password_hash, role FROM users WHERE email = ?1 LIMIT 1').bind(email).first<Row>()
+       fromRow<{ id: number; email: string; password_hash: string | null; role: string; status: string }>(
+         await prep('SELECT id, email, password_hash, role, status FROM users WHERE email = ?1 LIMIT 1').bind(email).first<Row>()
        ),
 
      updateUserProfile: async (userId, { displayName, bio, preferences }) => {
@@ -721,13 +732,13 @@ export const db = (client: D1Database): Db => {
       const countRow = await prep(`SELECT COUNT(*) AS c FROM users u ${where}`).bind(...args).first<Row>();
       const total = countRow ? Number(countRow.c) : 0;
       const { results } = await prep(
-        `SELECT u.id, u.email, u.name, u.role, u.created_at, u.last_login_at,
+        `SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.last_login_at,
           (SELECT COUNT(*) FROM bookmarks b WHERE b.user_id = u.id) AS bookmark_count
          FROM users u ${where}
          ORDER BY u.created_at DESC LIMIT ?${args.length + 1} OFFSET ?${args.length + 2}`
       ).bind(...args, limit, offset).all<Row>();
       return {
-        data: (results ?? []) as unknown as Array<{ id: number; email: string; name: string | null; role: string; created_at: number; last_login_at: number | null; bookmark_count: number }>,
+        data: (results ?? []) as unknown as Array<{ id: number; email: string; name: string | null; role: string; status: string; created_at: number; last_login_at: number | null; bookmark_count: number }>,
         total,
         page,
       };
@@ -735,7 +746,7 @@ export const db = (client: D1Database): Db => {
 
     getUserDetail: async (id) => {
       const row = await prep(
-        `SELECT u.id, u.email, u.name, u.role, u.created_at, u.last_login_at,
+        `SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.last_login_at,
           (SELECT COUNT(*) FROM bookmarks b WHERE b.user_id = u.id) AS bookmark_count
          FROM users u WHERE u.id = ?1 LIMIT 1`
       ).bind(id).first<Row>();
@@ -839,6 +850,121 @@ export const db = (client: D1Database): Db => {
           .bind(chapterId, pageNo).run();
         return { success: true };
       } catch {
+        return { success: false };
+      }
+    },
+
+    // ── Admin dashboard (0013) ──
+    getUserStatusAdmin: async (id) => {
+      const row = await prep('SELECT id, role, status FROM users WHERE id = ?1 LIMIT 1').bind(id).first<Row>();
+      return fromRow<{ id: number; role: string; status: string }>(row);
+    },
+
+    updateUserAdmin: async (id, { status, role }) => {
+      const sets: string[] = [];
+      const args: unknown[] = [];
+      if (status !== undefined) { sets.push(`status = ?${args.length + 1}`); args.push(status); }
+      if (role !== undefined) { sets.push(`role = ?${args.length + 1}`); args.push(role); }
+      if (sets.length === 0) return { success: true };
+      const res = await prep(`UPDATE users SET ${sets.join(', ')} WHERE id = ?${args.length + 1}`)
+        .bind(...args, id).run();
+      return { success: res.success };
+    },
+
+    addSecurityEvent: async (p) => {
+      try {
+        const row = await prep(
+          'INSERT INTO security_events (type, severity, message, ip, path) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id'
+        ).bind(p.type, p.severity ?? 'low', p.message ?? null, p.ip ?? null, p.path ?? null).first<Row>();
+        return row ? { id: Number(row.id) } : { id: 0 };
+      } catch (e) {
+        console.error('[addSecurityEvent] failed:', String(e));
+        return { id: 0 };
+      }
+    },
+
+    listSecurityEvents: async (p) => {
+      const page = p.page ?? 1;
+      const limit = p.limit ?? 20;
+      const offset = (page - 1) * limit;
+      const where = p.resolved === undefined ? '' : `WHERE resolved = ?1`;
+      const args = p.resolved === undefined ? [] : [p.resolved ? 1 : 0];
+      const countRow = await prep(`SELECT COUNT(*) AS c FROM security_events ${where}`).bind(...args).first<Row>();
+      const total = countRow ? Number(countRow.c) : 0;
+      const { results } = await prep(
+        `SELECT id, type, severity, message, ip, path, resolved, created_at, resolved_at
+         FROM security_events ${where} ORDER BY created_at DESC LIMIT ?${args.length + 1} OFFSET ?${args.length + 2}`
+      ).bind(...args, limit, offset).all<Row>();
+      return {
+        data: (results ?? []) as unknown as Array<{ id: number; type: string; severity: string; message: string | null; ip: string | null; path: string | null; resolved: number; created_at: number; resolved_at: number | null }>,
+        total,
+        page,
+      };
+    },
+
+    resolveSecurityEvent: async (id) => {
+      const res = await prep('UPDATE security_events SET resolved = 1, resolved_at = ?1 WHERE id = ?2 AND resolved = 0')
+        .bind(Math.floor(Date.now() / 1000), id).run();
+      return { success: res.success };
+    },
+
+    getSourceHealthSummary: async () => {
+      const { results } = await prep(
+        `SELECT source,
+           COUNT(*) AS total,
+           SUM(CASE WHEN healthy = 1 THEN 1 ELSE 0 END) AS healthy,
+           MAX(checked_at) AS last_checked_at,
+           MAX(CASE WHEN healthy = 1 THEN checked_at END) AS last_healthy,
+           MAX(CASE WHEN healthy = 0 THEN checked_at END) AS last_down
+         FROM source_health GROUP BY source ORDER BY source`
+      ).all<Row>();
+      return (results ?? []).map((r) => {
+        const total = Number(r.total ?? 0);
+        const healthy = Number(r.healthy ?? 0);
+        return {
+          source: r.source as string,
+          total,
+          healthy,
+          uptime_pct: total > 0 ? Math.round((healthy / total) * 1000) / 10 : null,
+          last_checked_at: r.last_checked_at ? Number(r.last_checked_at) : null,
+          last_healthy: r.last_healthy ? Number(r.last_healthy) : null,
+          last_down: r.last_down ? Number(r.last_down) : null,
+          last_error: null,
+        };
+      });
+    },
+
+    countScrapedChaptersBySource: async (since) => {
+      const { results } = await prep(
+        `SELECT m.source,
+           SUM(m.chapter_count) AS chapters,
+           MAX(m.last_scraped_at) AS last_scraped_at
+         FROM manga_source_link m
+         WHERE m.last_scraped_at >= ?1
+         GROUP BY m.source`
+      ).bind(since).all<Row>();
+      return (results ?? []).map((r) => ({
+        source: r.source as string,
+        chapters: Number(r.chapters ?? 0),
+        last_scraped_at: r.last_scraped_at ? Number(r.last_scraped_at) : null,
+      }));
+    },
+
+    listLbUsageRange: async (fromDate, toDate) => {
+      const { results } = await prep(
+        'SELECT origin_url, date_key, req_count FROM lb_usage WHERE date_key >= ?1 AND date_key <= ?2 ORDER BY date_key ASC'
+      ).bind(fromDate, toDate).all<Row>();
+      return (results ?? []) as unknown as Array<{ origin_url: string; date_key: string; req_count: number }>;
+    },
+
+    insertUsageSnapshot: async (p) => {
+      try {
+        await prep(
+          'INSERT INTO db_usage_snapshot (id, db_name, rows_or_objects, size_bytes, captured_at) VALUES (?1, ?2, ?3, ?4, ?5)'
+        ).bind(p.dbName + ':' + (p.capturedAt ?? Math.floor(Date.now() / 1000)), p.dbName, p.rowsOrObjects ?? null, p.sizeBytes ?? null, p.capturedAt ?? Math.floor(Date.now() / 1000)).run();
+        return { success: true };
+      } catch (e) {
+        console.error('[insertUsageSnapshot] failed:', String(e));
         return { success: false };
       }
     }

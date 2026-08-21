@@ -69,6 +69,9 @@ export function Navbar() {
   };
 
   const segments = pathname.split('/').filter(Boolean);
+  // Admin adalah app shell sendiri (sidebar fixed) — main navbar island
+  // tidak boleh overlap. Reader pages juga null (Navbar tidak tampil).
+  if (segments[0] === 'admin') return null;
   if (segments.length === 4 && segments[1] === 's') return null;
 
   const isAdmin = user?.role === 'admin';

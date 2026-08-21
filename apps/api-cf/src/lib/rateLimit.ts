@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import type { Env, Context } from './context';
+import { recordSecurityEvent } from './securityEvents';
 
 // ─── In-memory rate limiter (no KV) ─────────────────────────────────────────
 //
@@ -48,6 +49,11 @@ const makeLimiter = (limit: number, window: number): MiddlewareHandler<{ Binding
       if (bucket.count >= limit) {
         const retryAfter = Math.ceil((bucket.expires - now) / 1000);
         c.header('Retry-After', String(retryAfter));
+        recordSecurityEvent(c, {
+          type: 'rate_limit',
+          severity: 'medium',
+          message: `rate limit exceeded (${limit}/${window}s) on ${c.req.path}`,
+        });
         return c.json({ error: 'rate limit exceeded', retry_after: retryAfter }, 429);
       }
       bucket.count++;
