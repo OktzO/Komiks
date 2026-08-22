@@ -9,7 +9,10 @@ router.get('/manga/:id', async (c: Context) => {
   const cacheKey = `manga:meta:${slug}`;
 
   const cached = await c.env.CACHE_KV.get(cacheKey, { type: 'json' });
-  if (cached) return json(c, cached);
+  if (cached) {
+    c.header('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=1800');
+    return json(c, cached);
+  }
 
   const db = getDb(c);
   const series = await db.getSeriesBySlug(slug);
@@ -34,5 +37,6 @@ router.get('/manga/:id', async (c: Context) => {
   c.executionCtx.waitUntil(
     c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 3600 }).catch(() => {})
   );
+  c.header('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=1800');
   return json(c, payload);
 });

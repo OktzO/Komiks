@@ -57,5 +57,16 @@ router.get('/series/:slug', async (c) => {
 
 router.get('/series/:slug/:chapterId', async (c) => {
   const chapterId = c.req.param('chapterId');
-  return json(c, { chapter: await getDb(c).getChapter(chapterId) });
+  const cacheKey = `series:chapter:${chapterId}`;
+  const cached = await c.env.CACHE_KV.get(cacheKey, { type: 'json' });
+  if (cached) {
+    c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
+    return json(c, cached);
+  }
+  const chapter = await getDb(c).getChapter(chapterId);
+  c.executionCtx.waitUntil(
+    c.env.CACHE_KV.put(cacheKey, JSON.stringify({ chapter }), { expirationTtl: 300 }).catch(() => {})
+  );
+  c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
+  return json(c, { chapter });
 });

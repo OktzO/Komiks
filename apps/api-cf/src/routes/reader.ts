@@ -174,6 +174,28 @@ const readStoredPageRows = async (
   ).catch(() => null)) ?? [];
 };
 
+// Same as readStoredPageRows but KV-cached. Potong D1 read ketika Workers Cache
+// masih dingin (tiap deploy cache key include version → reset). KV persist
+// antar deploy, jadi chapter yang sudah hangat tidak lagi D1-read per /img miss.
+// TTL pendek (600s): baris bertambah saat cache-aside upload page baru; KV lama
+// yang ketinggalan halaman baru hanya bikin request itu fallback ke source CDN
+// (re-upload + heal), tidak patah.
+const readStoredPageRowsCached = async (
+  c: Context,
+  chapterId: string
+): Promise<Array<{ page_number: number; r2_key: string; r2_account_idx: number }>> => {
+  const cacheKey = `imgrows:${chapterId}`;
+  const cached = await c.env.CACHE_KV.get(cacheKey, { type: 'json' }).catch(() => null);
+  if (cached) return cached as Array<{ page_number: number; r2_key: string; r2_account_idx: number }>;
+  const rows = await readStoredPageRows(c, chapterId);
+  if (rows.length > 0) {
+    c.executionCtx.waitUntil(
+      c.env.CACHE_KV.put(cacheKey, JSON.stringify(rows), { expirationTtl: 600 }).catch(() => {})
+    );
+  }
+  return rows;
+};
+
 // LRU touch must land on the owner D1 too (the row lives there). Best-effort.
 const touchOwnerPage = async (c: Context, chapterId: string, pageNo: number): Promise<void> => {
   const owner = ownerFor(c.env, chapterId);
@@ -499,6 +521,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
       canonicalSlug,
     };
     cachePut(c, cacheKey, { data }, 600);
+    c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
     return c.json({ data });
   } catch {
     return c.json({ data: { sources: [], canonicalSlug: null } });
@@ -545,6 +568,7 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
       }
     })());
     cachePut(c, cacheKey, { data }, 300);
+    c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
     recordHealth(c, source, start, true);
     return c.json({ data });
   } catch (e) {
@@ -734,7 +758,7 @@ imgRouter.get('/:source/:chapterId/:pageNo', async (c: Context) => {
   const slug = await resolveKomikuSlug(c, chapterId);
   if (slug) {
     const b2Key = b2KeyFor(source, slug, chapterId, n);
-    const rows = await readStoredPageRows(c, chapterId);
+    const rows = await readStoredPageRowsCached(c, chapterId);
     const row = rows.find((r) => r.page_number === n);
     if (row && row.r2_key === b2Key && row.r2_account_idx < 0) {
       const b2 = b2AccountForIdx(resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS), row.r2_account_idx);

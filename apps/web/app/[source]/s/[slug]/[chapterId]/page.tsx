@@ -3,6 +3,11 @@ import { ReaderShell } from '@/components/ReaderShell';
 import { ReaderSkeleton } from '@/components/Skeleton';
 import { Suspense } from 'react';
 
+// Chapter pages: URL halaman immutable setelah publish (B2/edge cache 1y).
+// ISR 5 menit → render diserve dari KV incremental cache; repeat reader
+// chapter yang sama tidak invoke web Worker lagi.
+export const revalidate = 300;
+
 async function ChapterContent({ params }: { params: Promise<{ source: string; slug: string; chapterId: string }> }) {
   const { source, slug, chapterId } = await params;
   let chapter;

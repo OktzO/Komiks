@@ -11,6 +11,15 @@ npx wrangler kv namespace create CACHE_KV  # catat id → wrangler.toml
 ```
 Update `apps/api-cf/wrangler.toml` dengan ID asli. Storage pakai Backblaze B2 (bukan R2) — credentials di-set via `B2_ACCOUNTS` secret JSON array.
 
+## 1b. Buat resources CF (web — ISR cache)
+```bash
+cd apps/web
+npx wrangler kv namespace create NEXT_INC_CACHE_KV
+# catat id → update apps/web/wrangler.jsonc, ganti "REPLACE_WITH_KV_NAMESPACE_ID"
+npx wrangler kv namespace create --preview NEXT_INC_CACHE_KV
+# catat preview_id → wrangler.jsonc jika perlu
+```
+
 ## 2. Simpan secrets
 ```bash
 cd apps/api-cf

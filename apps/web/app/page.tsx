@@ -7,6 +7,10 @@ import { HomeSkeleton } from '@/components/Skeleton';
 import { Suspense } from 'react';
 import Link from 'next/link';
 
+// Homepage feed di KV-cache 12 jam (cron akun-1). ISR 5 menit → page yang
+// sudah dirender diserve dari KV incremental cache tanpa invoke web Worker
+// lagi (butuh binding NEXT_INC_CACHE_KV, lihat docs/DEPLOY.md).
+export const revalidate = 300;
 
 const GENRES = ['Action', 'Adventure', 'Comedy', 'Fantasy', 'Romance', 'School Life', 'Isekai', 'Drama', 'Horror', 'Sci-Fi'];
 
