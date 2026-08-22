@@ -1,6 +1,6 @@
-# Manga Platform
+# Oktz. — Manga Platform
 
-Developer documentation. Updated 2026-08-16.
+Developer documentation. Updated 2026-08-22.
 
 
 
@@ -14,14 +14,15 @@ Developer documentation. Updated 2026-08-16.
 | Cache | KV (`CACHE_KV`) per-akun, cache-aside (search/series/reader), TTL 30s–3600s |
 | Storage | Backblaze B2 multi-account (100%, **R2 removed**): `manga-oktz-assets` (akun-1) + `manga-oktz-assets-2` (akun-2), region `us-east-005`, hash-pick deterministik (`murmur3_32(key) % accounts.length`), diserve **server-side** via `/img` proxy (`b2GetObject`, SigV4 header) — **presigned URL TIDAK lagi dikirim ke browser** (2026-08-21) |
 | Storage fallback | **Tidak ada** — semua B2 gagal → proxy-only (serve gambar langsung dari source CDN, tanpa simpan) |
-| Rehost | **Semua source** (Komiku, BacaKomik, Thrive, ManhwaIndo) di-upload ke B2 cache-aside oleh `/img` proxy saat pertama kali diserve |
+| Rehost | **Semua source** (Komiku, BacaKomik, Thrive, Shinigami, ManhwaIndo) di-upload ke B2 cache-aside oleh `/img` proxy saat pertama kali diserve |
 | Browser | Cloudflare Browser binding (`MY_BROWSER`, `remote=true`) — Puppeteer fetch fallback untuk BacaKomik & ManhwaIndo (Cloudflare Bot Fight) |
 | Eviction | Usage-based: KV `b2:usage:{idx}` vs `B2_QUOTA_BYTES` (default 10GiB); trigger tiap 100th chapter-detail (`eviction:tick`) + cron hourly akun-1 (`EVICTION_OWNER=1`); hapus B2 objek `last_access > 30d` ketika quota > 80% → turun ke 70% |
 
-**4 source adapter** (`packages/sources/`, interface `SourceAdapter`): `search | getSeries |
+**5 source adapter** (`packages/sources/`, interface `SourceAdapter`): `search | getSeries |
 listChapters | fetchPageUrls | scrapeUrl`. Komiku fetch+regex (no Puppeteer); Thrive parse
-`__NEXT_DATA__`; BacaKomik/ManhwaIndo hybrid fetch → `MY_BROWSER` fallback. Semua di-scrape
-HTML — **tidak ada MangaDex API** (dihapus 2026-08-07).
+`__NEXT_DATA__`; **Shinigami JSON API** (`api.shngm.io` — no bot challenge, no HTML scrape,
+tambah 2026-08-22); BacaKomik/ManhwaIndo hybrid fetch → `MY_BROWSER` fallback. Semua di-scrape
+HTML kecuali Shinigami — **tidak ada MangaDex API** (dihapus 2026-08-07).
 
 ---
 
@@ -233,6 +234,15 @@ Frontend ─────────▶│  CDN / WAF       │
 - `/api/reader/:source/series/:sourceId/sources` → D1 `manga_source_link` → live-resolve fallback (search title di source lain, exact match preferred) + **auto-index persist D1 background**.
 - Matching pure: `packages/db/src/matching.ts` (`normalizeTitle` + `jaroWinkler` threshold 0.92 → `exact|fuzzy|queue|new`).
 
+### 4.5 Shinigami source (2026-08-22)
+
+- Situs `11.shinigami.asia` di balik Cloudflare managed challenge (403), tapi semua data via JSON API publik `api.shngm.io` — tanpa auth/challenge/UA. Adapter `packages/sources/shinigami/` hanya bicara ke API.
+- Endpoints: `GET /v1/manga/list?page=&page_size=&sort=latest|popularity&q=` (homepage/search), `GET /v1/manga/detail/{manga_id}`, `GET /v1/chapter/{manga_id}/list?page_size=3000`, `GET /v1/chapter/detail/{chapter_id}` (base_url + chapter.path + pages).
+- Manga id & chapter id = UUID. Slug B2 untuk chapter UUID di-resolve via `resolveSlug` (`routes/reader.ts`) → adapter `getChapter` → `series_slug` (shinigami + thrive), sehingga cache-aside B2 jalan.
+- Image host `assets.shngm.id` di `ALLOWED_IMAGE_HOSTS`; page URL = `${base_url}${chapter.path}${name}`, `Referer: https://11.shinigami.asia/`.
+- Status: 1=ongoing, 2=completed, 3=hiatus. Type dari taxonomy `Format`, fallback country_id (KR→manhwa, CN→manhua).
+- Test fixture: `packages/sources/test/shinigami.test.mjs` (no network). Favicon web: `apps/web/public/sources/shinigami.png`.
+
 ---
 
 ## 5. Bookmark Multi-Source
@@ -245,7 +255,7 @@ ALTER TABLE bookmarks ADD COLUMN source_url TEXT;
 CREATE INDEX idx_bookmarks_source ON bookmarks (source, created_at DESC);
 ```
 
-- `source` = `komiku|bacakomik|thrive|manhwaindo` (default `NULL` → konvensi resolve ke `komiku`).
+- `source` = `komiku|bacakomik|thrive|shinigami|manhwaindo` (default `NULL` → konvensi resolve ke `komiku`).
 - `source_url` = URL detail series di source asal (untuk Switch source).
 - `addBookmark({ userId, seriesSlug, source, source_url })` — INSERT OR IGNORE.
 - `listBookmarks(userId)` — JOIN `series`, return `bookmark_source` / `bookmark_url` /
@@ -311,7 +321,7 @@ Semua di satu Worker Hono (`apps/api-cf/src/index.ts`), mount `/api/*`.
 | Method | Path | Deskripsi |
 |---|---|---|
 | GET | `/api/health` | `{status:"ok", ts}` |
-| GET | `/api/search?q=<q>` | 4 source paralel, merge title → badge multi-source; kosong = homepage feed; KV 300s |
+| GET | `/api/search?q=<q>` | 5 source paralel, merge title → badge multi-source; kosong = homepage feed; KV 300s |
 | GET | `/api/series?genre=&page=&limit=` | List series (D1) |
 | GET | `/api/series/:slug` | Detail by slug (D1+KV) |
 | GET | `/api/manga/:id` | Manga meta (D1+KV 3600s) |
@@ -430,7 +440,7 @@ Manga/
 │   │       │   └── komikuSlug.ts        # parse '<slug>-chapter-<num>'
 │   │       └── routes/
 │   │           ├── health.ts • search.ts • series.ts • reader.ts • origins.ts
-│   │           ├── manga.ts • identify.ts • auth.ts • user.ts
+│   │           ├── manga.ts • identify.ts • auth.ts • user.ts • sourceStatus.ts
 │   │           └── admin/{monitoring,lb,merge,scrape,dashboard}.ts
 │   ├── web/                              # Next.js 14 frontend (Pages)
 │   │   ├── app/                          # App Router (runtime='edge' + revalidate di halaman dinamis)
@@ -449,7 +459,7 @@ Manga/
 ├── packages/
 │   ├── db/                               # schema.sql, migrations/0001..0011 + backfill, index.ts (40+ helpers), matching.ts
 │   ├── shared/                           # types.ts (Zod), r2-routing.ts (murmur3 B2 hash-pick + owner sharding), entities.ts (HTML entity decoder)
-│   ├── sources/                          # komiku/bacakomik/thrive/manhwaindo adapters + registry
+│   ├── sources/                          # komiku/bacakomik/thrive/shinigami/manhwaindo adapters + registry
 │   ├── lb/                               # crypto.ts, accounts.ts, router.ts, provision.ts
 │   └── vision/                           # phash.ts, hamming.ts, identify.ts
 ├── scripts/                              # build-worker-bundle.mjs, gen-auth-keys.mjs, smoke-*
@@ -491,6 +501,7 @@ npx turbo run build
 node packages/db/test/matching.test.mjs          # pure functions, no network
 node packages/sources/test/thrive.test.mjs       # fixture, no network
 node packages/sources/test/bacakomik.test.mjs    # fixture, no network
+node packages/sources/test/shinigami.test.mjs    # fixture, no network
 node packages/sources/test/manhwaindo.test.mjs   # fixture, no network
 node packages/lb/test/provision.test.mjs         # unit crypto
 ```

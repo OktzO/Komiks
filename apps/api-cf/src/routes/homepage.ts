@@ -16,7 +16,7 @@ export const HOMEPAGE_TTL = 43200; // 12 jam
 const STALE_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 
 export const SOURCE_PRIORITY: Record<string, number> = {
-  komiku: 4, bacakomik: 3, thrive: 2, manhwaindo: 1, local: 0,
+  komiku: 5, bacakomik: 4, thrive: 3, shinigami: 2, manhwaindo: 1, local: 0,
 };
 
 // Skor populer sederhana: source priority + chapter_count + recency update.
@@ -57,6 +57,7 @@ export const fetchHomepageFromSources = async (
     { key: 'komiku', start: Date.now() },
     { key: 'bacakomik', start: Date.now() },
     { key: 'thrive', start: Date.now() },
+    { key: 'shinigami', start: Date.now() },
     { key: 'manhwaindo', start: Date.now() },
   ];
   const settled = await Promise.allSettled(
@@ -88,7 +89,7 @@ export const fetchHomepageFromSources = async (
       for (const s of r.value.results) addResult(s as Record<string, unknown>, r.value.key);
     } else {
       const reason = String((r as PromiseRejectedResult).reason ?? '');
-      const errKey = ['bacakomik', 'thrive', 'manhwaindo'].find((k) => reason.includes(k)) ?? 'komiku';
+      const errKey = ['bacakomik', 'thrive', 'shinigami', 'manhwaindo'].find((k) => reason.includes(k)) ?? 'komiku';
       recordHealth(env, waitUntil, errKey, Date.now(), false, reason.slice(0, 200));
     }
   }

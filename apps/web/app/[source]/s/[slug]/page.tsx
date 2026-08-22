@@ -41,7 +41,7 @@ export async function generateMetadata({ params, searchParams }: { params: Promi
         description: desc,
         type: 'website',
         locale: 'id_ID',
-        siteName: 'Manga',
+        siteName: 'Oktz.',
         url,
         images,
       },

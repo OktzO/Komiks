@@ -3,15 +3,16 @@
 // now committed alongside the build instead of relying on external URLs
 // that 404 on the Pages deploy (no /public directory existed before).
 
-export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo';
+export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo' | 'shinigami';
 
-export const SOURCE_ORDER: SourceKey[] = ['komiku', 'bacakomik', 'thrive', 'manhwaindo'];
+export const SOURCE_ORDER: SourceKey[] = ['komiku', 'bacakomik', 'thrive', 'manhwaindo', 'shinigami'];
 
 const SOURCE_ICONS: Record<string, string> = {
   komiku: '/sources/komiku.png',
   bacakomik: '/sources/bacakomik.png',
   thrive: '/sources/thrive.png',
   manhwaindo: '/sources/manhwaindo.png',
+  shinigami: '/sources/shinigami.png',
 };
 
 export const SOURCE_LABELS: Record<string, string> = {
@@ -19,6 +20,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   bacakomik: 'BacaKomik',
   thrive: 'Thrive',
   manhwaindo: 'ManhwaIndo',
+  shinigami: 'Shinigami',
 };
 
 export function SourceBadge({ sources, size = 'sm' }: { sources?: string[]; size?: 'sm' | 'md' }) {

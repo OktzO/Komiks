@@ -197,8 +197,8 @@ export default function Home() {
       <footer className="cv-footer border-t border-border-subtle mt-16 pt-8 text-sm text-muted">
         <div className="grid gap-6 sm:grid-cols-3">
           <div>
-            <p className="font-display text-base text-primary tracking-tight mb-1">Manga</p>
-            <p className="text-xs leading-relaxed">Kompilasi baca manga, manhwa, dan manhua terjemahan Indonesia dari empat sumber independen.</p>
+            <p className="font-display text-base text-primary tracking-tight mb-1">Oktz.</p>
+            <p className="text-xs leading-relaxed">Kompilasi baca manga, manhwa, dan manhua terjemahan Indonesia dari lima sumber independen.</p>
           </div>
           <div>
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-secondary mb-2">Sumber</p>
@@ -231,7 +231,7 @@ export default function Home() {
             ))}
           </div>
         </div>
-        <p className="mt-8 text-xs text-muted/70">© 2026 Manga. Konten milik masing-masing penerbit.</p>
+        <p className="mt-8 text-xs text-muted/70">© 2026 Oktz. Konten milik masing-masing penerbit.</p>
       </footer>
     </main>
   );

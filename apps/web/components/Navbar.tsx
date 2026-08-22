@@ -81,7 +81,7 @@ export function Navbar() {
       <div className="nav-island relative mx-auto flex items-center justify-between px-5 py-3">
         <Link href="/" className="flex items-center gap-2 text-xl tracking-tight font-medium text-primary hover:text-accent">
           <span className="inline-block h-7 w-7 rounded-full bg-gradient-to-br from-accent to-muted" />
-          Manga
+          Oktz.
         </Link>
         <button
           className="hamburger"

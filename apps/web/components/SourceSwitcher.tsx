@@ -24,6 +24,7 @@ const SOURCE_ICONS: Record<string, string> = {
   bacakomik: '/sources/bacakomik.png',
   thrive: '/sources/thrive.png',
   manhwaindo: '/sources/manhwaindo.png',
+  shinigami: '/sources/shinigami.png',
 };
 
 // Coalescing cache: 2 instance (settings popup + chapter sheet) di reader

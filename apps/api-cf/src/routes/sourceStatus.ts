@@ -22,7 +22,7 @@ router.get('/source-status', async (c: Context) => {
     history: Check[];
   }[] = [];
 
-  for (const key of ['komiku', 'bacakomik', 'thrive', 'manhwaindo'] as const) {
+  for (const key of ['komiku', 'bacakomik', 'thrive', 'shinigami', 'manhwaindo'] as const) {
     const row = await db.getLatestSourceHealth(key);
     const history = await db.getSourceHistory(key, HISTORY_LIMIT);
     const uptime = history.length > 0

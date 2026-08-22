@@ -54,7 +54,7 @@ const updateProfileSchema = z
         theme: z.enum(['dark', 'light', 'system']).optional(),
         language: z.enum(['id', 'en']).optional(),
         reader_mode: z.enum(['scroll', 'page']).optional(),
-        default_source: z.enum(['komiku', 'bacakomik', 'thrive', 'manhwaindo']).nullable().optional(),
+        default_source: z.enum(['komiku', 'bacakomik', 'thrive', 'shinigami', 'manhwaindo']).nullable().optional(),
       })
       .strict()
       .optional(),

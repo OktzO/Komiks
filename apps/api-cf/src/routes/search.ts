@@ -72,6 +72,7 @@ router.get('/search', async (c: Context) => {
       { key: 'komiku', start: Date.now() },
       { key: 'bacakomik', start: Date.now() },
       { key: 'thrive', start: Date.now() },
+      { key: 'shinigami', start: Date.now() },
       { key: 'manhwaindo', start: Date.now() },
     ];
     const settled = await Promise.allSettled(
@@ -102,7 +103,7 @@ router.get('/search', async (c: Context) => {
         for (const s of r.value.results) addResult(s, r.value.key);
       } else {
         const reason = String((r as PromiseRejectedResult).reason ?? '');
-        const errKey = ['bacakomik', 'thrive', 'manhwaindo'].find((k) => reason.includes(k)) ?? 'komiku';
+        const errKey = ['bacakomik', 'thrive', 'shinigami', 'manhwaindo'].find((k) => reason.includes(k)) ?? 'komiku';
         recordHealth(c, errKey, Date.now(), false, reason.slice(0, 200));
       }
     }
@@ -124,6 +125,7 @@ router.get('/search', async (c: Context) => {
     { key: 'komiku', start: Date.now() },
     { key: 'bacakomik', start: Date.now() },
     { key: 'thrive', start: Date.now() },
+    { key: 'shinigami', start: Date.now() },
     { key: 'manhwaindo', start: Date.now() },
   ];
 
@@ -168,6 +170,7 @@ router.get('/search', async (c: Context) => {
   for (const s of resultsBySource.komiku ?? []) addResult(s, 'komiku');
   for (const s of resultsBySource.bacakomik ?? []) addResult(s, 'bacakomik');
   for (const s of resultsBySource.thrive ?? []) addResult(s, 'thrive');
+  for (const s of resultsBySource.shinigami ?? []) addResult(s, 'shinigami');
   for (const s of resultsBySource.manhwaindo ?? []) addResult(s, 'manhwaindo');
 
   const merged = Object.values(allResults).slice(0, limit);

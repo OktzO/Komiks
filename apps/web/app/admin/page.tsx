@@ -320,6 +320,7 @@ const SOURCES: Record<string, string> = {
   bacakomik: 'BacaKomik',
   thrive: 'Thrive',
   manhwaindo: 'ManhwaIndo',
+  shinigami: 'Shinigami',
 };
 
 export default function AdminDashboardPage() {

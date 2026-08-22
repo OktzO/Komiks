@@ -8,12 +8,12 @@ const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://oktzz.xyz';
 const geistSans = Geist({ subsets: ['latin'], variable: '--font-geist-sans', display: 'swap' });
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', display: 'swap' });
 
-const SITE_NAME = 'Manga - Baca Komik Bahasa Indonesia';
+const SITE_NAME = 'Oktz. - Baca Komik Bahasa Indonesia';
 const SITE_DESC = 'Baca manga, manhwa, dan manhua terjemahan Bahasa Indonesia. Gratis, rapi, dan cepat.';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
-  title: { default: SITE_NAME, template: `%s - Manga` },
+  title: { default: SITE_NAME, template: `%s - Oktz.` },
   description: SITE_DESC,
   alternates: { canonical: '/' },
   openGraph: {
@@ -21,9 +21,9 @@ export const metadata: Metadata = {
     description: SITE_DESC,
     type: 'website',
     locale: 'id_ID',
-    siteName: 'Manga',
+    siteName: 'Oktz.',
     url: SITE,
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Manga - Baca Komik Bahasa Indonesia' }],
+    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Oktz. - Baca Komik Bahasa Indonesia' }],
   },
   twitter: {
     card: 'summary_large_image',
@@ -43,7 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: JSON.stringify({
               '@context': 'https://schema.org',
               '@type': 'WebSite',
-              name: 'Manga',
+              name: 'Oktz.',
               url: SITE,
               potentialAction: {
                 '@type': 'SearchAction',

@@ -14,6 +14,7 @@ const SOURCE_LABELS: Record<string, string> = {
   bacakomik: 'BacaKomik',
   thrive: 'Thrive',
   manhwaindo: 'ManhwaIndo',
+  shinigami: 'Shinigami',
 };
 
 export function PreferencesSection({ user, onUpdate }: Props) {

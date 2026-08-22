@@ -219,7 +219,7 @@ export type MergeQueueItem = z.infer<typeof MergeQueueItemSchema>;
 
 // ---- User profile (Task 3: plain types, no Zod schema) ----------------------
 
-export type UserSource = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo';
+export type UserSource = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo' | 'shinigami';
 
 export type UserPreferences = {
   theme: 'dark' | 'light' | 'system';

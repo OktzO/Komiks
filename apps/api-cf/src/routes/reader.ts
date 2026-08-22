@@ -75,6 +75,8 @@ const ALLOWED_IMAGE_HOSTS = new Set([
   'cdn.thrive.moe',
   'backup.thrive.moe',
   'kuma.thrive.moe',
+  // Shinigami image hosts
+  'assets.shngm.id',
 ]);
 
 const isPrivateIp = (host: string): boolean => {
@@ -114,8 +116,11 @@ const fetchPageUrlsWithCache = async (
 };
 
 // Resolve slug manga dari chapterId: D1 dulu (akurat), cache KV 1 jam,
-// fallback parse dari format '<slug>-chapter-<num>'.
-const resolveKomikuSlug = async (c: Context, chapterId: string): Promise<string | null> => {
+// fallback parse dari format '<slug>-chapter-<num>'. Source yang pakai
+// chapter id UUID (thrive, shinigami) tidak bisa di-parse — fallback
+// terakhir: adapter.getChapter → series_slug (shinigami API mengembalikan
+// manga_id di chapter detail).
+const resolveSlug = async (c: Context, source: string, chapterId: string): Promise<string | null> => {
   const cacheKey = `slug:${chapterId}`;
   const cached = await cacheGet<string>(c, cacheKey);
   if (cached) return cached;
@@ -127,8 +132,23 @@ const resolveKomikuSlug = async (c: Context, chapterId: string): Promise<string 
     }
   } catch { /* fall through to parse */ }
   const parsed = parseSlugFromChapterId(chapterId);
-  if (parsed) cachePut(c, cacheKey, parsed, 3600);
-  return parsed;
+  if (parsed) {
+    cachePut(c, cacheKey, parsed, 3600);
+    return parsed;
+  }
+  // UUID chapter id: tanya adapter (getChapter → series_slug). Best-effort,
+  // gagal → null → image proxy-only (tanpa B2), konsisten dengan thrive.
+  try {
+    const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
+    if (adapter) {
+      const ch = await retryUpstream(() => adapter.getChapter(chapterId)).catch(() => null);
+      if (ch?.series_slug) {
+        cachePut(c, cacheKey, ch.series_slug, 3600);
+        return ch.series_slug;
+      }
+    }
+  } catch { /* fall through — proxy-only */ }
+  return null;
 };
 
 // Upsert chapter_pages row to the OWNER D1 (sharded by chapterId). Self →
@@ -423,7 +443,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
           const norm = series.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
           const resolved: Array<{ source: string; sourceSlug: string; hasChapterList: boolean; chapterCount: number }> = [];
           const all = await Promise.all(
-            (['komiku', 'bacakomik', 'manhwaindo', 'thrive'] as const)
+            (['komiku', 'bacakomik', 'manhwaindo', 'thrive', 'shinigami'] as const)
               .filter((s) => s !== source)
               .map(async (s) => {
                 const a = getAdapter(s, c.env as unknown as AdapterEnv);
@@ -692,7 +712,7 @@ const servePageImage = async (
   headers.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
   setCorsHeaders(c.env, headers, c.req.header('origin'));
 
-  // Cache-aside B2 (semua source — komiku + bacakomik + thrive + manhwaindo):
+  // Cache-aside B2 (semua source — komiku + bacakomik + thrive + manhwaindo + shinigami):
   // clone stream SEBELUM Response dibuat — setelah `new Response(upstream.body)`
   // stream terkunci dan clone() melempar "ReadableStream locked to a reader".
   // Upload di background; request berikutnya diserve langsung dari B2 tanpa
@@ -700,7 +720,7 @@ const servePageImage = async (
   // Buffer body (bukan stream): PUT stream tanpa Content-Length ditolak B2
   // (411 Length Required) untuk sebagian upstream — gambar chapter kecil,
   // buffer aman di limit 128MB.
-  const slug = await resolveKomikuSlug(c, chapterId);
+  const slug = await resolveSlug(c, source, chapterId);
   let bgUpload: Promise<void> | null = null;
   if (slug) {
     const contentType = upstream.headers.get('content-type') || 'image/jpeg';
@@ -755,7 +775,7 @@ imgRouter.get('/:source/:chapterId/:pageNo', async (c: Context) => {
   }
 
   // B2-first: baca row dari owner D1 (sharded); row ada → serve dari B2.
-  const slug = await resolveKomikuSlug(c, chapterId);
+  const slug = await resolveSlug(c, source, chapterId);
   if (slug) {
     const b2Key = b2KeyFor(source, slug, chapterId, n);
     const rows = await readStoredPageRowsCached(c, chapterId);

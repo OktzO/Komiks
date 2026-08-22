@@ -5,11 +5,12 @@ import { komikuAdapter } from './komiku/index.js';
 import { bacakomikAdapter } from './bacakomik/index.js';
 import { thriveAdapter } from './thrive/index.js';
 import { manhwaindoAdapter } from './manhwaindo/index.js';
+import { shinigamiAdapter } from './shinigami/index.js';
 import type { AdapterEnv } from './komiku/index.js';
 import type { Series, Chapter } from '@manga-platform/shared';
 import type { RobotsResult } from './komiku/client.js';
 
-export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo';
+export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo' | 'shinigami';
 
 export interface ScrapeResult {
   series: Series;
@@ -41,6 +42,7 @@ const adapterFactories: Partial<Record<SourceKey, (env?: AdapterEnv) => SourceAd
   bacakomik: (env) => bacakomikAdapter(env) as unknown as SourceAdapter,
   thrive: (env) => thriveAdapter(env) as unknown as SourceAdapter,
   manhwaindo: (env) => manhwaindoAdapter(env) as unknown as SourceAdapter,
+  shinigami: () => shinigamiAdapter() as unknown as SourceAdapter,
 };
 
 export const getAdapter = (sourceKey: string, env?: AdapterEnv): SourceAdapter | null => {
@@ -48,4 +50,4 @@ export const getAdapter = (sourceKey: string, env?: AdapterEnv): SourceAdapter |
   return factory ? factory(env) : null;
 };
 
-export { komikuAdapter, bacakomikAdapter, thriveAdapter, manhwaindoAdapter, type AdapterEnv };
+export { komikuAdapter, bacakomikAdapter, thriveAdapter, manhwaindoAdapter, shinigamiAdapter, type AdapterEnv };
