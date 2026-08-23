@@ -20,6 +20,38 @@ export const router = new Hono<{ Bindings: Env }>();
 // index.ts bisa mount di path sendiri sebelum rate limit (image = high volume).
 export const imgRouter = new Hono<{ Bindings: Env }>();
 
+// Static priority fallback ketika tidak ada data chapter_count/recency
+// (source yang belum pernah di-index → semua chapterCount 0).
+export const SOURCE_WEIGHT: Record<string, number> = {
+  komiku: 5, bacakomik: 4, thrive: 3, shinigami: 2, manhwaindo: 1,
+};
+
+export interface SourceLinkRow {
+  source: string;
+  sourceSlug: string;
+  hasChapterList: boolean;
+  chapterCount: number;
+  lastScrapedAt?: number | null;
+}
+
+// Pick recommended (default) source: chapter terbanyak → tie-break last_scraped_at
+// terbaru → tie-break priority statis. Source tanpa daftar chapter tidak eligible.
+// Kalau semua chapterCount 0 (data belum pernah di-index) → priority statis.
+// Murni & deterministik — di-test terpisah (test/source-pick.test.mjs).
+export const pickRecommendedSource = (links: SourceLinkRow[]): string | null => {
+  const eligible = links.filter((l) => l.hasChapterList);
+  if (eligible.length === 0) return null;
+  const withData = eligible.filter((l) => (l.chapterCount ?? 0) > 0);
+  const pool = withData.length > 0 ? withData : eligible;
+  pool.sort(
+    (a, b) =>
+      (b.chapterCount ?? 0) - (a.chapterCount ?? 0) ||
+      (b.lastScrapedAt ?? 0) - (a.lastScrapedAt ?? 0) ||
+      (SOURCE_WEIGHT[b.source] ?? 0) - (SOURCE_WEIGHT[a.source] ?? 0)
+  );
+  return pool[0].source;
+};
+
 // Fail-closed CORS origin for image responses. Returns null when no origin
 // matches — callers should omit the header entirely in that case.
 const corsOriginFor = (env: Env, requestOrigin: string | undefined): string | null =>
@@ -402,6 +434,54 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
   }
 });
 
+// Enrich chapter counts for a manga's source links (inline, timeout 8s per
+// source). Hit listChapters per (source, sourceSlug) concurrently → recommended
+// dapat count real bahkan pada first visit ke manga. Gate KV `enrich:<id>` 6h
+// mencegah repeat. Gagal/timeout → count 0 untuk source itu (skip, bukan abort).
+// Ketika responden > 0, invalidate cache `/sources` agar response berikutnya
+// baca dari D1 (aggregation path, cepat).
+const enrichChapterCounts = async (
+  c: Context,
+  mangaId: number,
+  cacheKey: string
+): Promise<void> => {
+  const gateKey = `enrich:${mangaId}`;
+  if (await c.env.CACHE_KV.get(gateKey).catch(() => null)) return;
+  await c.env.CACHE_KV.put(gateKey, '1', { expirationTtl: 21600 }).catch(() => {});
+  const db = getDb(c);
+  const rows = await db.getSourceLinksByManga(mangaId).catch(() => []);
+  const targets = rows.map((r) => ({ source: r.source, sourceSlug: r.source_slug }));
+  if (targets.length === 0) return;
+  const counted = await Promise.allSettled(
+    targets.map(async (t): Promise<{ source: string; sourceSlug: string; count: number; lastScrapedAt: number }> => {
+      const a = getAdapter(t.source, c.env as unknown as AdapterEnv);
+      if (!a) throw new Error('no adapter');
+      const chapters = await Promise.race([
+        retryUpstream(() => a.listChapters(t.sourceSlug, { lang: 'id' }), 2),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('listChapters timeout')), 10000)),
+      ]);
+      return { source: t.source, sourceSlug: t.sourceSlug, count: chapters.length, lastScrapedAt: Math.floor(Date.now() / 1000) };
+    })
+  );
+  let changed = false;
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    const hit = counted[i];
+    if (hit?.status === 'fulfilled') {
+      await db.upsertSourceLink({
+        mangaId,
+        source: t.source,
+        sourceSlug: t.sourceSlug,
+        hasChapterList: 1,
+        chapterCount: hit.value.count,
+        lastScrapedAt: hit.value.lastScrapedAt,
+      });
+      changed = true;
+    }
+  }
+  if (changed) await c.env.CACHE_KV.delete(cacheKey).catch(() => {});
+};
+
 // Aggregated sources for a manga: GET /api/reader/:source/series/:sourceId/sources
 // 1) Uses manga_source_link aggregation (D1) when rows exist.
 // 2) Fallback (live-resolve): searches the OTHER sources for the same title so
@@ -424,13 +504,37 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
       canonicalId = row?.id ?? null;
     }
 
-    let links: Array<{ source: string; sourceSlug: string; hasChapterList: boolean; chapterCount: number }> = [];
+    let links: SourceLinkRow[] = [];
     let canonicalSlug: string | null = null;
     if (canonicalId) {
       const rows = await db.getSourceLinksByManga(canonicalId);
-      links = rows.map((l) => ({ source: l.source, sourceSlug: l.source_slug, hasChapterList: l.has_chapter_list === 1, chapterCount: l.chapter_count }));
+      links = rows.map((l) => ({
+        source: l.source,
+        sourceSlug: l.source_slug,
+        hasChapterList: l.has_chapter_list === 1,
+        chapterCount: l.chapter_count,
+        lastScrapedAt: l.last_scraped_at ?? null,
+      }));
       const canonicalRow = await c.env.DB.prepare('SELECT slug FROM series WHERE id = ?1').bind(canonicalId).first<{ slug: string }>();
       canonicalSlug = canonicalRow?.slug ?? null;
+      // Data lama (auto-index sebelum fitur count) semua chapter_count = 0 →
+      // recommendedSource tak punya sinyal. Enrich inline (concurrent listChapters
+      // per source, gate 6h) → request berikutnya dapat count real.
+      // Waktu parallel dengan detail fetch, jadi tidak menambah latency total.
+      if (links.length > 0 && links.every((l) => (l.chapterCount ?? 0) === 0)) {
+        await enrichChapterCounts(c, canonicalId, cacheKey).catch(() => {});
+        // Re-read from D1 in case enrich populated counts.
+        const rows2 = await db.getSourceLinksByManga(canonicalId).catch(() => null);
+        if (rows2) {
+          links = rows2.map((l) => ({
+            source: l.source,
+            sourceSlug: l.source_slug,
+            hasChapterList: l.has_chapter_list === 1,
+            chapterCount: l.chapter_count,
+            lastScrapedAt: l.last_scraped_at ?? null,
+          }));
+        }
+      }
     }
 
     // 2. Live-resolve when aggregation is empty (or missing current source).
@@ -474,11 +578,12 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
           }
           links = resolved;
 
-          // Auto-index (background, best-effort): persist resolved links to D1
-          // so the aggregation index builds itself from user activity without
-          // needing manual scrape jobs. The current source's series row is the
-          // canonical entry.
-          c.executionCtx.waitUntil((async () => {
+          // Auto-index (inline pada cache-miss): persist resolved links ke D1 +
+          // enrich real counts (concurrent listChapters per source) sehingga
+          // response pertama sudah punya recommendedSource akurat — detail page
+          // server bisa redirect sebelum render (tanpa blink). dedupeOnIndex
+          // berat → background (tidak mempengaruhi response).
+          const row = await (async () => {
             try {
               const slug = series!.slug || sourceId;
               const altTitles = (series as unknown as Record<string, unknown>).alt_titles as string[] | undefined;
@@ -498,35 +603,54 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
                 source_url: (series as unknown as Record<string, unknown>).source_url as string ?? null,
                 language: (series as unknown as Record<string, unknown>).language as string ?? null,
               });
-              const row = await c.env.DB.prepare('SELECT id FROM series WHERE slug = ?1 LIMIT 1').bind(slug).first<{ id: number }>();
-              if (!row) return;
+              const r = await c.env.DB.prepare('SELECT id FROM series WHERE slug = ?1 LIMIT 1').bind(slug).first<{ id: number }>();
+              if (!r) return null;
+              // Seed link rows (count 0 dulu), lalu enrich real counts (gate KV).
               await db.upsertSourceLink({
-                mangaId: row.id,
+                mangaId: r.id,
                 source,
                 sourceSlug: sourceId,
                 hasChapterList: 1,
                 chapterCount: 0,
                 lastScrapedAt: Math.floor(Date.now() / 1000),
               });
-              for (const r of resolved) {
+              for (const rl of resolved) {
                 await db.upsertSourceLink({
-                  mangaId: row.id,
-                  source: r.source,
-                  sourceSlug: r.sourceSlug,
-                  hasChapterList: r.hasChapterList ? 1 : 0,
-                  chapterCount: r.chapterCount,
+                  mangaId: r.id,
+                  source: rl.source,
+                  sourceSlug: rl.sourceSlug,
+                  hasChapterList: rl.hasChapterList ? 1 : 0,
+                  chapterCount: rl.chapterCount,
                   lastScrapedAt: Math.floor(Date.now() / 1000),
                 });
               }
-              // Hot-path dedup: exact match → auto-merge, fuzzy → merge queue.
-              await db.dedupeOnIndex({
-                source,
-                sourceSlug: sourceId,
-                title: series!.title,
-                altTitles,
-              });
-            } catch (e) { console.error('[sources] auto-index failed:', String(e)); }
-          })());
+              await enrichChapterCounts(c, r.id, cacheKey);
+              c.executionCtx.waitUntil(
+                db.dedupeOnIndex({
+                  source,
+                  sourceSlug: sourceId,
+                  title: series!.title,
+                  altTitles,
+                }).catch(() => {})
+              );
+              return r;
+            } catch (e) {
+              console.error('[sources] auto-index failed:', String(e));
+              return null;
+            }
+          })();
+          if (row) {
+            const rows2 = await db.getSourceLinksByManga(row.id).catch(() => null);
+            if (rows2) {
+              links = rows2.map((l) => ({
+                source: l.source,
+                sourceSlug: l.source_slug,
+                hasChapterList: l.has_chapter_list === 1,
+                chapterCount: l.chapter_count,
+                lastScrapedAt: l.last_scraped_at ?? null,
+              }));
+            }
+          }
         }
       }
     }
@@ -539,6 +663,7 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
         chapterCount: l.chapterCount,
       })),
       canonicalSlug,
+      recommendedSource: pickRecommendedSource(links),
     };
     cachePut(c, cacheKey, { data }, 600);
     c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');

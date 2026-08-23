@@ -650,7 +650,7 @@ export const db = (client: D1Database): Db => {
       const targetSlug = targetSlugRow.slug as string;
       // Merge alt_titles: union JSON arrays (target keeps its own, source's appended).
       const sourceRows = await prep(`SELECT id, slug, alt_titles FROM series WHERE id IN (${placeholders})`).bind(...sourceMangaIds).all<Row>();
-      for (const src of sourceRows ?? []) {
+      for (const src of sourceRows.results ?? []) {
         const { results: targetRow } = await prep('SELECT alt_titles FROM series WHERE id = ?1').bind(targetMangaId).all<Row>();
         const targetAlt: string[] = JSON.parse((targetRow?.[0]?.alt_titles as string) ?? '[]');
         const srcAlt: string[] = JSON.parse((src.alt_titles as string) ?? '[]');

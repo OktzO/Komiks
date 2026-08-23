@@ -231,7 +231,7 @@ Frontend ─────────▶│  CDN / WAF       │
 ### 4.4 Multi-source aggregation
 
 - `manga_source_link(manga_id FK→series, source, source_slug, has_chapter_list, chapter_count, last_scraped_at, UNIQUE(source,source_slug))`.
-- `/api/reader/:source/series/:sourceId/sources` → D1 `manga_source_link` → live-resolve fallback (search title di source lain, exact match preferred) + **auto-index persist D1 background**.
+- `/api/reader/:source/series/:sourceId/sources` → D1 `manga_source_link` → live-resolve fallback (search title di source lain, exact match preferred) + **auto-index persist D1** + **enrich chapter counts inline**.
 - Matching pure: `packages/db/src/matching.ts` (`normalizeTitle` + `jaroWinkler` threshold 0.92 → `exact|fuzzy|queue|new`).
 
 ### 4.5 Shinigami source (2026-08-22)
@@ -242,6 +242,16 @@ Frontend ─────────▶│  CDN / WAF       │
 - Image host `assets.shngm.id` di `ALLOWED_IMAGE_HOSTS`; page URL = `${base_url}${chapter.path}${name}`, `Referer: https://11.shinigami.asia/`.
 - Status: 1=ongoing, 2=completed, 3=hiatus. Type dari taxonomy `Format`, fallback country_id (KR→manhwa, CN→manhua).
 - Test fixture: `packages/sources/test/shinigami.test.mjs` (no network). Favicon web: `apps/web/public/sources/shinigami.png`.
+
+### 4.6 Auto default source (2026-08-22)
+
+User buka komik → otomatis mendarat di **source dgn chapter terbanyak + update terbaru**. Manual switch tetap tersedia (pref user menang).
+
+- **API**: response `/sources` tambah field `recommendedSource`. Logic `pickRecommendedSource` (`apps/api-cf/src/routes/reader.ts`): source dgn `chapter_count` tertinggi → tie-break `last_scraped_at` terbaru → tie-break priority statis (`SOURCE_WEIGHT`: komiku 5 > bacakomik 4 > thrive 3 > shinigami 2 > manhwaindo 1). Semua count 0 → priority statis.
+- **Enrich counts**: `enrichChapterCounts` — panggil `listChapters` semua source **secara concurrent** (`Promise.allSettled`, timeout 10s per source) → tulis `chapter_count` real ke D1. Gate KV `enrich:<mangaId>` TTL 6h mencegah repeat. Dijalankan **inline** pada cache-miss `/sources` (aggregation path saat semua count 0, dan live-resolve path). Response pertama langsung akurat.
+- **Redirect SSR (nol blink)**: detail page `apps/web/app/[source]/s/[slug]/page.tsx` — `generateMetadata` cek `recommendedSource` ≠ source URL **dan** tidak ada pref → `redirect()` 307 sebelum body render. Konten source lama tidak pernah dirender → tanpa flash/blink.
+- **Pref user menang**: `SourceSwitcher.writePref` tulis localStorage `src-prefs` (highlight client) + cookie `src-prefs` (JSON map slug→source, dipakai server redirect). User pernah pilih manual → cookie ada → server skip redirect.
+- `SourceSwitcher` default highlight = `recommendedSource` (bukan hardcode komiku).
 
 ---
 
@@ -335,7 +345,7 @@ Semua di satu Worker Hono (`apps/api-cf/src/index.ts`), mount `/api/*`.
 | GET | `/api/reader/:source/series/:sourceId/detail?lang=` | Series + chapters consolidated (two-tier cache) |
 | GET | `/api/reader/:source/series/:sourceId` | Series detail (KV 600s) |
 | GET | `/api/reader/:source/series/:sourceId/chapters?lang=id` | Chapter list (KV 300s) |
-| GET | `/api/reader/:source/series/:sourceId/sources` | Aggregated sources + auto-index D1 background (KV 600s) |
+| GET | `/api/reader/:source/series/:sourceId/sources` | Aggregated sources + `recommendedSource` (auto default source) + auto-index D1 + enrich counts inline (KV 600s) |
 | GET | `/api/reader/:source/chapter/:chapterId` | Chapter + page URL list (KV 300s) — returns `imgUrl` + `proxyUrl`, `b2Url:null` |
 | GET | `/api/reader/:source/page/:chapterId/:pageNo` | Image proxy (legacy — source CDN + upload B2 background; core `servePageImage`) |
 

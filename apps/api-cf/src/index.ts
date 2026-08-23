@@ -169,7 +169,6 @@ export default {
           await kv.put('homepage:feed', body, { expirationTtl: 43200 });
           await kv.put('homepage:feed:last_updated', String(Date.now()), { expirationTtl: 43200 });
           const pushed = await peerKvSet(env as Env, 'homepage:feed', body, 43200);
-          await kv.put('homepage:feed:last_updated', String(Date.now()), { expirationTtl: 43200 });
           console.log(`[cron] homepage feed refreshed (${feed.sources_queried.length} sources), pushed=${pushed}`);
         } catch (e) {
           console.error('[cron] homepage refresh failed:', e);

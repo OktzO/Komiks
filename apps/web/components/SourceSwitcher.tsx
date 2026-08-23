@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { SOURCE_ORDER, sourceLabel } from './SourceBadge';
 
@@ -30,15 +30,20 @@ const SOURCE_ICONS: Record<string, string> = {
 // Coalescing cache: 2 instance (settings popup + chapter sheet) di reader
 // mount bersamaan dan fetch URL yang sama — bagi satu promise, bukan dua
 // request. Cache 30s, cukup untuk satu sesi baca.
-const inFlight = new Map<string, Promise<SourceLink[] | null>>();
+const inFlight = new Map<string, Promise<SourceData | null>>();
 
-async function fetchSourceLinks(apiUrl: string, source: string, sourceId: string): Promise<SourceLink[] | null> {
+interface SourceData {
+  sources: SourceLink[];
+  recommendedSource: string | null;
+}
+
+async function fetchSourceLinks(apiUrl: string, source: string, sourceId: string): Promise<SourceData | null> {
   const url = `${apiUrl}/api/reader/${source}/series/${encodeURIComponent(sourceId)}/sources`;
   const hit = inFlight.get(url);
   if (hit) return hit;
   const p = fetch(url)
     .then((r) => (r.ok ? r.json() : null))
-    .then((j) => (j?.data?.sources as SourceLink[] | undefined) ?? null)
+    .then((j) => (j?.data ? { sources: (j.data.sources as SourceLink[]) ?? [], recommendedSource: (j.data.recommendedSource as string | null) ?? null } : null))
     .catch(() => null)
     .finally(() => setTimeout(() => inFlight.delete(url), 30000));
   inFlight.set(url, p);
@@ -64,6 +69,12 @@ function readPref(slug: string): string | null {
   } catch { return null; }
 }
 
+// Simpan pref di localStorage (highlight client) + cookie (server-side auto
+// redirect di detail page). Cookie dipakai server utk skip redirect ketika
+// user sudah memilih source manual. encodeURIComponent karena isi JSON
+// (braces/quotes). Path=/ supaya terbaca semua route.
+const PREF_COOKIE = 'src-prefs';
+
 function writePref(slug: string, source: string) {
   try {
     const map = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') as Record<string, string>;
@@ -75,6 +86,9 @@ function writePref(slug: string, source: string) {
       for (const k of keys.slice(0, keys.length - PREF_MAX)) delete map[k];
     }
     localStorage.setItem(PREF_KEY, JSON.stringify(map));
+    try {
+      document.cookie = `${PREF_COOKIE}=${encodeURIComponent(JSON.stringify(map))}; path=/; max-age=31536000; samesite=Lax`;
+    } catch { /* cookie best-effort — pref tetap jalan via localStorage */ }
   } catch {}
 }
 
@@ -87,6 +101,7 @@ export function SourceSwitcher({
   mode = 'reader',
   embedded = false,
   links: initialLinks,
+  recommendedSource: initialRecommended,
 }: {
   currentSource: string;
   sourceId: string;
@@ -96,11 +111,14 @@ export function SourceSwitcher({
   mode?: 'reader' | 'detail';
   embedded?: boolean;
   links?: SourceLink[];
+  recommendedSource?: string | null;
 }) {
   const router = useRouter();
   const [links, setLinks] = useState<SourceLink[]>(initialLinks ?? []);
+  const [recommended, setRecommended] = useState<string | null>(initialRecommended ?? null);
   const [pref, setPref] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const recommendedRef = useRef(initialRecommended ?? null);
 
   // Load aggregated sources from API (live-resolve when aggregation empty).
   // Kalau data sudah datang dari server (prop links) → skip fetch.
@@ -108,7 +126,12 @@ export function SourceSwitcher({
     if (initialLinks) return;
     let alive = true;
     fetchSourceLinks(apiUrl, currentSource, sourceId).then((l) => {
-      if (alive && l) setLinks(l);
+      if (!alive || !l) return;
+      setLinks(l.sources);
+      if (!recommendedRef.current && l.recommendedSource) {
+        recommendedRef.current = l.recommendedSource;
+        setRecommended(l.recommendedSource);
+      }
     });
     return () => { alive = false; };
   }, [apiUrl, currentSource, sourceId, initialLinks]);
@@ -171,7 +194,7 @@ export function SourceSwitcher({
               const link = links.find((l) => l.source === s);
               const isActive = s === currentSource;
               const isPref = pref === s;
-              const isDefault = !pref && s === 'komiku';
+              const isDefault = !pref && s === recommended;
               return (
                 <button
                   key={s}
@@ -201,7 +224,7 @@ export function SourceSwitcher({
     const link = links.find((l) => l.source === s);
     const isActive = s === currentSource;
     const isPref = pref === s;
-    const isDefault = !pref && s === 'komiku';
+    const isDefault = !pref && s === recommended;
     return (
       <button
         key={s}

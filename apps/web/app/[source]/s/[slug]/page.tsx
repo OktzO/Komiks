@@ -8,6 +8,8 @@ import { SourceSwitcher } from '@/components/SourceSwitcher';
 import { DetailSkeleton } from '@/components/Skeleton';
 import { Suspense, cache } from 'react';
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import Link from 'next/link';
 
 
@@ -23,12 +25,36 @@ const loadDetail = cache(async (source: string, sourceId: string) => {
   return { series: s, srcs: src, allSources };
 });
 
+// Server-side auto default source: recommendedSource (chapter terbanyak +
+// update terbaru) ≠ source URL → redirect 307 sebelum render (nol blink).
+// User pref (cookie `src-prefs`, sinkron dgn localStorage SourceSwitcher) menang.
+// Ditempatkan di generateMetadata (dijalankan SEBELUM body render) supaya
+// Next.js merespons redirect murni, bukan render skeleton lalu streaming
+// redirect. MUST outside try/catch — NEXT_REDIRECT harus propagate.
+const autoRedirectUrl = async (
+  source: string,
+  slug: string,
+  sourceId: string,
+  srcs: Awaited<ReturnType<typeof getMangaSources>> | null
+): Promise<string | null> => {
+  if (!srcs?.recommendedSource || srcs.recommendedSource === source) return null;
+  const prefRaw = (await cookies()).get('src-prefs')?.value ?? '';
+  let prefSlug: string | null = null;
+  try { prefSlug = (JSON.parse(prefRaw) as Record<string, string>)[slug] ?? null; } catch {}
+  if (prefSlug) return null;
+  const target = srcs.sources.find((l) => l.source === srcs.recommendedSource);
+  if (!target?.hasChapterList) return null;
+  return `/${srcs.recommendedSource}/s/${encodeURIComponent(slug)}?id=${encodeURIComponent(target.sourceSlug)}`;
+};
+
 export async function generateMetadata({ params, searchParams }: { params: Promise<{ source: string; slug: string }>; searchParams: Promise<{ id?: string }> }): Promise<Metadata> {
   const { source, slug } = await params;
   const sp = await searchParams;
   const sourceId = sp.id ?? slug;
   try {
-    const { series } = await loadDetail(source, sourceId);
+    const { series, srcs } = await loadDetail(source, sourceId);
+    const target = await autoRedirectUrl(source, slug, sourceId, srcs);
+    if (target) redirect(target);
     const desc = (series.synopsis ?? '').replace(/\s+/g, ' ').trim().slice(0, 160) || undefined;
     const url = `/${source}/s/${slug}`;
     const images = series.cover_image ? [{ url: series.cover_image, alt: series.title }] : [{ url: '/og.png', width: 1200, height: 630, alt: series.title }];
@@ -52,7 +78,9 @@ export async function generateMetadata({ params, searchParams }: { params: Promi
         images: images.map((i) => i.url),
       },
     };
-  } catch {
+  } catch (e) {
+    // NEXT_REDIRECT must propagate — don't swallow it into a metadata fallback.
+    if (typeof e === 'object' && e !== null && (e as { digest?: string }).digest?.startsWith('NEXT_REDIRECT')) throw e;
     return { title: slug.replace(/-/g, ' ') };
   }
 }
@@ -77,8 +105,10 @@ async function DetailContent({ params, searchParams }: { params: Promise<{ sourc
     return <div className="p-8 text-error">Gagal memuat: {String(e)}</div>;
   }
 
-  const chapters = series.chapters;
+// Server-side auto default source: redirect ada di generateMetadata
+  // (sebelum render, 307 murni). Di sini hanya render konten.
 
+  const chapters = series.chapters;
   // Merge genre + author dari source lain (source aktif bisa kosong).
   let genres: string[] = series.genres ?? [];
   let author: string | null | undefined = series.author;
@@ -167,6 +197,7 @@ async function DetailContent({ params, searchParams }: { params: Promise<{ sourc
               apiUrl={API_URL}
               mode="detail"
               links={srcs?.sources ?? []}
+              recommendedSource={srcs?.recommendedSource ?? null}
             />
           </div>
         </div>
