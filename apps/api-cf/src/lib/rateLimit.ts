@@ -72,3 +72,5 @@ export const rateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, next) =
 export const rateLimitIdentify: MiddlewareHandler<{ Bindings: Env }> = makeLimiter(10, 60);
 export const rateLimitAdmin: MiddlewareHandler<{ Bindings: Env }> = makeLimiter(600, 60);
 export const rateLimitMutate: MiddlewareHandler<{ Bindings: Env }> = makeLimiter(60, 3600);
+export const rateLimitImg: MiddlewareHandler<{ Bindings: Env }> = makeLimiter(300, 60);
+export const rateLimitInternal: MiddlewareHandler<{ Bindings: Env }> = makeLimiter(300, 60);

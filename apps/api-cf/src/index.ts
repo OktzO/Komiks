@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { Env, json, allowedOriginFor, Context } from './lib/context';
-import { rateLimit, rateLimitIdentify, rateLimitAdmin } from './lib/rateLimit';
+import { rateLimit, rateLimitIdentify, rateLimitAdmin, rateLimitImg, rateLimitInternal } from './lib/rateLimit';
 import { router as healthRouter } from './routes/health';
 import { router as seriesRouter } from './routes/series';
 import { router as searchRouter } from './routes/search';
@@ -19,9 +19,9 @@ import { router as readerRouter, imgRouter } from './routes/reader';
 import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
-import { evictStaleStorage } from './lib/storageEviction';
+import { evictStaleStorage, cleanupTempObjects } from './lib/storageEviction';
 import { syncB2UsageFromBuckets, getB2Usage } from './lib/b2Usage';
-import { writeWithFallback } from './lib/dbWrite';
+import { writeWithFallback, flushOutbox } from './lib/dbWrite';
 import { recordSecurityEvent } from './lib/securityEvents';
 import { fetchHomepageFromSources } from './routes/homepage';
 import { peerKvSet } from './lib/peers';
@@ -94,11 +94,9 @@ app.use('/api/user/*', noStoreMw);
 app.use('/api/admin/*', noStoreMw);
 app.use('/api/scrape/*', noStoreMw);
 app.use('/api/admin', rateLimitAdmin);
-// Internal router mounts BEFORE the global rate limit — cross-account peer
-// calls (akun-1→2→3→4) share Worker egress IPs and must not be throttled.
+app.use('/api/_internal/*', rateLimitInternal);
 app.route('/api/_internal', internalRouter);
-// /img/* (image proxy) also before the rate limit: high-volume image serving
-// absorbed by edge cache — a per-IP 60/min cap would break the reader.
+app.use('/img/*', rateLimitImg);
 app.route('/img', imgRouter);
 app.use('*', rateLimit);
 app.route('/api', healthRouter);
@@ -145,14 +143,18 @@ export default {
     env: Env,
     ctx: { waitUntil(p: Promise<unknown>): void }
   ): Promise<void> {
-    if (env.EVICTION_OWNER !== '1') return; // hanya akun-1 yang punya cron
     const run = async () => {
+      const outbox = await flushOutbox(env as Env).catch(() => ({ flushed: 0, pending: -1 }));
+      console.log(`[cron] outbox flushed: ${outbox.flushed} (pending ${outbox.pending})`);
+      if (env.EVICTION_OWNER !== '1') return;
       const kv = env.CACHE_KV;
       const lock = await kv.get('eviction:lock').catch(() => null);
       if (lock) return;
       await kv.put('eviction:lock', '1', { expirationTtl: 600 }).catch(() => {});
       try {
         await syncB2UsageFromBuckets(env as Env);
+        const tmp = await cleanupTempObjects(env as Env).catch(() => ({ cleaned: 0 }));
+        console.log(`[cron] temp objects cleaned: ${tmp.cleaned}`);
         const res = await evictStaleStorage(env as Env);
         console.log(`[cron] eviction done: ${res.evicted} objects`);
         await snapshotUsage(env as Env);

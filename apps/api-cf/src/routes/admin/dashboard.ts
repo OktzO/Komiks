@@ -3,7 +3,7 @@ import type { Env, Context } from '../../lib/context';
 import { getDb, json } from '../../lib/context';
 import { requireAdminSession, requireAuth, revokeAllSessionsForUser } from '../../lib/auth';
 import { resolveB2Accounts } from '../../lib/b2Config';
-import { getB2Usage, quotaBytes } from '../../lib/b2Usage';
+import { getB2Usage, getB2UsageGlobal, quotaBytes } from '../../lib/b2Usage';
 
 export const router = new Hono<{ Bindings: Env }>();
 
@@ -22,7 +22,8 @@ router.get('/dashboard/storage', async (c: Context) => {
   const current: Array<{ idx: number; name: string; bucket: string; bytes: number; quota: number }> = [];
   let totalBytes = 0;
   for (let i = 0; i < accounts.length; i++) {
-    const bytes = await getB2Usage(c.env.CACHE_KV, i).catch(() => 0);
+    const global = await getB2UsageGlobal(c, accounts[i].name).catch(() => null);
+    const bytes = global ?? (await getB2Usage(c.env.CACHE_KV, i).catch(() => 0));
     totalBytes += bytes;
     current.push({ idx: i, name: accounts[i].name, bucket: accounts[i].bucket, bytes, quota });
   }

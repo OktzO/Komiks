@@ -1,4 +1,8 @@
-import type { Context } from './context';
+import type { Context, Env } from './context';
+import { getPeers, internalExec } from './peers';
+
+const OUTBOX_CAP = 1000;
+const OUTBOX_TTL_DAYS = 7;
 
 const OVERFLOW_FLAG_KEY = 'd1:overflow';
 const USAGE_KEY = 'd1:usage';
@@ -174,6 +178,65 @@ export const writeLocal = async (
     return { ok: false, target: 'local', error: 'success=false' };
   } catch (err) {
     return { ok: false, target: 'local', error: String(err) };
+  }
+};
+
+export const enqueueOutbox = async (
+  env: Env,
+  ownerUrl: string,
+  table: string,
+  sql: string,
+  params: unknown[]
+): Promise<void> => {
+  try {
+    if (!getPeers(env).some((p) => p.url === ownerUrl)) return;
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare('DELETE FROM _outbox WHERE created_at < ?1')
+      .bind(now - OUTBOX_TTL_DAYS * 86400).run().catch(() => {});
+    const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM _outbox').first<{ c: number }>().catch(() => null);
+    if (count && count.c >= OUTBOX_CAP) {
+      await env.DB.prepare('DELETE FROM _outbox WHERE id IN (SELECT id FROM _outbox ORDER BY id ASC LIMIT 100)').run().catch(() => {});
+    }
+    await env.DB.prepare(
+      'INSERT INTO _outbox (owner_url, table_name, sql, params, created_at) VALUES (?1, ?2, ?3, ?4, ?5)'
+    ).bind(ownerUrl, table, sql, JSON.stringify(params), now).run();
+  } catch {}
+};
+
+export const flushOutbox = async (env: Env, limit = 50): Promise<{ flushed: number; pending: number }> => {
+  let flushed = 0;
+  try {
+    const peers = getPeers(env);
+    const { results } = await env.DB.prepare(
+      'SELECT id, owner_url, table_name, sql, params, attempts FROM _outbox ORDER BY id ASC LIMIT ?1'
+    ).bind(limit).all<{ id: number; owner_url: string; table_name: string; sql: string; params: string; attempts: number }>();
+    for (const row of results ?? []) {
+      if (!peers.some((p) => p.url === row.owner_url)) {
+        await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
+        continue;
+      }
+      let params: unknown[] = [];
+      try {
+        params = JSON.parse(row.params) as unknown[];
+      } catch {
+        await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
+        continue;
+      }
+      const ok = await internalExec(env, row.owner_url, { sql: row.sql, params, table: row.table_name });
+      if (ok) {
+        await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
+        flushed++;
+      } else if (row.attempts >= 50) {
+        console.error(`[outbox] dropping id=${row.id} table=${row.table_name} after 50 attempts`);
+        await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
+      } else {
+        await env.DB.prepare('UPDATE _outbox SET attempts = attempts + 1 WHERE id = ?1').bind(row.id).run().catch(() => {});
+      }
+    }
+    const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM _outbox').first<{ c: number }>().catch(() => null);
+    return { flushed, pending: count?.c ?? 0 };
+  } catch {
+    return { flushed, pending: -1 };
   }
 };
 

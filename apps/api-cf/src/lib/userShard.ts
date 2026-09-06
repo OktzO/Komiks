@@ -1,6 +1,7 @@
 import type { Env } from './context';
 import { db } from '@manga-platform/db';
 import { ownerFor, internalExec, internalQuery } from './peers';
+import { enqueueOutbox } from './dbWrite';
 
 export const userOwner = (env: Env, userId: number) => ownerFor(env, String(userId));
 
@@ -24,6 +25,7 @@ export const execOnUserOwner = async (
   }
   const ok = await internalExec(env, owner.url, { sql, params, table });
   if (!ok) {
+    await enqueueOutbox(env, owner.url, table, sql, params).catch(() => {});
     try {
       const stmt = env.DB.prepare(sql);
       const bound = params.length > 0 ? stmt.bind(...(params as unknown[])) : stmt;

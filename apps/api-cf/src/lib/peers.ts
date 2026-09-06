@@ -30,6 +30,13 @@ export const ownerFor = (env: Env, key: string): PeerInfo => {
   return peers[murmur3_32(key) % peers.length];
 };
 
+export const backupOwnerFor = (env: Env, key: string): PeerInfo => {
+  const peers = getPeers(env);
+  if (peers.length < 2) return ownerFor(env, key);
+  const owner = ownerFor(env, key);
+  return peers[(owner.index + 1) % peers.length];
+};
+
 const forwardKey = (env: Env): string | undefined => env.DB_FORWARD_KEY as string | undefined;
 
 // Write-forward to a peer worker's internal /db/exec. Returns false on
@@ -51,6 +58,32 @@ export const internalExec = async (
     return res.ok;
   } catch {
     return false;
+  }
+};
+
+export type QueryResult<T> = { ok: true; rows: T[] } | { ok: false };
+
+export const internalQueryEx = async <T = Record<string, unknown>>(
+  env: Env,
+  peerUrl: string,
+  sql: string,
+  params: unknown[],
+  table: string
+): Promise<QueryResult<T>> => {
+  const key = forwardKey(env);
+  if (!key || !peerUrl) return { ok: false };
+  try {
+    const res = await fetch(`${peerUrl}/api/_internal/db/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-db-forward-key': key },
+      body: JSON.stringify({ sql, params, table }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { ok: false };
+    const j = (await res.json()) as { results?: T[] };
+    return { ok: true, rows: j.results ?? [] };
+  } catch {
+    return { ok: false };
   }
 };
 

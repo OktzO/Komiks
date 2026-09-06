@@ -2,6 +2,19 @@
 // holding JSON `{ bytes: number; updatedAt: number }`. Usage is additive +
 // occasionally reconciled from native B2 API by the cron (Task 15/16).
 import { resolveB2Accounts } from './b2Config';
+import type { Context, Env } from './context';
+import { writeWithFallback } from './dbWrite';
+import { internalExec, internalQuery } from './peers';
+
+const primaryOrigin = (env: Env): string | null => {
+  try {
+    const ep = env.DB_FORWARD_ENDPOINT as string | undefined;
+    if (!ep) return null;
+    return new URL(ep).origin;
+  } catch {
+    return null;
+  }
+};
 
 export type UsageKv = {
   get(key: string, fmt?: 'json'): Promise<any | null>;
@@ -91,4 +104,52 @@ export const syncB2UsageFromBuckets = async (env: {
       await setB2Usage(env.CACHE_KV, i, usage.bytes);
     }
   }
+};
+
+export const addB2UsageGlobal = async (c: Context, accountName: string, delta: number): Promise<void> => {
+  try {
+    await writeWithFallback(
+      c,
+      'b2_usage',
+      'INSERT INTO b2_usage (account_name, bytes, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_name) DO UPDATE SET bytes = b2_usage.bytes + excluded.bytes, updated_at = excluded.updated_at',
+      [accountName, delta, Math.floor(Date.now() / 1000)]
+    );
+  } catch {}
+};
+
+export const getB2UsageGlobal = async (c: Context, accountName: string): Promise<number | null> => {
+  try {
+    const row = await c.env.DB.prepare('SELECT bytes FROM b2_usage WHERE account_name = ?1')
+      .bind(accountName)
+      .first<{ bytes: number }>();
+    if (typeof row?.bytes === 'number') return row.bytes;
+  } catch {}
+  const origin = primaryOrigin(c.env);
+  if (!origin) return null;
+  const rows = await internalQuery<{ bytes: number }>(
+    c.env, origin, 'SELECT bytes FROM b2_usage WHERE account_name = ?1', [accountName], 'b2_usage'
+  ).catch(() => null);
+  const bytes = rows?.[0]?.bytes;
+  return typeof bytes === 'number' ? bytes : null;
+};
+
+export const decB2UsageGlobal = async (env: Env, accountName: string, delta: number): Promise<void> => {
+  const origin = primaryOrigin(env);
+  if (!origin || delta <= 0) return;
+  await internalExec(env, origin, {
+    sql: 'UPDATE b2_usage SET bytes = MAX(0, bytes - ?1), updated_at = ?2 WHERE account_name = ?3',
+    params: [delta, Math.floor(Date.now() / 1000), accountName],
+    table: 'b2_usage',
+  }).catch(() => {});
+};
+
+export const setB2UsageGlobal = async (c: Context, accountName: string, bytes: number): Promise<void> => {
+  try {
+    await writeWithFallback(
+      c,
+      'b2_usage',
+      'INSERT INTO b2_usage (account_name, bytes, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_name) DO UPDATE SET bytes = excluded.bytes, updated_at = excluded.updated_at',
+      [accountName, bytes, Math.floor(Date.now() / 1000)]
+    );
+  } catch {}
 };

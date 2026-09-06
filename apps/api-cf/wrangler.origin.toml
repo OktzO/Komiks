@@ -26,3 +26,6 @@ AUTH_PUBLIC_KEYS = '[{"kid":"manga-api","key":{"key_ops":["verify"],"ext":true,"
 
 [cache]
 enabled = true
+
+[triggers]
+crons = ["0 * * * *"]

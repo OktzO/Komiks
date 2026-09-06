@@ -1,5 +1,5 @@
 // Backblaze B2 (S3-compatible / AWS SigV4) upload utilities.
-// Minimal: PUT object + presigned GET. Tanpa @aws-sdk agar bundle < 3MB.
+// Minimal: PUT + GET + DELETE object. Tanpa @aws-sdk agar bundle < 3MB.
 // ponytail: tambahkan multipart/list/delete kalau butuh.
 
 const SERVICE = 's3';
@@ -72,34 +72,8 @@ export const b2PutObject = async (
   return fetch(`https://${b2.host}${path}`, { method: 'PUT', headers, body });
 };
 
-// Presigned GET (query auth) — privat bucket tetap bisa diserve langsung ke
-// browser. URL valid 7 hari (cache KV chapter 300s ≪ TTL, aman).
-export const b2PresignedGet = async (
-  b2: B2Account,
-  key: string,
-  expiresSec = 604800
-): Promise<string> => {
-  const dateISO = new Date().toISOString();
-  const amzDate = dateISO.replace(/[:-]|\.\d{3}/g, '');
-  const dateStamp = amzDate.slice(0, 8);
-  const path = `/${b2.bucket}/${encodePath(key)}`;
-  const query = [
-    'X-Amz-Algorithm=AWS4-HMAC-SHA256',
-    `X-Amz-Credential=${encodeURIComponent(`${b2.keyId}/${dateStamp}/${b2.region}/${SERVICE}/aws4_request`)}`,
-    `X-Amz-Date=${amzDate}`,
-    `X-Amz-Expires=${expiresSec}`,
-    'X-Amz-SignedHeaders=host',
-  ].join('&');
-  const canonicalRequest = `GET\n${path}\n${query}\nhost:${b2.host}\n\nhost\nUNSIGNED-PAYLOAD`;
-  const scope = `${dateStamp}/${b2.region}/${SERVICE}/aws4_request`;
-  const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalRequest)))}`;
-  const keyBuf = await signingKey(b2.appKey, dateStamp, b2.region);
-  const signature = hex(await hmac(keyBuf, stringToSign));
-  return `https://${b2.host}${path}?${query}&X-Amz-Signature=${signature}`;
-};
-
-// GET object with header signing (server-side). Same SigV4 chain as the
-// presigned path but the credential never leaves the Worker — the browser
+// GET object with header signing (server-side). Same SigV4 chain but the
+// credential never leaves the Worker — the browser
 // only ever sees the proxied response, never an X-Amz URL.
 export const b2GetObject = async (b2: B2Account, key: string): Promise<Response> => {
   const dateISO = new Date().toISOString();

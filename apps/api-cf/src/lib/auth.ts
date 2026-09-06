@@ -2,7 +2,7 @@ import type { Env, Context } from './context';
 import type { MiddlewareHandler } from 'hono';
 import { db } from '@manga-platform/db';
 import type { SessionMeta } from '@manga-platform/shared/types';
-import { ownerFor, internalExec, internalQuery } from './peers';
+import { ownerFor, backupOwnerFor, internalExec, internalQueryEx } from './peers';
 
 // ── ECDSA P-256 session signing (cross-account asymmetric auth) ─────────────
 //
@@ -136,64 +136,124 @@ const insertSessionSharded = async (
   p: { sid: string; userId: number; createdAt: number; expiresAt: number; ua: string | null; ip: string | null }
 ): Promise<boolean> => {
   const owner = sessionOwner(env, p.userId);
-  if (owner.self) return (await db(env.DB).insertSession(p)).success;
+  const backup = backupOwnerFor(env, String(p.userId));
   const sql = 'INSERT INTO sessions (sid, user_id, created_at, expires_at, ua, ip) VALUES (?1, ?2, ?3, ?4, ?5, ?6)';
-  const ok = await internalExec(env, owner.url, { sql, params: [p.sid, p.userId, p.createdAt, p.expiresAt, p.ua, p.ip], table: 'sessions' });
+  const params = [p.sid, p.userId, p.createdAt, p.expiresAt, p.ua, p.ip];
+  const replicateBackup = async (): Promise<void> => {
+    if (backup.index === owner.index || !backup.url) return;
+    if (backup.self) {
+      await db(env.DB).insertSession(p).catch(() => {});
+      return;
+    }
+    await internalExec(env, backup.url, { sql, params, table: 'sessions' }).catch(() => false);
+  };
+  if (owner.self) {
+    const r = (await db(env.DB).insertSession(p)).success;
+    await replicateBackup().catch(() => {});
+    return r;
+  }
+  const ok = await internalExec(env, owner.url, { sql, params, table: 'sessions' });
   if (!ok) {
-    // Row-healing fallback: land locally so revocation has something to check
-    // until the owner is reachable again.
     const local = await db(env.DB).insertSession(p).catch(() => ({ success: false }));
+    await replicateBackup().catch(() => {});
     return local.success;
   }
+  await replicateBackup().catch(() => {});
   return true;
 };
 
 const getSessionSharded = async (env: Env, userId: number, sid: string) => {
   const owner = sessionOwner(env, userId);
+  const backup = backupOwnerFor(env, String(userId));
   type Row = { sid: string; user_id: number; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null; ip: string | null };
-  if (owner.self) return db(env.DB).getSession(sid);
   const sql = 'SELECT sid, user_id, created_at, expires_at, revoked_at, ua, ip FROM sessions WHERE sid = ?1 AND user_id = ?2 LIMIT 1';
-  const rows = await internalQuery<Row>(env, owner.url, sql, [sid, userId], 'sessions').catch(() => null);
-  if (!rows || rows.length === 0) return null;
-  return rows[0];
+  const readFrom = async (peer: typeof owner): Promise<{ ok: boolean; row: Row | null }> => {
+    if (peer.self) {
+      const row = (await db(env.DB).getSession(sid).catch(() => null)) as Row | null;
+      return { ok: true, row };
+    }
+    const r = await internalQueryEx<Row>(env, peer.url, sql, [sid, userId], 'sessions');
+    if (!r.ok) return { ok: false, row: null };
+    return { ok: true, row: r.rows[0] ?? null };
+  };
+  const primary = await readFrom(owner).catch(() => ({ ok: false, row: null }));
+  if (primary.ok) return primary.row;
+  if (backup.index === owner.index || !backup.url) return null;
+  const second = await readFrom(backup).catch(() => ({ ok: false, row: null }));
+  return second.row;
 };
 
 const revokeSessionSharded = async (env: Env, userId: number, sid: string): Promise<{ success: boolean }> => {
   const owner = sessionOwner(env, userId);
+  const backup = backupOwnerFor(env, String(userId));
   const sql = 'UPDATE sessions SET revoked_at = ?1 WHERE sid = ?2 AND user_id = ?3 AND revoked_at IS NULL';
   const now = Math.floor(Date.now() / 1000);
-  if (owner.self) return db(env.DB).revokeSession(sid);
+  const replicateBackup = async (): Promise<void> => {
+    if (backup.index === owner.index || !backup.url) return;
+    if (backup.self) {
+      await db(env.DB).revokeSession(sid).catch(() => {});
+      return;
+    }
+    await internalExec(env, backup.url, { sql, params: [now, sid, userId], table: 'sessions' }).catch(() => false);
+  };
+  if (owner.self) {
+    const r = await db(env.DB).revokeSession(sid);
+    await replicateBackup().catch(() => {});
+    return r;
+  }
   const ok = await internalExec(env, owner.url, { sql, params: [now, sid, userId], table: 'sessions' });
   if (!ok) {
     await db(env.DB).revokeSession(sid).catch(() => {});
+    await replicateBackup().catch(() => {});
     return { success: false };
   }
+  await replicateBackup().catch(() => {});
   return { success: true };
 };
 
 const listSessionsSharded = async (env: Env, userId: number) => {
   const owner = sessionOwner(env, userId);
+  const backup = backupOwnerFor(env, String(userId));
   type Row = { sid: string; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null };
-  if (owner.self) return db(env.DB).listUserSessions(userId);
+  type Out = Array<{ sid: string; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null }>;
   const sql = 'SELECT sid, created_at, expires_at, revoked_at, ua FROM sessions WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 50';
-  const rows = await internalQuery<Row>(env, owner.url, sql, [userId], 'sessions').catch(() => null);
-  return (rows ?? []) as Array<{ sid: string; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null }>;
+  if (owner.self) return db(env.DB).listUserSessions(userId);
+  const r = await internalQueryEx<Row>(env, owner.url, sql, [userId], 'sessions').catch((): { ok: false } => ({ ok: false }));
+  if (r.ok) return (r.rows ?? []) as Out;
+  if (backup.index === owner.index || !backup.url) return [] as Out;
+  if (backup.self) return db(env.DB).listUserSessions(userId).catch(() => [] as Out);
+  const b = await internalQueryEx<Row>(env, backup.url, sql, [userId], 'sessions').catch((): { ok: false } => ({ ok: false }));
+  return (b.ok ? (b.rows ?? []) : []) as Out;
 };
 
 const revokeAllSharded = async (env: Env, userId: number, exceptSid: string | undefined): Promise<{ revoked: number }> => {
   const owner = sessionOwner(env, userId);
+  const backup = backupOwnerFor(env, String(userId));
   const now = Math.floor(Date.now() / 1000);
-  if (owner.self) return db(env.DB).revokeAllUserSessions(userId, exceptSid);
   const sql = exceptSid
     ? 'UPDATE sessions SET revoked_at = ?1 WHERE user_id = ?2 AND revoked_at IS NULL AND sid != ?3'
     : 'UPDATE sessions SET revoked_at = ?1 WHERE user_id = ?2 AND revoked_at IS NULL';
   const params = exceptSid ? [now, userId, exceptSid] : [now, userId];
+  const replicateBackup = async (): Promise<void> => {
+    if (backup.index === owner.index || !backup.url) return;
+    if (backup.self) {
+      await db(env.DB).revokeAllUserSessions(userId, exceptSid).catch(() => {});
+      return;
+    }
+    await internalExec(env, backup.url, { sql, params, table: 'sessions' }).catch(() => false);
+  };
+  if (owner.self) {
+    const r = await db(env.DB).revokeAllUserSessions(userId, exceptSid);
+    await replicateBackup().catch(() => {});
+    return r;
+  }
   const ok = await internalExec(env, owner.url, { sql, params, table: 'sessions' });
   if (!ok) {
     await db(env.DB).revokeAllUserSessions(userId, exceptSid).catch(() => {});
+    await replicateBackup().catch(() => {});
     return { revoked: 0 };
   }
-  // changes count unavailable over the exec channel; report -1 as "done, count unknown".
+  await replicateBackup().catch(() => {});
   return { revoked: -1 };
 };
 

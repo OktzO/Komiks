@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS b2_usage (
+  account_name TEXT PRIMARY KEY,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);

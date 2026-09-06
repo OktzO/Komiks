@@ -41,6 +41,8 @@ const ALLOWED_TABLES = new Set([
   'sessions',
   'security_events',
   'db_usage_snapshot',
+  'b2_usage',
+  'b2_temp_objects',
 ]);
 
 const QUERY_ALLOWED_TABLES = new Set([
@@ -50,28 +52,42 @@ const QUERY_ALLOWED_TABLES = new Set([
   'reading_history',
   'series',
   'chapters',
+  'b2_temp_objects',
+  'b2_usage',
 ]);
 
 const USERS_EXEC_ALLOW = [
-  /^INSERT\s+INTO\s+users\s*\(/i,
-  /^UPDATE\s+users\s+SET\s+avatar_url\s*=/i,
+  /^INSERT\s+INTO\s+users\s*\(\s*email\s*,\s*name\s*,\s*password_hash\s*,\s*role\s*,\s*avatar_url\s*\)\s*VALUES\s*\(\s*\?1\s*,\s*\?2\s*,\s*\?3\s*,\s*\?4\s*,\s*\?5\s*\)$/i,
+  /^UPDATE\s+users\s+SET\s+avatar_url\s*=\s*\?1\s+WHERE\s+id\s*=\s*\?2\s+AND\s+\(avatar_url\s+IS\s+NULL\s+OR\s+avatar_url\s*=\s*\?3\)$/i,
   /^UPDATE\s+users\s+SET\s+role\s*=\s*\?1\s+WHERE\s+id\s*=\s*\?2$/i,
-  /^UPDATE\s+users\s+SET\s+last_login_at\s*=/i,
+  /^UPDATE\s+users\s+SET\s+last_login_at\s*=\s*\?1\s+WHERE\s+id\s*=\s*\?2$/i,
+];
+
+const SESSIONS_EXEC_ALLOW = [
+  /^INSERT\s+INTO\s+sessions\s*\(\s*sid\s*,\s*user_id\s*,\s*created_at\s*,\s*expires_at\s*,\s*ua\s*,\s*ip\s*\)\s*VALUES\s*\(\s*\?1\s*,\s*\?2\s*,\s*\?3\s*,\s*\?4\s*,\s*\?5\s*,\s*\?6\s*\)$/i,
+  /^UPDATE\s+sessions\s+SET\s+revoked_at\s*=\s*\?1\s+WHERE\s+sid\s*=\s*\?2\s+AND\s+user_id\s*=\s*\?3\s+AND\s+revoked_at\s+IS\s+NULL$/i,
+  /^UPDATE\s+sessions\s+SET\s+revoked_at\s*=\s*\?1\s+WHERE\s+user_id\s*=\s*\?2\s+AND\s+revoked_at\s+IS\s+NULL\s+AND\s+sid\s*!=\s*\?3$/i,
+  /^UPDATE\s+sessions\s+SET\s+revoked_at\s*=\s*\?1\s+WHERE\s+user_id\s*=\s*\?2\s+AND\s+revoked_at\s+IS\s+NULL$/i,
 ];
 
 const hasStackedStatements = (sql: string): boolean => {
-  let inStr = false;
-  let strChar = '';
-  for (let i = 0; i < sql.length; i++) {
+  if (/--|\/\*/.test(sql)) return true;
+  let i = 0;
+  while (i < sql.length) {
     const ch = sql[i];
-    if (inStr) {
-      if (ch === strChar && sql[i - 1] !== '\\') inStr = false;
-    } else if (ch === "'" || ch === '"') {
-      inStr = true;
-      strChar = ch;
+    if (ch === "'" || ch === '"') {
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === ch) {
+          if (sql[i + 1] === ch) { i += 2; continue; }
+          break;
+        }
+        i++;
+      }
     } else if (ch === ';') {
       return true;
     }
+    i++;
   }
   return false;
 };
@@ -80,7 +96,7 @@ const isWriteStatement = (sql: string): boolean =>
   /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql);
 
 const containsDangerKeyword = (sql: string): boolean =>
-  /\b(ATTACH|DETACH|PRAGMA|VACUUM|REINDEX|ALTER|DROP|TRUNCATE|WITH|UNION|JOIN|GLOB|LIKE\s*\(|LOAD_EXTENSION)\b/i.test(sql);
+  /\b(SELECT|ATTACH|DETACH|PRAGMA|VACUUM|REINDEX|ALTER|DROP|TRUNCATE|WITH|UNION|JOIN|GLOB|LIKE\s*\(|LOAD_EXTENSION)\b/i.test(sql);
 
 router.post('/db/exec', async (c: Context) => {
   const forwardKey = c.req.header('x-db-forward-key');
@@ -99,7 +115,7 @@ router.post('/db/exec', async (c: Context) => {
   }
 
   if (!isPrimary && !isMirror) {
-    return c.json({ error: 'invalid forward key' }, 401);
+    return c.json({ error: 'forbidden' }, 403);
   }
 
   // Cap payload size to prevent memory exhaustion (Worker 128MB limit)
@@ -141,7 +157,7 @@ router.post('/db/exec', async (c: Context) => {
   if (table === 'users' && !USERS_EXEC_ALLOW.some((re) => re.test(sql.trim()))) {
     return c.json({ error: 'forbidden users statement' }, 403);
   }
-  if (table === 'sessions' && !/^\s*(INSERT\s+INTO\s+sessions|UPDATE\s+sessions\s+SET\s+revoked_at)/i.test(sql.trim())) {
+  if (table === 'sessions' && !SESSIONS_EXEC_ALLOW.some((re) => re.test(sql.trim()))) {
     return c.json({ error: 'forbidden sessions statement' }, 403);
   }
 
@@ -173,7 +189,7 @@ router.post('/db/query', async (c: Context) => {
   ) {
     authed = true;
   }
-  if (!authed) return c.json({ error: 'invalid forward key' }, 401);
+  if (!authed) return c.json({ error: 'forbidden' }, 403);
 
   const contentLength = Number(c.req.header('content-length') ?? '0');
   if (contentLength > 64 * 1024) return c.json({ error: 'payload too large' }, 413);
@@ -200,10 +216,16 @@ router.post('/db/query', async (c: Context) => {
   if (/\b(ATTACH|DETACH|PRAGMA|VACUUM|REINDEX|ALTER|DROP|TRUNCATE|WITH|UNION|LOAD_EXTENSION)\b/i.test(sql)) {
     return c.json({ error: 'forbidden statement' }, 403);
   }
-  if (/\busers\b/i.test(sql)) {
+  if (/\b(users|sqlite_master|sqlite_sequence|_outbox|_migrations)\b/i.test(sql)) {
     return c.json({ error: 'forbidden table reference' }, 403);
   }
   if (table !== 'sessions' && /\bsessions\b/i.test(sql)) {
+    return c.json({ error: 'forbidden table reference' }, 403);
+  }
+  if (table !== 'b2_temp_objects' && /\bb2_temp_objects\b/i.test(sql)) {
+    return c.json({ error: 'forbidden table reference' }, 403);
+  }
+  if (table !== 'b2_usage' && /\bb2_usage\b/i.test(sql)) {
     return c.json({ error: 'forbidden table reference' }, 403);
   }
   if (!new RegExp(`FROM\\s+${table}\\b`, 'i').test(sql)) {
@@ -230,7 +252,7 @@ const KV_WRITE_ALLOW_PREFIXES = ['homepage:feed'];
 router.post('/kv/put', async (c: Context) => {
   const key = c.req.header('x-db-forward-key');
   if (!key || !c.env.DB_FORWARD_KEY || !constantTimeEqualStr(key, c.env.DB_FORWARD_KEY as string)) {
-    return c.json({ error: 'invalid forward key' }, 401);
+    return c.json({ error: 'forbidden' }, 403);
   }
   let payload: { key?: string; value?: string; expirationTtl?: number };
   try {
@@ -260,7 +282,7 @@ router.get('/kv/get', async (c: Context) => {
   ) {
     authed = true;
   }
-  if (!authed) return c.json({ error: 'invalid forward key' }, 401);
+  if (!authed) return c.json({ error: 'forbidden' }, 403);
 
   const key = c.req.query('key');
   if (!key || !KV_READ_ALLOW_PREFIXES.some((p) => key.startsWith(p))) {

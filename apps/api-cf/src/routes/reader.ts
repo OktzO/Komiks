@@ -9,7 +9,8 @@ import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
 import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
 import { resolveB2Accounts, pickB2AccountIdx, b2AccountForIdx, type B2Account } from '../lib/b2Config.ts';
-import { addB2Usage, usageRatio } from '../lib/b2Usage';
+import { addB2Usage, addB2UsageGlobal, usageRatio } from '../lib/b2Usage';
+import { enqueueOutbox } from '../lib/dbWrite';
 import { ownerFor, internalExec, internalQuery, peerKvGet } from '../lib/peers';
 import { b2PutObject, b2GetObject } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
@@ -238,6 +239,7 @@ const upsertPageRow = async (
   const ok = await internalExec(c.env, owner.url, { sql, params: [chapterId, pageNo, imageUrl, b2Key, accountIdx], table: 'chapter_pages' });
   if (!ok) {
     await getDb(c).markPageB2Uploaded({ chapterId, pageNumber: pageNo, imageUrl, b2Key, b2AccountIdx: accountIdx }).catch(() => {});
+    c.executionCtx.waitUntil(enqueueOutbox(c.env, owner.url, 'chapter_pages', sql, [chapterId, pageNo, imageUrl, b2Key, accountIdx]));
   }
   invalidateImgRows();
 };
@@ -290,11 +292,9 @@ const touchOwnerPage = async (c: Context, chapterId: string, pageNo: number): Pr
     return;
   }
   const sql = 'UPDATE chapter_pages SET last_access = ?1 WHERE chapter_id = ?2 AND page_number = ?3';
-  await internalExec(c.env, owner.url, {
-    sql,
-    params: [Math.floor(Date.now() / 1000), chapterId, pageNo],
-    table: 'chapter_pages',
-  }).catch(() => {});
+  const params = [Math.floor(Date.now() / 1000), chapterId, pageNo];
+  const ok = await internalExec(c.env, owner.url, { sql, params, table: 'chapter_pages' }).catch(() => false);
+  if (!ok) c.executionCtx.waitUntil(enqueueOutbox(c.env, owner.url, 'chapter_pages', sql, params));
 };
 
 // Upload gambar ke B2 storage tier (background) + catat D1. Idempoten:
@@ -320,7 +320,10 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
       if (res.ok) {
         await upsertPageRow(c, opts.chapterId, opts.pageNo, opts.imageUrl, b2Key, accountIdx);
         const bytes = (opts.body as ArrayBuffer).byteLength || 0;
-        if (bytes > 0) c.executionCtx.waitUntil(addB2Usage(c.env.CACHE_KV, i, bytes));
+        if (bytes > 0) {
+          c.executionCtx.waitUntil(addB2Usage(c.env.CACHE_KV, i, bytes));
+          c.executionCtx.waitUntil(addB2UsageGlobal(c, b2.name, bytes));
+        }
         return;
       }
       console.error(`[b2:${b2.name}] upload ${res.status} → next tier: ${opts.source}/${opts.slug}/${opts.chapterId}/${opts.pageNo}`);
