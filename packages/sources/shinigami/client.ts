@@ -25,24 +25,44 @@ export interface ApiEnvelope<T> {
   data: T;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export const fetchJson = async <T>(url: string, timeoutMs = 15000): Promise<T> => {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': SHINIGAMI_UA,
-      'Accept': 'application/json',
-      'Origin': SHINIGAMI_BASE,
-    },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!res.ok) {
-    await drainResponse(res);
-    throw new Error(`shinigami fetch ${res.status} ${url}`);
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': SHINIGAMI_UA,
+          'Accept': 'application/json',
+          'Origin': SHINIGAMI_BASE,
+        },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) {
+        await drainResponse(res);
+        lastErr = new Error(`shinigami fetch ${res.status} ${url}`);
+        if (res.status === 403) {
+          await sleep(500 * Math.pow(2, attempt));
+          continue;
+        }
+        throw lastErr;
+      }
+      const env = await res.json().catch(() => null) as ApiEnvelope<T> | null;
+      if (!env || env.retcode !== 0 || env.data == null) {
+        throw new Error(`shinigami api error (retcode=${env?.retcode}) ${url}`);
+      }
+      return env.data;
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('shinigami fetch 403')) {
+        lastErr = e;
+        await sleep(500 * Math.pow(2, attempt));
+        continue;
+      }
+      throw e;
+    }
   }
-  const env = await res.json().catch(() => null) as ApiEnvelope<T> | null;
-  if (!env || env.retcode !== 0 || env.data == null) {
-    throw new Error(`shinigami api error (retcode=${env?.retcode}) ${url}`);
-  }
-  return env.data;
+  throw lastErr ?? new Error(`shinigami fetch failed after retries ${url}`);
 };
 
 export const fetchRobots = async (kv: KVNamespace | null): Promise<RobotsResult> => {

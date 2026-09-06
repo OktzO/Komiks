@@ -34,6 +34,7 @@ export const retryUpstream = async <T>(fn: () => Promise<T>, attempts = 3): Prom
 /**
  * Whether an error string indicates a transient upstream condition worth
  * retrying. Covers:
+ * - 403 Forbidden (intermittent WAF / CF Worker IP block)
  * - 429 Too Many Requests
  * - 5xx server errors (502/503/504)
  * - CF origin errors 520/521/522/523/524 (origin unreachable / timeout)
@@ -45,10 +46,10 @@ export const isRetryable = (msg: string): boolean => {
   if (msg.includes('AbortError') || msg.includes('aborted')) return true;
   if (/network|fetch failed|connection (reset|refused)|econnreset/i.test(msg)) return true;
   // Status code in error message: "komiku getSeriesDetail 502"
-  const m = msg.match(/\b(429|500|502|503|504|520|521|522|523|524)\b/);
+  const m = msg.match(/\b(403|429|500|502|503|504|520|521|522|523|524)\b/);
   if (!m) return false;
   const code = Number(m[1]);
-  return code === 429 || code >= 500;
+  return code === 403 || code === 429 || code >= 500;
 };
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
