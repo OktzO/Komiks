@@ -10,6 +10,10 @@ export const router = new Hono<{ Bindings: Env }>();
 // LB admin mutations: require admin session role (same as monitoring endpoints).
 // Step-up password removed — OAuth admin session is the sole auth path.
 router.use('*', requireAdminSession);
+router.use('*', async (_c, next) => {
+  await next();
+  _c.res.headers.set('Cache-Control', 'no-store');
+});
 
 // ---- settings -------------------------------------------------------------
 router.get('/settings', async (c: Context) => {

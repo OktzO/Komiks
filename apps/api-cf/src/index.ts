@@ -88,10 +88,15 @@ export const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', securityHeadersMw);
 app.use('*', corsMw);
-// Internal router mounts BEFORE the global rate limit — cross-account peer
-// calls (akun-1→2→3) share Worker egress IPs and must not be throttled.
-app.route('/api/_internal', internalRouter);
 app.use('/api/_internal/*', noStoreMw);
+app.use('/api/auth/*', noStoreMw);
+app.use('/api/user/*', noStoreMw);
+app.use('/api/admin/*', noStoreMw);
+app.use('/api/scrape/*', noStoreMw);
+app.use('/api/admin', rateLimitAdmin);
+// Internal router mounts BEFORE the global rate limit — cross-account peer
+// calls (akun-1→2→3→4) share Worker egress IPs and must not be throttled.
+app.route('/api/_internal', internalRouter);
 // /img/* (image proxy) also before the rate limit: high-volume image serving
 // absorbed by edge cache — a per-IP 60/min cap would break the reader.
 app.route('/img', imgRouter);
@@ -107,13 +112,8 @@ app.route('/api/admin/lb', lbAdminRouter);
 app.route('/api/admin/merge', mergeAdminRouter);
 // Admin monitoring: read-only endpoints (overview, providers, scrape-jobs, db-usage, users).
 // requireAdminSession (session.role===admin) enforced inside router. rateLimitAdmin applies to all /api/admin/*.
-app.use('/api/admin', rateLimitAdmin);
 app.route('/api/admin', monitoringAdminRouter);
 app.route('/api/admin', dashboardAdminRouter);
-// Per-user/session data + admin: no-store (lihat noStoreMw di atas).
-app.use('/api/auth/*', noStoreMw);
-app.use('/api/user/*', noStoreMw);
-app.use('/api/admin/*', noStoreMw);
 app.route('/api/reader', readerRouter);
 app.route('/api/auth', authRouter);
 app.route('/api/user', userRouter);

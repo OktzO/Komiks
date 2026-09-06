@@ -8,6 +8,10 @@ import { getB2Usage, quotaBytes } from '../../lib/b2Usage';
 export const router = new Hono<{ Bindings: Env }>();
 
 router.use('*', requireAdminSession);
+router.use('*', async (_c, next) => {
+  await next();
+  _c.res.headers.set('Cache-Control', 'no-store');
+});
 
 // GET /api/admin/dashboard/storage — current B2 usage per account (KV) +
 // D1 estimate (KV) + historical trend (db_usage_snapshot, 30d).

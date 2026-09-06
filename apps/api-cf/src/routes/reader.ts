@@ -112,20 +112,50 @@ const ALLOWED_IMAGE_HOSTS = new Set([
 ]);
 
 const isPrivateIp = (host: string): boolean => {
-  // Block RFC1918, loopback, link-local, metadata endpoint.
-  if (host === 'localhost' || host === '169.254.169.254') return true;
-  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|0\.)/.test(host)) return true;
+  const h = host.toLowerCase().replace(/\.$/, '');
+  if (h === 'localhost' || h === '169.254.169.254' || h === '0.0.0.0') return true;
+  if (h.includes(':')) return true;
+  if (/^\d+$/.test(h)) return true;
+  if (/^0[xo]/i.test(h) || /(^|\.)0\d+/.test(h) || /^0x[0-9a-f]+$/i.test(h)) return true;
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|0\.)/.test(h)) return true;
   return false;
 };
 
 const isAllowedImageUrl = (raw: string): boolean => {
   let u: URL;
   try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (u.username || u.password) return false;
   const host = u.hostname.toLowerCase();
   if (isPrivateIp(host)) return false;
   // Allow known image hosts outright.
   if (ALLOWED_IMAGE_HOSTS.has(host)) return true;
   return false;
+};
+
+const fetchUpstreamValidated = async (
+  url: string,
+  init: RequestInit,
+  maxHops = 3
+): Promise<Response | null> => {
+  let cur = url;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    if (!isAllowedImageUrl(cur)) return null;
+    const r = await fetch(cur, { ...init, redirect: 'manual' });
+    if (r.status >= 300 && r.status < 400) {
+      const loc = r.headers.get('location');
+      await drainResponse(r);
+      if (!loc) return null;
+      try {
+        cur = new URL(loc, cur).toString();
+      } catch {
+        return null;
+      }
+      continue;
+    }
+    return r;
+  }
+  return null;
 };
 
 // Fetch page URLs with KV caching to avoid re-hitting the source CDN
@@ -183,9 +213,6 @@ const resolveSlug = async (c: Context, source: string, chapterId: string): Promi
   return null;
 };
 
-// Upsert chapter_pages row to the OWNER D1 (sharded by chapterId). Self →
-// local write; peer → internal /db/exec; on forward failure write locally as
-// row-healing fallback (design "Error handling: Owner down → tulis lokal").
 const upsertPageRow = async (
   c: Context,
   chapterId: string,
@@ -194,18 +221,25 @@ const upsertPageRow = async (
   b2Key: string,
   accountIdx: number
 ): Promise<void> => {
+  const invalidateImgRows = (): void => {
+    c.executionCtx.waitUntil(
+      c.env.CACHE_KV.delete(`imgrows:${chapterId}`).catch(() => {})
+    );
+  };
   const owner = ownerFor(c.env, chapterId);
   if (owner.self) {
     await getDb(c).markPageB2Uploaded({ chapterId, pageNumber: pageNo, imageUrl, b2Key, b2AccountIdx: accountIdx }).catch(() => {});
+    invalidateImgRows();
     return;
   }
-  const sql = `INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`;
+  const sql = `INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx, last_access)
+    VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
+    ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx, image_url = excluded.image_url, last_access = strftime('%s','now')`;
   const ok = await internalExec(c.env, owner.url, { sql, params: [chapterId, pageNo, imageUrl, b2Key, accountIdx], table: 'chapter_pages' });
   if (!ok) {
     await getDb(c).markPageB2Uploaded({ chapterId, pageNumber: pageNo, imageUrl, b2Key, b2AccountIdx: accountIdx }).catch(() => {});
   }
+  invalidateImgRows();
 };
 
 // Read chapter_pages rows from the owner D1 (self → local; peer → internal
@@ -271,19 +305,16 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
   const b2Key = b2KeyFor(opts.source, opts.slug, opts.chapterId, opts.pageNo);
   const b2Accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
 
-  // Hash pick → start at that account; on failure fall back to the others
-  // (wrapping) instead of a fixed ordered chain.
+  if (b2Accounts.length === 0) return;
   const startIdx = pickB2AccountIdx(b2Accounts, b2Key);
-  // Reaktif: kalau akun terpilih > 90% penuh, picu eviction di background
-  // (jangan blokir response).
-  const ratio = await usageRatio(c.env, c.env.CACHE_KV, startIdx).catch(() => 0);
-  if (ratio > 0.9) {
-    c.executionCtx.waitUntil(evictStaleStorage(c.env).catch(() => {}));
-  }
   for (let k = 0; k < b2Accounts.length; k++) {
     const i = (startIdx + k) % b2Accounts.length;
     const b2 = b2Accounts[i];
-    const accountIdx = -(i + 1); // -1, -2, ... → B2 account index
+    const accountIdx = -(i + 1);
+    const ratio = await usageRatio(c.env, c.env.CACHE_KV, i).catch(() => 0);
+    if (ratio > 0.9) {
+      c.executionCtx.waitUntil(evictStaleStorage(c.env).catch(() => {}));
+    }
     try {
       const res = await b2PutObject(b2, b2Key, opts.body as ArrayBuffer, opts.contentType);
       if (res.ok) {
@@ -400,6 +431,7 @@ router.get('/:source/series/:sourceId', async (c: Context) => {
         } }
     );
     recordHealth(c, source, start, true);
+    c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
     return c.json(result.data);
   } catch (e) {
     recordHealth(c, source, start, false, String(e));
@@ -490,7 +522,10 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
   const { source, sourceId } = c.req.param();
   const cacheKey = `sources:${source}:${sourceId}`;
   const cached = await cacheGet<{ data: unknown }>(c, cacheKey);
-  if (cached) return c.json(cached);
+  if (cached) {
+    c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
+    return c.json(cached);
+  }
 
   const db = getDb(c);
   try {
@@ -678,7 +713,10 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
   const { source, chapterId } = c.req.param();
   const cacheKey = `chapter:detail:${source}:${chapterId}`;
   const cached = await cacheGet<{ data: unknown }>(c, cacheKey);
-  if (cached) return c.json(cached);
+  if (cached) {
+    c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
+    return c.json(cached);
+  }
 
   const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
   if (!adapter) return c.json({ error: 'unknown source' }, 404);
@@ -799,7 +837,7 @@ const servePageImage = async (
   const retryCount = retry;
   for (let attempt = 0; attempt < 2 + retryCount; attempt++) {
     try {
-      const r = await fetch(page.url, {
+      const r = await fetchUpstreamValidated(page.url, {
         headers: {
           'User-Agent': 'manga-platform/1.0',
           'Referer': 'https://komiku.org/',
@@ -810,12 +848,9 @@ const servePageImage = async (
         // subsequent identical requests skip Worker execution entirely.
         cf: { cacheEverything: true, cacheTtl: 3600 },
       });
-      if (r.status === 200) { upstream = r; break; }
-      // Non-2xx: drain the body before retrying so the subrequest (bounded by
-      // the 6-concurrent-fetch limit) is released. Un-drained bodies keep the
-      // fetch "in flight" and can trip CF's deadlock-avoidance cancellation.
-      await drainResponse(r);
-      // 3xx/4xx/5xx → retry
+      if (r && r.status === 200) { upstream = r; break; }
+      if (r === null) break;
+      if (r) await drainResponse(r);
     } catch {
       // network error → retry
     }

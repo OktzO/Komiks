@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Env, Context } from '../lib/context';
 import { db } from '@manga-platform/db';
 import { rateLimitMutate } from '../lib/rateLimit';
+import { execOnUserOwner, queryOnUserOwner } from '../lib/userShard';
 import {
   getSessionUser,
   listSessionsForUser,
@@ -73,6 +74,13 @@ const deleteMeSchema = z.object({ confirm: z.literal('DELETE') }).strict();
 async function requireSession(c: Context, next: () => Promise<void>) {
   const user = await getSessionUser(c);
   if (!user) return c.json({ error: 'unauthorized' }, 401);
+  try {
+    const row = await db(c.env.DB).getUserStatusAdmin(user.id);
+    if (row && row.status !== 'active') {
+      return c.json({ error: 'account suspended', reason: row.status }, 403);
+    }
+  } catch {}
+
   (c as unknown as { set: (k: string, v: unknown) => void }).set('user', user);
   await next();
 }
@@ -93,40 +101,70 @@ router.post('/bookmark', async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const { seriesSlug, source, source_url, title, cover_image } = await c.req.json() as { seriesSlug?: string; source?: string; source_url?: string; title?: string; cover_image?: string };
   if (!seriesSlug) return c.json({ error: 'seriesSlug required' }, 400);
-  await db(c.env.DB).addBookmark({ userId: user.id, seriesSlug, source, source_url, title, cover_image });
+  // Stub series di owner yang sama agar JOIN listBookmarks jalan di owner.
+  await execOnUserOwner(c.env, user.id,
+    `INSERT INTO series (slug, source, title, type, status, cover_image, updated_at)
+     VALUES (?1, ?2, ?3, 'manga', 'ongoing', ?4, unixepoch())
+     ON CONFLICT(slug) DO UPDATE SET cover_image = COALESCE(excluded.cover_image, series.cover_image), updated_at = unixepoch()`,
+    [seriesSlug, source ?? 'local', title ?? seriesSlug, cover_image ?? null], 'series');
+  await execOnUserOwner(c.env, user.id,
+    'INSERT OR IGNORE INTO bookmarks (user_id, series_slug, source, source_url) VALUES (?1, ?2, ?3, ?4)',
+    [user.id, seriesSlug, source ?? null, source_url ?? null], 'bookmarks');
+  c.header('Cache-Control', 'no-store');
   return c.json({ data: { ok: true } });
 });
 
 router.delete('/bookmark/:slug', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  await db(c.env.DB).removeBookmark({ userId: user.id, seriesSlug: c.req.param('slug') });
+  await execOnUserOwner(c.env, user.id,
+    'DELETE FROM bookmarks WHERE user_id = ?1 AND series_slug = ?2',
+    [user.id, c.req.param('slug')], 'bookmarks');
+  c.header('Cache-Control', 'no-store');
   return c.json({ data: { ok: true } });
 });
 
 router.get('/bookmark/:slug', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const bookmarked = await db(c.env.DB).isBookmarked({ userId: user.id, seriesSlug: c.req.param('slug') });
-  return c.json({ data: { bookmarked } });
+  const rows = await queryOnUserOwner<{ ['1']: number }>(c.env, user.id,
+    'SELECT 1 FROM bookmarks WHERE user_id = ?1 AND series_slug = ?2',
+    [user.id, c.req.param('slug')], 'bookmarks');
+  c.header('Cache-Control', 'no-store');
+  return c.json({ data: { bookmarked: !!rows && rows.length > 0 } });
 });
 
 router.get('/bookmarks', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const results = await db(c.env.DB).listBookmarks(user.id);
-  return c.json({ data: results });
+  const rows = await queryOnUserOwner<Record<string, unknown>>(c.env, user.id,
+    `SELECT s.*, b.source AS bookmark_source, b.source_url AS bookmark_url, b.created_at AS bookmark_created_at
+     FROM bookmarks b JOIN series s ON s.slug = b.series_slug
+     WHERE b.user_id = ?1 ORDER BY b.created_at DESC`,
+    [user.id], 'bookmarks');
+  c.header('Cache-Control', 'no-store');
+  return c.json({ data: rows ?? [] });
 });
 
 router.post('/history', async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const { chapterId, lastPage } = await c.req.json() as { chapterId?: string; lastPage?: number };
   if (!chapterId) return c.json({ error: 'chapterId required' }, 400);
-  await db(c.env.DB).upsertHistory({ userId: user.id, chapterId, lastPage: lastPage ?? 0 });
+  await execOnUserOwner(c.env, user.id,
+    `INSERT INTO reading_history (user_id, chapter_id, last_page)
+     VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id, chapter_id) DO UPDATE SET last_page = excluded.last_page, updated_at = unixepoch()`,
+    [user.id, chapterId, lastPage ?? 0], 'reading_history');
+  c.header('Cache-Control', 'no-store');
   return c.json({ data: { ok: true } });
 });
 
 router.get('/history', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const results = await db(c.env.DB).listHistory(user.id);
-  return c.json({ data: results });
+  const rows = await queryOnUserOwner<Record<string, unknown>>(c.env, user.id,
+    `SELECT c.* FROM reading_history rh
+     JOIN chapters c ON c.id = rh.chapter_id
+     WHERE rh.user_id = ?1 ORDER BY rh.updated_at DESC LIMIT 50`,
+    [user.id], 'reading_history');
+  c.header('Cache-Control', 'no-store');
+  return c.json({ data: rows ?? [] });
 });
 
 // ─── Profile: GET /me ──────────────────────────────────────────────────────
@@ -177,12 +215,10 @@ router.delete('/me', requireSession, async (c: Context) => {
 
   await db(c.env.DB).deleteUserAccount(user.id);
 
-  const sid = getSessionSid(c);
-  if (sid) {
-    await db(c.env.DB).revokeSession(sid).catch(() => {});
-  }
+  await revokeAllSessionsForUser(c.env, user.id).catch(() => {});
 
   c.header('Set-Cookie', clearSessionCookie());
+  c.header('Cache-Control', 'no-store');
   return c.json({ data: { deleted: true } });
 });
 
@@ -223,14 +259,22 @@ router.post('/sessions/revoke-all', async (c: Context) => {
 
 router.delete('/history', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const result = await db(c.env.DB).clearUserHistory(user.id);
-  return c.json({ data: result });
+  const rows = await queryOnUserOwner<{ c: number }>(c.env, user.id,
+    'SELECT COUNT(*) AS c FROM reading_history WHERE user_id = ?1', [user.id], 'reading_history');
+  const deleted = rows?.[0]?.c ?? 0;
+  await execOnUserOwner(c.env, user.id,
+    'DELETE FROM reading_history WHERE user_id = ?1', [user.id], 'reading_history');
+  return c.json({ data: { success: true, deleted } });
 });
 
 // ─── Bookmarks: DELETE /bookmarks (clear all) ──────────────────────────────
 
 router.delete('/bookmarks', async (c: Context) => {
   const user = getSessionUserFromContext(c);
-  const result = await db(c.env.DB).clearUserBookmarks(user.id);
-  return c.json({ data: result });
+  const rows = await queryOnUserOwner<{ c: number }>(c.env, user.id,
+    'SELECT COUNT(*) AS c FROM bookmarks WHERE user_id = ?1', [user.id], 'bookmarks');
+  const deleted = rows?.[0]?.c ?? 0;
+  await execOnUserOwner(c.env, user.id,
+    'DELETE FROM bookmarks WHERE user_id = ?1', [user.id], 'bookmarks');
+  return c.json({ data: { success: true, deleted } });
 });

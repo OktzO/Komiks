@@ -159,27 +159,46 @@ const ORIGIN_PATH_ALLOWLIST = [
 // melakukan 1 fetch /api/origins tambahan.
 let originsCache: { data: { url: string }[]; at: number } | null = null;
 
+const fallbackOrigins = (): { url: string }[] => {
+  const out = new Map<string, { url: string }>();
+  if (originsCache?.data) for (const o of originsCache.data) out.set(o.url, o);
+  if (imgOriginsFallback) for (const u of imgOriginsFallback) out.set(u, { url: u });
+  // Kandidat statis yang diketahui tanpa perlu API_URL hidup.
+  for (const u of [API_URL, AUTH_API_URL]) if (u) out.set(u, { url: u });
+  return [...out.values()];
+};
+
 const getOrigins = async (): Promise<{ url: string }[]> => {
   const cached = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('origins') : null;
-  if (cached) return JSON.parse(cached) as { url: string }[];
-  if (originsCache && Date.now() - originsCache.at < 60000) return originsCache.data;
-  try {
-    const res = await fetch(`${API_URL}/api/origins`, {
-      signal: AbortSignal.timeout(8000),
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    const json = await res.json() as { data: { url: string }[] };
-    const data = json.data || [];
-    if (typeof sessionStorage !== 'undefined' && data.length > 0) {
-      sessionStorage.setItem('origins', JSON.stringify(data));
-      setTimeout(() => sessionStorage.removeItem('origins'), 60000);
-    }
-    originsCache = { data, at: Date.now() };
-    return data;
-  } catch {
-    return [];
+  if (cached) {
+    try {
+      const arr = JSON.parse(cached) as { url: string }[];
+      if (arr.length > 0) return arr;
+    } catch {}
   }
+  if (originsCache && Date.now() - originsCache.at < 60000 && originsCache.data.length > 0) return originsCache.data;
+  const candidates = [API_URL, AUTH_API_URL].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+  for (const base of candidates) {
+    try {
+      const res = await fetch(`${base}/api/origins`, {
+        signal: AbortSignal.timeout(8000),
+        cache: "no-store",
+      });
+      if (!res.ok) continue;
+      const json = await res.json() as { data: { url: string }[] };
+      const data = json.data || [];
+      if (data.length === 0) continue;
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('origins', JSON.stringify(data));
+        setTimeout(() => sessionStorage.removeItem('origins'), 60000);
+      }
+      originsCache = { data, at: Date.now() };
+      return data;
+    } catch {
+      // coba kandidat berikutnya
+    }
+  }
+  return fallbackOrigins();
 };
 
 // Round-robin cursor (client only). Persisted in sessionStorage so consecutive
@@ -216,16 +235,19 @@ export const imgOriginFor = (imgPath: string, retry = 0): string => {
   if (os === null) os = imgOriginsFallback;
   else imgOriginsFallback = os;
 
-  const pool = (os ?? []).filter((u) => u !== API_URL);
-  if (pool.length === 0) {
+  const all = os ?? [];
+  const pool = all.filter((u) => u !== API_URL);
+  const effective = pool.length > 0 ? pool : all;
+  if (effective.length === 0) {
     if (!imgOriginsWarming) {
       imgOriginsWarming = true;
       getOrigins().catch(() => {}).finally(() => { imgOriginsWarming = false; });
     }
+    if (AUTH_API_URL && AUTH_API_URL !== API_URL) return AUTH_API_URL;
     return IMG_BASE_URL;
   }
-  const idx = (murmur3_32(imgPath) + retry) % pool.length;
-  return pool[idx];
+  const idx = (murmur3_32(imgPath) + retry) % effective.length;
+  return effective[idx];
 };
 
 // Circuit state per origin: gagal beruntun → skip 60s.

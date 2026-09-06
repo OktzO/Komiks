@@ -7,17 +7,23 @@ export interface PeerInfo {
   self: boolean;
 }
 
-// Parse PEER_URLS (comma-separated, ordered akun-1/2/3) + PEER_INDEX (this
-// worker's own index). Same URL list on all workers; self-flag is per-worker.
+export const EXPECTED_PEER_COUNT = 4;
+
 export const getPeers = (env: Env): PeerInfo[] => {
   const raw = env.PEER_URLS as string | undefined;
-  const selfIndex = Number(env.PEER_INDEX ?? 0) || 0;
   const urls = (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  return urls.map((url, index) => ({ url, index, self: index === selfIndex }));
+  const deduped = [...new Set(urls)];
+  const parsed = Number(env.PEER_INDEX ?? 0);
+  const selfIndex = Number.isInteger(parsed) && parsed >= 0 && parsed < deduped.length ? parsed : -1;
+  if (selfIndex === -1 && deduped.length > 0) {
+    console.error(`[peers] invalid PEER_INDEX=${String(env.PEER_INDEX)} for ${deduped.length} peers — no self match (fail-safe: treat as non-self router)`);
+  }
+  if (deduped.length !== 0 && deduped.length !== EXPECTED_PEER_COUNT) {
+    console.error(`[peers] PEER_URLS length=${deduped.length}, expected ${EXPECTED_PEER_COUNT} — sharding mismatch risk across accounts`);
+  }
+  return deduped.map((url, index) => ({ url, index, self: index === selfIndex }));
 };
 
-// Deterministic owner of a sharded key (chapterId). Falls back to "self" when
-// no peers are configured (single-account / local dev).
 export const ownerFor = (env: Env, key: string): PeerInfo => {
   const peers = getPeers(env);
   if (peers.length === 0) return { url: '', index: 0, self: true };
@@ -73,22 +79,24 @@ export const internalQuery = async <T = Record<string, unknown>>(
   }
 };
 
-// KV peer fallback: try each non-self peer's /kv/get (allowlist enforced
-// server-side). First non-null wins; returns null when none have it.
 export const peerKvGet = async (env: Env, key: string): Promise<unknown | null> => {
   const k = forwardKey(env);
   if (!k) return null;
-  for (const peer of getPeers(env)) {
-    if (peer.self) continue;
-    try {
+  const peers = getPeers(env).filter((p) => !p.self);
+  if (peers.length === 0) return null;
+  const results = await Promise.allSettled(
+    peers.map(async (peer) => {
       const res = await fetch(`${peer.url}/api/_internal/kv/get?key=${encodeURIComponent(key)}`, {
         headers: { 'x-db-forward-key': k },
         signal: AbortSignal.timeout(2000),
       });
-      if (!res.ok) continue;
+      if (!res.ok) return null;
       const j = (await res.json()) as { value?: unknown };
-      if (j.value != null) return j.value;
-    } catch { /* try next peer */ }
+      return j.value ?? null;
+    })
+  );
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value != null) return r.value;
   }
   return null;
 };

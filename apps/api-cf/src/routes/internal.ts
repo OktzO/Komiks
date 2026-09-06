@@ -18,11 +18,14 @@ import { constantTimeEqualStr } from '../lib/auth';
 
 export const router = new Hono<{ Bindings: Env }>();
 
+router.use('/*', async (c, next) => {
+  await next();
+  c.res.headers.set('Cache-Control', 'no-store');
+  c.res.headers.set('Vary', 'Authorization, Cookie');
+});
+
 const OVERFLOW_RESPONSE_STATUS = 503;
 
-// Tables the cross-account forward is allowed to write to. Anything else
-// (especially users.role updates) requires going through the public API
-// which has its own auth + audit trail.
 const ALLOWED_TABLES = new Set([
   'users',
   'bookmarks',
@@ -31,13 +34,53 @@ const ALLOWED_TABLES = new Set([
   'series_search',
   'chapters',
   'chapter_pages',
-  'source_link',
+  'manga_source_link',
+  'manga_merge_queue',
   'source_health',
   'image_hashes',
   'sessions',
   'security_events',
   'db_usage_snapshot',
 ]);
+
+const QUERY_ALLOWED_TABLES = new Set([
+  'chapter_pages',
+  'sessions',
+  'bookmarks',
+  'reading_history',
+  'series',
+  'chapters',
+]);
+
+const USERS_EXEC_ALLOW = [
+  /^INSERT\s+INTO\s+users\s*\(/i,
+  /^UPDATE\s+users\s+SET\s+avatar_url\s*=/i,
+  /^UPDATE\s+users\s+SET\s+role\s*=\s*\?1\s+WHERE\s+id\s*=\s*\?2$/i,
+  /^UPDATE\s+users\s+SET\s+last_login_at\s*=/i,
+];
+
+const hasStackedStatements = (sql: string): boolean => {
+  let inStr = false;
+  let strChar = '';
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (inStr) {
+      if (ch === strChar && sql[i - 1] !== '\\') inStr = false;
+    } else if (ch === "'" || ch === '"') {
+      inStr = true;
+      strChar = ch;
+    } else if (ch === ';') {
+      return true;
+    }
+  }
+  return false;
+};
+
+const isWriteStatement = (sql: string): boolean =>
+  /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql);
+
+const containsDangerKeyword = (sql: string): boolean =>
+  /\b(ATTACH|DETACH|PRAGMA|VACUUM|REINDEX|ALTER|DROP|TRUNCATE|WITH|UNION|JOIN|GLOB|LIKE\s*\(|LOAD_EXTENSION)\b/i.test(sql);
 
 router.post('/db/exec', async (c: Context) => {
   const forwardKey = c.req.header('x-db-forward-key');
@@ -82,10 +125,24 @@ router.post('/db/exec', async (c: Context) => {
     return c.json({ error: 'forbidden table' }, 403);
   }
 
-  // Refuse destructive DDL over the forward channel (DROP/ALTER/TRUNCATE).
-  // The allowlist above only gates by table, not statement intent.
-  if (/\bDROP\b|\bALTER\b|\bTRUNCATE\b/i.test(sql)) {
+  if (hasStackedStatements(sql)) {
     return c.json({ error: 'forbidden statement' }, 403);
+  }
+  if (!isWriteStatement(sql) || containsDangerKeyword(sql)) {
+    return c.json({ error: 'forbidden statement' }, 403);
+  }
+  const fromOk =
+    table === 'series_search'
+      ? true // FTS sync via trigger; jarang dipakai langsung
+      : new RegExp(`\\b${table}\\b`, 'i').test(sql);
+  if (!fromOk) {
+    return c.json({ error: 'table mismatch' }, 403);
+  }
+  if (table === 'users' && !USERS_EXEC_ALLOW.some((re) => re.test(sql.trim()))) {
+    return c.json({ error: 'forbidden users statement' }, 403);
+  }
+  if (table === 'sessions' && !/^\s*(INSERT\s+INTO\s+sessions|UPDATE\s+sessions\s+SET\s+revoked_at)/i.test(sql.trim())) {
+    return c.json({ error: 'forbidden sessions statement' }, 403);
   }
 
   // Pass the isMirror flag through to writeLocal via header on internal Request —
@@ -131,11 +188,26 @@ router.post('/db/query', async (c: Context) => {
   if (typeof sql !== 'string' || !Array.isArray(params) || typeof table !== 'string') {
     return c.json({ error: 'missing sql/params/table' }, 400);
   }
-  if (table.startsWith('_') || table === 'sqlite_sequence' || !ALLOWED_TABLES.has(table)) {
+  if (table.startsWith('_') || table === 'sqlite_sequence' || !QUERY_ALLOWED_TABLES.has(table)) {
     return c.json({ error: 'forbidden table' }, 403);
   }
   if (!/^\s*SELECT\b/i.test(sql)) {
     return c.json({ error: 'read-only endpoint' }, 403);
+  }
+  if (hasStackedStatements(sql)) {
+    return c.json({ error: 'forbidden statement' }, 403);
+  }
+  if (/\b(ATTACH|DETACH|PRAGMA|VACUUM|REINDEX|ALTER|DROP|TRUNCATE|WITH|UNION|LOAD_EXTENSION)\b/i.test(sql)) {
+    return c.json({ error: 'forbidden statement' }, 403);
+  }
+  if (/\busers\b/i.test(sql)) {
+    return c.json({ error: 'forbidden table reference' }, 403);
+  }
+  if (table !== 'sessions' && /\bsessions\b/i.test(sql)) {
+    return c.json({ error: 'forbidden table reference' }, 403);
+  }
+  if (!new RegExp(`FROM\\s+${table}\\b`, 'i').test(sql)) {
+    return c.json({ error: 'table mismatch' }, 403);
   }
   try {
     const stmt = c.env.DB.prepare(sql);

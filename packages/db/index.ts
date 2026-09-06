@@ -157,12 +157,10 @@ export const db = (client: D1Database): Db => {
     },
 
     markPageB2Uploaded: async (p) => {
-      // chapter_id FK di-relax (migration 0007) — cache-aside upload marker
-      // boleh ada walau chapter row belum ada di D1 chapters.
       try {
-        await prep(`INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx)
-          VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx`)
+        await prep(`INSERT INTO chapter_pages (chapter_id, page_number, image_url, r2_key, r2_account_idx, last_access)
+          VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
+          ON CONFLICT(chapter_id, page_number) DO UPDATE SET r2_key = excluded.r2_key, r2_account_idx = excluded.r2_account_idx, image_url = excluded.image_url, last_access = strftime('%s','now')`)
           .bind(p.chapterId, p.pageNumber, p.imageUrl, p.b2Key, p.b2AccountIdx).run();
         return { success: true };
       } catch (e) {

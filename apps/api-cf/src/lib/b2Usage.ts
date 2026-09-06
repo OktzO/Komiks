@@ -43,8 +43,9 @@ export const usageRatio = async (
   return (await getB2Usage(kv, idx)) / quota;
 };
 
-// Native B2 API usage (b2_authorize_account → b2_list_buckets). Accurate
-// bytes/fileCount; used by cron to reconcile the KV counter.
+// Native B2 API usage (b2_authorize_account → b2_list_buckets).
+// list_buckets tidak mengembalikan bytes per-bucket; KV aditif tetap
+// source-of-truth. Fungsi ini hanya verifikasi kredensial + bucket.
 export const b2NativeUsage = async (b2: B2Account): Promise<{ fileCount: number; bytes: number } | null> => {
   try {
     const authRes = await fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
@@ -52,21 +53,27 @@ export const b2NativeUsage = async (b2: B2Account): Promise<{ fileCount: number;
     });
     if (!authRes.ok) return null;
     const auth = (await authRes.json()) as {
+      accountId: string;
       authorizationToken: string;
-      apiInfo: { storageApi: { apiUrl: string; bucketId: string } };
-      accountInfo: { usedBucketCapabilities: number };
+      apiUrl: string;
+      apiInfo?: { storageApi?: { apiUrl?: string } };
     };
-    const { authorizationToken, apiInfo, accountInfo } = auth;
-    if (!apiInfo?.storageApi?.apiUrl || !authorizationToken) return null;
-    const listRes = await fetch(`${apiInfo.storageApi.apiUrl}/b2api/v3/b2_list_buckets`, {
+    const accountId = auth.accountId;
+    const authorizationToken = auth.authorizationToken;
+    const apiUrl = auth.apiUrl || auth.apiInfo?.storageApi?.apiUrl;
+    if (!accountId || !apiUrl || !authorizationToken) return null;
+    const listRes = await fetch(`${apiUrl}/b2api/v3/b2_list_buckets`, {
       method: 'POST',
       headers: { Authorization: authorizationToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: apiInfo.storageApi.bucketId }),
+      body: JSON.stringify({ accountId }),
     });
     if (!listRes.ok) return null;
-    const list = (await listRes.json()) as { buckets?: Array<{ bucketName: string; fileCount: number }> };
+    const list = (await listRes.json()) as { buckets?: Array<{ bucketName: string; bucketId: string }> };
     const bucket = list.buckets?.find((b) => b.bucketName === b2.bucket);
-    return { fileCount: bucket?.fileCount ?? 0, bytes: accountInfo?.usedBucketCapabilities ?? 0 };
+    if (!bucket) return null;
+    // Bucket ada + kredensial valid, tapi bytes akurat tidak tersedia tanpa
+    // listing semua objek → kembalikan null agar caller TIDAK overwrite KV.
+    return null;
   } catch {
     return null;
   }
@@ -80,6 +87,8 @@ export const syncB2UsageFromBuckets = async (env: {
   const accounts = resolveB2Accounts(env.B2_CONFIG, env.B2_ACCOUNTS);
   for (let i = 0; i < accounts.length; i++) {
     const usage = await b2NativeUsage(accounts[i]).catch(() => null);
-    if (usage) await setB2Usage(env.CACHE_KV, i, usage.bytes);
+    if (usage && typeof usage.bytes === 'number' && usage.bytes > 0) {
+      await setB2Usage(env.CACHE_KV, i, usage.bytes);
+    }
   }
 };

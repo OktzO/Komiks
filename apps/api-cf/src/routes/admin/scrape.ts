@@ -9,6 +9,12 @@ import { b2PutObject } from '../../lib/s3Upload.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
 
+router.use('*', async (_c, next) => {
+  await next();
+  _c.res.headers.set('Cache-Control', 'no-store');
+  _c.res.headers.set('Vary', 'Authorization, Cookie');
+});
+
 // All scrape endpoints require admin key (applied per-route below).
 // Previously used router.use('*', requireAdminKey) but the wildcard matched
 // unrelated paths under the mount point — scrape is mounted at /api so the

@@ -129,9 +129,10 @@ export const b2DeleteObject = async (b2: B2Account, key: string): Promise<boolea
   const amzDate = dateISO.replace(/[:-]|\.\d{3}/g, '');
   const dateStamp = amzDate.slice(0, 8);
   const path = `/${b2.bucket}/${encodePath(key)}`;
-  const canonicalHeaders = `host:${b2.host}\nx-amz-date:${amzDate}\n`;
-  const signedHeaders = 'host;x-amz-date';
-  const canonicalRequest = `DELETE\n${path}\n\n${canonicalHeaders}\n${signedHeaders}\n`;
+  const payloadHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'; // sha256("")
+  const canonicalHeaders = `host:${b2.host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = `DELETE\n${path}\n\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
   const scope = `${dateStamp}/${b2.region}/${SERVICE}/aws4_request`;
   const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonicalRequest)))}`;
   const keyBuf = await signingKey(b2.appKey, dateStamp, b2.region);
@@ -140,6 +141,7 @@ export const b2DeleteObject = async (b2: B2Account, key: string): Promise<boolea
     method: 'DELETE',
     headers: {
       Authorization: `AWS4-HMAC-SHA256 Credential=${b2.keyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      'x-amz-content-sha256': payloadHash,
       'x-amz-date': amzDate,
     },
   });

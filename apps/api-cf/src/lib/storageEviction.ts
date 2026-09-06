@@ -22,18 +22,18 @@ const CLEAR_SQL =
 
 interface StaleRow { chapter_id: string; page_number: number; r2_key: string }
 
-// Clear storage row on the owner D1 (self → local; peer → internal exec).
 const clearRowOnOwner = async (env: Env, chapterId: string, pageNo: number): Promise<void> => {
   const owner = ownerFor(env, chapterId);
   if (owner.self) {
     await db(env.DB).clearPageStorage(chapterId, pageNo).catch(() => {});
-    return;
+  } else {
+    await internalExec(env, owner.url, {
+      sql: CLEAR_SQL,
+      params: [chapterId, pageNo],
+      table: 'chapter_pages',
+    }).catch(() => {});
   }
-  await internalExec(env, owner.url, {
-    sql: CLEAR_SQL,
-    params: [chapterId, pageNo],
-    table: 'chapter_pages',
-  }).catch(() => {});
+  await env.CACHE_KV.delete(`imgrows:${chapterId}`).catch(() => {});
 };
 
 export const evictStaleStorage = async (env: Env): Promise<{ evicted: number }> => {

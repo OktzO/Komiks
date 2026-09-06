@@ -12,6 +12,10 @@ import { requireAdminSession } from '../../lib/auth';
 export const router = new Hono<{ Bindings: Env }>();
 
 router.use('*', requireAdminSession);
+router.use('*', async (_c, next) => {
+  await next();
+  _c.res.headers.set('Cache-Control', 'no-store');
+});
 
 // GET /api/admin/overview — aggregate counts for /admin dashboard.
 router.get('/overview', async (c: Context) => {

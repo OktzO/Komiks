@@ -18,7 +18,7 @@ import { writeWithFallback } from '../lib/dbWrite';
 export const router = new Hono<{ Bindings: Env }>();
 
 router.post('/logout', async (c: Context) => {
-  // Revoke session on its owner shard (best-effort) + clear cookie.
+  let revoked = false;
   const user = await getSessionUser(c).catch(() => null);
   if (user) {
     // Extract sid from cookie payload for shard revoke.
@@ -28,12 +28,16 @@ router.post('/logout', async (c: Context) => {
       try {
         const payloadStr = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'));
         const payload = JSON.parse(payloadStr) as { sid?: string };
-        if (payload.sid) await revokeSessionForUser(c.env, user.id, payload.sid).catch(() => {});
+        if (payload.sid) {
+          const r = await revokeSessionForUser(c.env, user.id, payload.sid).catch(() => ({ success: false }));
+          revoked = r.success;
+        }
       } catch {}
     }
   }
   c.header('Set-Cookie', clearSessionCookie());
-  return c.json({ ok: true });
+  c.header('Cache-Control', 'no-store');
+  return c.json({ ok: true, revoked });
 });
 
 router.get('/me', async (c: Context) => {

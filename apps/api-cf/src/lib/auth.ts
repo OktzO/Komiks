@@ -347,14 +347,12 @@ export const requireAdminKey: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 
 export const requireAdminSession: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const user = await getSessionUser(c);
-  if (!user || user.role !== 'admin') {
+  if (!user) {
     return c.json({ error: 'admin required' }, 403);
   }
-  // Reject suspended/banned admins. Status read from local users table —
-  // admin endpoints run on the auth origin where users live.
   try {
     const row = await db(c.env.DB).getUserStatusAdmin(user.id);
-    if (!row || row.status !== 'active') {
+    if (!row || row.status !== 'active' || row.role !== 'admin') {
       return c.json({ error: 'admin required' }, 403);
     }
   } catch {

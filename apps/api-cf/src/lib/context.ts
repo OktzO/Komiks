@@ -23,7 +23,11 @@ export interface Env {
   PEER_INDEX?: string;
   EVICTION_OWNER?: string;
   B2_QUOTA_BYTES?: string;
+  B2_EVICTION_DAYS?: string;
   DB_FORWARD_KEY?: string;
+  DB_FORWARD_ENDPOINT?: string;
+  DB_MIRROR_KEY?: string;
+  DB_MIRROR_ENDPOINT?: string;
   [k: string]: unknown;
 }
 
@@ -47,15 +51,16 @@ export const parseAllowedOrigins = (env: Env): string[] => {
   return raw.split(',').map((s) => s.trim()).filter(Boolean);
 };
 
-// Match origin against allowlist. Entries may use a `*.` prefix to allow any
-// subdomain (e.g. `https://*.manga-web-d32.pages.dev` — CF Pages preview URLs).
 const originMatches = (allowed: string, origin: string): boolean => {
   const starIdx = allowed.indexOf('://*.');
   if (starIdx >= 0) {
     const scheme = allowed.slice(0, starIdx + 3); // "https://"
-    const suffix = allowed.slice(starIdx + 5); // ".example.com"
-    if (!origin.startsWith(scheme) || origin.length <= scheme.length + suffix.length) return false;
-    return origin.endsWith(suffix);
+    const bare = allowed.slice(starIdx + 5); // "example.com" (tanpa dot)
+    const suffix = `.${bare}`; // ".example.com" — boundary subdomain
+    if (!origin.startsWith(scheme)) return false;
+    const host = origin.slice(scheme.length);
+    if (host.length <= bare.length) return false;
+    return host.endsWith(suffix);
   }
   return allowed === origin;
 };
