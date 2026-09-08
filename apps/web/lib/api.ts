@@ -97,6 +97,32 @@ export const getMangaSources = (source: string, sourceId: string) =>
     `/api/reader/${source}/series/${sourceId}/sources`
   ).then((r) => r.data);
 
+export const VALID_TYPES = ['manga', 'manhwa', 'manhua'] as const;
+export type ComicType = (typeof VALID_TYPES)[number];
+
+export const isValidType = (t: string): t is ComicType =>
+  (VALID_TYPES as readonly string[]).includes(t);
+
+export const typedUrl = (type: string, slug: string): string =>
+  `/${type}/${encodeURIComponent(slug)}`;
+
+export const typedChapterUrl = (type: string, slug: string, chapterId: string): string => {
+  const raw = chapterId.includes(':') ? chapterId.slice(chapterId.lastIndexOf(':') + 1) : chapterId;
+  return `/${type}/${encodeURIComponent(slug)}/${encodeURIComponent(raw)}`;
+};
+
+export interface ResolveData {
+  slug: string;
+  type: string;
+  source: string;
+  sourceSlug: string;
+  recommendedSource: string | null;
+  sources: Array<{ source: string; sourceSlug: string; hasChapterList: boolean; chapterCount: number }>;
+}
+
+export const getResolve = (slug: string) =>
+  apiWithFailover<{ data: ResolveData }>(`/api/resolve/${encodeURIComponent(slug)}`).then((r) => r.data);
+
 export const getChapters = (source: string, sourceId: string, lang = 'id') =>
   apiWithFailover<{ data: Chapter[] }>(`/api/reader/${source}/series/${sourceId}/chapters?lang=${lang}`).then((r) => r.data);
 
@@ -152,6 +178,7 @@ const ORIGIN_PATH_ALLOWLIST = [
   '/api/search',
   '/api/homepage',
   '/api/health',
+  '/api/resolve',
 ];
 
 // Module-level cache (60s): SSR render (detail page) juga butuh daftar origins,
