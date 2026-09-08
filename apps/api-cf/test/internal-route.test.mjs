@@ -86,3 +86,14 @@ test('kv/get returns cached value for allowlisted prefix', async () => {
   const j = await res.json();
   assert.deepEqual(j.value, { data: 1 });
 });
+
+test('kv/get returns cached value for f:resolve: prefix', async () => {
+  const env = stubEnv();
+  env.CACHE_KV.store['f:resolve:test-slug'] = JSON.stringify({ data: { slug: 'test-slug' } });
+  const res = await app.request('/api/_internal/kv/get?key=f:resolve:test-slug', {
+    headers: { 'x-db-forward-key': 'sekret' },
+  }, env);
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  assert.deepEqual(j.value, { data: { slug: 'test-slug' } });
+});

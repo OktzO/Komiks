@@ -80,7 +80,7 @@ router.get('/resolve/:slug', async (c: Context) => {
         return { data };
       },
       { circuitKey: 'reader:resolve', peerFallback: async () => {
-        const v = await peerKvGet(c.env, cacheKey);
+        const v = await peerKvGet(c.env, `f:${cacheKey}`);
         return v as { data: ResolveResult } | null;
       } }
     );
