@@ -475,7 +475,7 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
 // mencegah repeat. Gagal/timeout → count 0 untuk source itu (skip, bukan abort).
 // Ketika responden > 0, invalidate cache `/sources` agar response berikutnya
 // baca dari D1 (aggregation path, cepat).
-const enrichChapterCounts = async (
+export const enrichChapterCounts = async (
   c: Context,
   mangaId: number,
   cacheKey: string
