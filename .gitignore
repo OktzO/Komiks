@@ -29,3 +29,6 @@ lighthouse-report.json
 
 # ECDSA private auth keys (public part committed in wrangler [vars])
 apps/api-cf/.auth-keys.json
+
+# isolated git worktrees (superpowers:using-git-worktrees)
+.worktrees/
