@@ -21,6 +21,20 @@ export const router = new Hono<{ Bindings: Env }>();
 // index.ts bisa mount di path sendiri sebelum rate limit (image = high volume).
 export const imgRouter = new Hono<{ Bindings: Env }>();
 
+// Race promise terhadap budget ms; timeout → resolve fallback (tidak reject).
+// Dipakai untuk enrich background agar cold-open tidak blocking 20-30s.
+export const withBudget = async <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 // Static priority fallback ketika tidak ada data chapter_count/recency
 // (source yang belum pernah di-index → semua chapterCount 0).
 export const SOURCE_WEIGHT: Record<string, number> = {
@@ -161,6 +175,9 @@ const fetchUpstreamValidated = async (
 
 // Fetch page URLs with KV caching to avoid re-hitting the source CDN
 // on every image request (prevents 429 rate-limit → 502 cascade).
+// Singleflight via lock KV `pageslock:*`: concurrent miss untuk chapter yang
+// sama coalesce — waiter tunggu max 3s (poll 150ms + re-check cache), lalu
+// ikut fetch bila lock belum lepas. Lock TTL 15s agar tidak stuck.
 const fetchPageUrlsWithCache = async (
   c: Context,
   source: string,
@@ -169,13 +186,25 @@ const fetchPageUrlsWithCache = async (
   const cacheKey = `pages:${source}:${chapterId}`;
   const cached = await cacheGet<{ url: string; proxyHeaders?: Record<string, string> }[]>(c, cacheKey);
   if (cached) return cached;
-
-  const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
-  if (!adapter) throw new Error('unknown source');
-
-  const pages = await retryUpstream(() => adapter.fetchPageUrls(chapterId));
-  cachePut(c, cacheKey, pages, 600);
-  return pages;
+  const lockKey = `pageslock:${source}:${chapterId}`;
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const lock = await c.env.CACHE_KV.get(lockKey).catch(() => null);
+    if (!lock) break;
+    await new Promise((r) => setTimeout(r, 150));
+    const raced = await cacheGet<{ url: string; proxyHeaders?: Record<string, string> }[]>(c, cacheKey);
+    if (raced) return raced;
+  }
+  await c.env.CACHE_KV.put(lockKey, '1', { expirationTtl: 15 }).catch(() => {});
+  try {
+    const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
+    if (!adapter) throw new Error('unknown source');
+    const pages = await retryUpstream(() => adapter.fetchPageUrls(chapterId));
+    cachePut(c, cacheKey, pages, 600);
+    return pages;
+  } finally {
+    await c.env.CACHE_KV.delete(lockKey).catch(() => {});
+  }
 };
 
 // Resolve slug manga dari chapterId: D1 dulu (akurat), cache KV 1 jam,
@@ -560,7 +589,9 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
       // per source, gate 6h) → request berikutnya dapat count real.
       // Waktu parallel dengan detail fetch, jadi tidak menambah latency total.
       if (links.length > 0 && links.every((l) => (l.chapterCount ?? 0) === 0)) {
-        await enrichChapterCounts(c, canonicalId, cacheKey).catch(() => {});
+        c.executionCtx.waitUntil(
+          withBudget(enrichChapterCounts(c, canonicalId, cacheKey), 4000, undefined).catch(() => {})
+        );
         // Re-read from D1 in case enrich populated counts.
         const rows2 = await db.getSourceLinksByManga(canonicalId).catch(() => null);
         if (rows2) {
@@ -662,7 +693,9 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
                   lastScrapedAt: Math.floor(Date.now() / 1000),
                 });
               }
-              await enrichChapterCounts(c, r.id, cacheKey);
+              c.executionCtx.waitUntil(
+                withBudget(enrichChapterCounts(c, r.id, cacheKey), 4000, undefined).catch(() => {})
+              );
               c.executionCtx.waitUntil(
                 db.dedupeOnIndex({
                   source,
