@@ -102,6 +102,7 @@ export function SourceSwitcher({
   embedded = false,
   links: initialLinks,
   recommendedSource: initialRecommended,
+  type,
 }: {
   currentSource: string;
   sourceId: string;
@@ -112,6 +113,7 @@ export function SourceSwitcher({
   embedded?: boolean;
   links?: SourceLink[];
   recommendedSource?: string | null;
+  type?: string;
 }) {
   const router = useRouter();
   const [links, setLinks] = useState<SourceLink[]>(initialLinks ?? []);
@@ -158,6 +160,10 @@ export function SourceSwitcher({
     }
     if (mode === 'detail') {
       if (source === currentSource) { setOpen(false); return; }
+      if (type && canonicalSlug) {
+        router.push(`/${type}/${encodeURIComponent(canonicalSlug)}`);
+        return;
+      }
       router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?id=${encodeURIComponent(link.sourceSlug)}`);
     } else {
       if (source === currentSource) return;

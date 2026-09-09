@@ -16,6 +16,7 @@ import { router as dashboardAdminRouter } from './routes/admin/dashboard';
 import { router as scrapeRouter } from './routes/admin/scrape';
 import { router as mergeAdminRouter } from './routes/admin/merge';
 import { router as readerRouter, imgRouter } from './routes/reader';
+import { router as resolveRouter } from './routes/resolve';
 import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
@@ -113,6 +114,7 @@ app.route('/api/admin/merge', mergeAdminRouter);
 app.route('/api/admin', monitoringAdminRouter);
 app.route('/api/admin', dashboardAdminRouter);
 app.route('/api/reader', readerRouter);
+app.route('/api', resolveRouter);
 app.route('/api/auth', authRouter);
 app.route('/api/user', userRouter);
 

@@ -75,3 +75,25 @@ export function HomeSkeleton() {
     </div>
   );
 }
+
+export function ChapterListSkeleton() {
+  return (
+    <div className="border border-border-default rounded-xl p-4 animate-pulse" aria-label="Memuat daftar chapter">
+      <div className="h-4 w-32 bg-bg-secondary rounded mb-3" />
+      <div className="space-y-2">
+        <div className="h-10 bg-bg-secondary rounded" />
+        <div className="h-10 bg-bg-secondary rounded" />
+        <div className="h-10 bg-bg-secondary rounded" />
+      </div>
+    </div>
+  );
+}
+
+export function SourceSkeleton() {
+  return (
+    <div className="flex gap-2 animate-pulse" aria-label="Memuat daftar sumber">
+      <div className="h-8 w-24 bg-bg-secondary rounded-full" />
+      <div className="h-8 w-24 bg-bg-secondary rounded-full" />
+    </div>
+  );
+}
