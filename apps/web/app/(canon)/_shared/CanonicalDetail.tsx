@@ -28,7 +28,6 @@ function DetailShell({ series, type, slug, source }: {
   slug: string;
   source: string;
 }) {
-  void type;
   const genres: string[] = series.genres ?? [];
   const author: string | null | undefined = series.author;
   const allSources = [source];
@@ -167,7 +166,7 @@ function DetailShell({ series, type, slug, source }: {
           <div className="nav-island flex w-full max-w-md items-center gap-2 rounded-xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.45)]">
             <BookmarkButton slug={slug} title={series.title} cover={series.cover_image} source={source} />
             <Link
-              href={`/${source}/s/${slug}/${startChapterId}?mangaId=${slug.split('--').pop()}`}
+              href={`/${type}/${slug}/${startChapterId}?mangaId=${slug.split('--').pop()}`}
               prefetch={false}
               className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-white bg-white px-5 text-sm font-semibold text-black hover:opacity-90 transition-opacity"
             >
@@ -203,7 +202,7 @@ export async function CanonicalDetail({ type, slug }: { type: string; slug: stri
     <main className="max-w-2xl mx-auto px-4 pb-28">
       <DetailShell series={series} type={type} slug={slug} source={resolved.source} />
       <Suspense fallback={<ChapterListSkeleton />}>
-        <ChapterSection slug={slug} canonicalSlug={resolved.slug} chaptersPromise={chaptersPromise} sourcesPromise={sourcesPromise} source={resolved.source} sourceSlug={resolved.sourceSlug} />
+        <ChapterSection slug={slug} canonicalSlug={resolved.slug} chaptersPromise={chaptersPromise} sourcesPromise={sourcesPromise} source={resolved.source} sourceSlug={resolved.sourceSlug} type={type} />
       </Suspense>
       <div className="mt-4">
         <Suspense fallback={<SourceSkeleton />}>

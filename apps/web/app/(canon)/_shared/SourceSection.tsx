@@ -15,7 +15,7 @@ export async function SourceSection({ slug, canonicalSlug, sourcesPromise, sourc
   return (
     <section>
       <p className="text-xs text-muted mb-2">{srcs.sources.length} sumber · terbanyak {total} chapter</p>
-      <SourceSwitcher currentSource={source} sourceId={sourceSlug} canonicalSlug={canonicalSlug} chapterNumber={0} apiUrl={API_URL} mode="detail" links={srcs.sources} recommendedSource={srcs.recommendedSource} />
+      <SourceSwitcher currentSource={source} sourceId={sourceSlug} canonicalSlug={canonicalSlug} chapterNumber={0} apiUrl={API_URL} mode="detail" links={srcs.sources} recommendedSource={srcs.recommendedSource} type={type} />
     </section>
   );
 }

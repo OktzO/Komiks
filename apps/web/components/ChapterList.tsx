@@ -5,7 +5,7 @@ import { WindowedList } from './WindowedList';
 
 interface Ch { id: string; chapter_number: number; title?: string | null }
 
-export function ChapterList({ chapters, source, slug }: { chapters: Ch[]; source: string; slug: string }) {
+export function ChapterList({ chapters, source, slug, type }: { chapters: Ch[]; source: string; slug: string; type?: string }) {
   const [open, setOpen] = useState(false);
   const [rendered, setRendered] = useState(false);
   // Default "Akhir → Awal": chapter 1 paling akhir. Sort numeric — data API
@@ -36,6 +36,7 @@ export function ChapterList({ chapters, source, slug }: { chapters: Ch[]; source
 
   const linkHref = (c: Ch) => {
     const rawId = c.id.includes(':') ? c.id.slice(c.id.lastIndexOf(':') + 1) : c.id;
+    if (type) return `/${type}/${slug}/${rawId}?mangaId=${slug.split('--').pop()}`;
     return `/${source}/s/${slug}/${rawId}?mangaId=${slug.split('--').pop()}`;
   };
 

@@ -14,9 +14,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   try {
     const res = await fetch(`${API}/api/series?limit=200`, { next: { revalidate: 3600 } });
     if (res.ok) {
-      const items: { slug: string; source: string; updated_at?: number }[] = await res.json();
+      const items: { slug: string; source: string; type?: string; updated_at?: number }[] = await res.json();
       seriesEntries = items.map((s) => ({
-        url: `${SITE}/${s.source}/s/${s.slug}`,
+        url: `${SITE}/${s.type ?? 'manga'}/${s.slug}`,
         lastModified: s.updated_at ? new Date(s.updated_at * 1000) : undefined,
         changeFrequency: 'weekly',
         priority: 0.7,

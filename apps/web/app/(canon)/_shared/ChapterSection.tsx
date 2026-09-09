@@ -1,13 +1,14 @@
 import { ChapterList } from '@/components/ChapterList';
 import { getChapters, getMangaSources } from '@/lib/api';
 
-export async function ChapterSection({ slug, canonicalSlug, chaptersPromise, sourcesPromise, source, sourceSlug }: {
+export async function ChapterSection({ slug, canonicalSlug, chaptersPromise, sourcesPromise, source, sourceSlug, type }: {
   slug: string;
   canonicalSlug: string;
   chaptersPromise: Promise<Awaited<ReturnType<typeof getChapters>>>;
   sourcesPromise: Promise<Awaited<ReturnType<typeof getMangaSources>> | null>;
   source: string;
   sourceSlug: string;
+  type: string;
 }) {
   const [chapters, srcs] = await Promise.all([chaptersPromise, sourcesPromise]);
   let list = chapters;
@@ -27,7 +28,7 @@ export async function ChapterSection({ slug, canonicalSlug, chaptersPromise, sou
   return (
     <section>
       {notice && <p className="text-xs text-muted mb-2">{notice}</p>}
-      <ChapterList chapters={list} source={rec ?? source} slug={canonicalSlug} />
+      <ChapterList chapters={list} source={rec ?? source} slug={canonicalSlug} type={type} />
     </section>
   );
 }
