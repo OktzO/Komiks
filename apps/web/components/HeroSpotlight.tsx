@@ -65,7 +65,7 @@ export function HeroSpotlight() {
             />
             <button
               type="submit"
-              className="shrink-0 rounded-full bg-accent text-zinc-950 px-5 py-1.5 text-xs sm:text-sm font-semibold hover:opacity-90 active:scale-95 transition-all shadow-sm"
+              className="shrink-0 rounded-full bg-accent text-[color:var(--accent-ink)] px-5 py-1.5 text-xs sm:text-sm font-semibold hover:opacity-90 active:scale-95 transition-all shadow-sm"
             >
               Cari
             </button>

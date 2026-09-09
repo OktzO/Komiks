@@ -9,7 +9,7 @@ export const SOURCE_ORDER: SourceKey[] = ['komiku', 'bacakomik', 'thrive', 'manh
 
 const SOURCE_ICONS: Record<string, string> = {
   komiku: '/sources/komiku.png',
-  bacakomik: '/sources/bacakomik.png',
+  bacakomik: '/sources/bacakomik.jpg', // file asli JPEG — extension harus cocok
   thrive: '/sources/thrive.png',
   manhwaindo: '/sources/manhwaindo.png',
   shinigami: '/sources/shinigami.png',

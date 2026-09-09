@@ -54,7 +54,7 @@ export default function StatusPage() {
         Monitoring sumber · pasif
       </div>
 
-      <h1 className="mt-6 font-display text-4xl md:text-6xl tracking-tight text-primary">
+      <h1 className="mt-6 font-display text-4xl md:text-6xl font-semibold tracking-tight text-primary">
         {!sources ? 'Memuat status…'
           : allOperational ? 'Semua sumber normal'
           : healthyCount === 0 ? 'Semua sumber terganggu'
@@ -107,7 +107,7 @@ function SourceRow({ s, index }: { s: SourceStatus; index: number }) {
   return (
     <Link
       href={`/status/${s.source}`}
-      className="group flex w-full items-center justify-between gap-4 rounded-2xl border border-default bg-card p-5 text-left transition-colors hover:bg-bg-secondary anim-slide-up"
+      className="group flex w-full items-center justify-between gap-4 rounded-panel border border-subtle bg-card p-5 text-left panel-hover anim-slide-up"
       style={{ animationDelay: `${Math.max(0, index) * 60}ms` }}
     >
       <div className="min-w-0 flex-1 flex items-center gap-3">

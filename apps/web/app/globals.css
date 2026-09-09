@@ -3,22 +3,40 @@
 @tailwind utilities;
 
 :root {
-  --bg-base: oklch(8% 0 0);
-  --bg-elevated: oklch(12% 0 0);
-  --bg-card: oklch(12% 0 0);
-  --bg-secondary: oklch(18% 0 0);
-  --border-subtle: oklch(100% 0 0 / 0.08);
-  --border-default: oklch(100% 0 0 / 0.14);
-  --text-primary: oklch(98% 0 0);
-  --text-secondary: oklch(70% 0 0);
-  --text-muted: oklch(50% 0 0);
-  --accent: oklch(98% 0 0);
-  --accent-hover: oklch(90% 0 0);
-  --success: oklch(65% 0.18 145);
-  --error: oklch(65% 0.18 27);
-  --radius: 12px;
-  --glass-surface: oklch(14% 0 0 / 0.62);
-  --glass-border: oklch(100% 0 0 / 0.2);
+  /* ── Surface ladder (satu keluarga zinc-biru gelap, tanpa flip warm/cool) ── */
+  --bg-base: oklch(10% 0.008 262);        /* zinc-950 tinted */
+  --bg-elevated: oklch(14% 0.008 262);
+  --bg-card: oklch(13.5% 0.008 262);
+  --bg-secondary: oklch(18.5% 0.01 262);
+  --bg-sunken: oklch(8% 0.006 262);
+
+  /* ── Border scale: SATU sistem 3 tingkat, dipakai konsisten semua page ── */
+  --border-subtle: oklch(100% 0 0 / 0.07);
+  --border-default: oklch(100% 0 0 / 0.13);
+  --border-strong: oklch(100% 0 0 / 0.22);
+
+  /* ── Text ladder ── */
+  --text-primary: oklch(97% 0.005 262);
+  --text-secondary: oklch(72% 0.01 262);
+  --text-muted: oklch(52% 0.008 262);
+
+  /* ── Aksen: vermilion-orange (satu aksen, lock seluruh situs) ── */
+  --accent: oklch(71.5% 0.178 43);
+  --accent-hover: oklch(76% 0.175 43);
+  --accent-soft: oklch(71.5% 0.178 43 / 0.14);
+  --accent-border: oklch(71.5% 0.178 43 / 0.35);
+  --accent-ink: oklch(15% 0.02 43);       /* teks di atas tombol aksen */
+
+  --success: oklch(70% 0.16 155);
+  --error: oklch(66% 0.19 25);
+
+  /* ── Shape lock: controls=pill, cards=14px, panels=16px, inner=8px ── */
+  --radius: 14px;
+  --radius-panel: 16px;
+  --radius-inner: 8px;
+
+  --glass-surface: oklch(13% 0.008 262 / 0.7);
+  --glass-border: oklch(100% 0 0 / 0.14);
   --nav-width-rest: min(100vw, 100%);
   --nav-width-active: min(720px, calc(100vw - 28px));
 }
@@ -41,9 +59,17 @@ html, body {
 * { border-color: var(--border-subtle); }
 
 ::selection {
-  background: color-mix(in oklab, var(--accent) 28%, transparent);
+  background: color-mix(in oklab, var(--accent) 30%, transparent);
   color: var(--text-primary);
 }
+
+/* Focus ring aksen konsisten semua interaktif elemen */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible { border-radius: var(--radius-inner); }
 
 html { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--text-primary) 18%, transparent) transparent; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -574,5 +600,117 @@ a:hover { color: var(--accent); }
 .glow-line {
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--border-default) 20%, var(--border-default) 80%, transparent);
+}
+
+/* ══ Page primitives (konsisten antar halaman) ═══════════════════════ */
+
+/* Panel kartu standar: border hairline, radius panel, hover angkat tipis */
+.panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+}
+.panel-hover {
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.panel-hover:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+/* Button: pill, tegas, satu bahasa */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0 1.25rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.25), 0 8px 24px -12px color-mix(in oklab, var(--accent) 60%, transparent);
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.btn-secondary {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+.btn-secondary:hover:not(:disabled) { border-color: var(--border-strong); background: oklch(22% 0.01 262); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+.btn-ghost:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-strong); }
+
+/* Input standar */
+.field {
+  width: 100%;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-default);
+  border-radius: 9999px;
+  color: var(--text-primary);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.field::placeholder { color: var(--text-muted); }
+.field:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Eyebrow label kecil (dipakai hemat, max 1-2 per halaman) */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Hiasan latar: grid halus + glow aksen (pointer-events none) */
+.page-decoration {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.page-decoration::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(oklch(100% 0 0 / 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(100% 0 0 / 0.025) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 75%);
+}
+.page-decoration::after {
+  content: '';
+  position: absolute;
+  top: -30%;
+  left: 50%;
+  width: 720px;
+  height: 420px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, color-mix(in oklab, var(--accent) 9%, transparent), transparent 70%);
+  filter: blur(20px);
 }
 

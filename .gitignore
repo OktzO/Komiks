@@ -12,6 +12,8 @@ coverage/
 .superpowers/
 *.png
 !apps/web/public/og.png
+!apps/web/public/sources/*.png
+!apps/web/public/sources/*.jpg
 .env
 
 # build artefacts

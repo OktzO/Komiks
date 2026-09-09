@@ -6,9 +6,10 @@ const securityHeaders = [
   { key: 'Referrer-Policy', value: 'no-referrer' },
   { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
   // CSP allows next.js inline styles + the image proxy + mangadex/komiku CDNs.
+  // Turnstile (challenges.cloudflare.com): script + frame untuk widget captcha login.
   {
     key: 'Content-Security-Policy',
-    value: "default-src 'self'; img-src 'self' data: https: https://manga-api.oktz.workers.dev https://manga-api-2.tzok5555.workers.dev https://manga-api-3.dwikaoktyffan.workers.dev https://manga-api-4.oktznih.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; connect-src 'self' https://manga-api.oktz.workers.dev https://manga-api-2.tzok5555.workers.dev https://manga-api-3.dwikaoktyffan.workers.dev https://manga-api-4.oktznih.workers.dev https://cloudflareinsights.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+    value: "default-src 'self'; img-src 'self' data: https: https://manga-api.oktz.workers.dev https://manga-api-2.tzok5555.workers.dev https://manga-api-3.dwikaoktyffan.workers.dev https://manga-api-4.oktznih.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://challenges.cloudflare.com; connect-src 'self' https://manga-api.oktz.workers.dev https://manga-api-2.tzok5555.workers.dev https://manga-api-3.dwikaoktyffan.workers.dev https://manga-api-4.oktznih.workers.dev https://cloudflareinsights.com https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
   },
 ];
 

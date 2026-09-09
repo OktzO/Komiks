@@ -72,13 +72,50 @@ function resolveFrontendOrigin(c: Context): string {
   return c.env.ALLOWED_ORIGINS?.split(',')[0]?.trim() ?? '/';
 }
 
+// --- Cloudflare Turnstile ---
+
+// Verify Turnstile token server-side (siteverify). Tanpa secret (local dev /
+// belum diset) verifikasi dilewati — set TURNSTILE_SECRET_KEY di production.
+async function verifyTurnstile(c: Context, token: string | undefined, ip?: string): Promise<boolean> {
+  const secret = c.env.TURNSTILE_SECRET_KEY;
+  if (!secret) return true;
+  if (!token) return false;
+  try {
+    const body = new URLSearchParams({ secret, response: token });
+    if (ip) body.set('remoteip', ip);
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      body,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return false;
+    const j = (await res.json()) as { success?: boolean };
+    return j.success === true;
+  } catch {
+    return false;
+  }
+}
+
 // --- Google OAuth ---
 
 // Initiate Google OAuth: frontend redirects here, we set a signed state cookie
-// (nol KV) and bounce to Google.
+// (nol KV) and bounce to Google. Turnstile token wajib valid dulu (kalau
+// TURNSTILE_SECRET_KEY diset).
 router.get('/google', async (c: Context) => {
   const clientId = c.env.GOOGLE_CLIENT_ID;
   if (!clientId) return c.json({ error: 'google oauth not configured' }, 500);
+
+  // 0. Turnstile gate — tolak sebelum menyentuh Google (hemat rate-limit OAuth,
+  // blok bot massal). Token dikirim via query dari halaman login.
+  const turnstileOk = await verifyTurnstile(
+    c,
+    c.req.query('turnstile_token') ?? undefined,
+    c.req.header('cf-connecting-ip'),
+  );
+  if (!turnstileOk) {
+    return c.json({ error: 'captcha verification failed' }, 403);
+  }
+
   const base = new URL(c.req.url).origin;
   const state = crypto.randomUUID();
   const origin = resolveFrontendOrigin(c);

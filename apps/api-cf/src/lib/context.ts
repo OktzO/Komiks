@@ -13,6 +13,7 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  TURNSTILE_SECRET_KEY?: string;
   ADMIN_PASSWORD_HASH?: string;
    ADMIN_PASSWORD?: string;
    ADMIN_EMAILS?: string;

@@ -24,6 +24,14 @@ const relativeTime = (ts: number): string => {
   return `${Math.floor(d / 86400)}h lalu`;
 };
 
+function BookmarkIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 export default function BookmarksPage() {
   const [items, setItems] = useState<BookmarkRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,84 +78,110 @@ export default function BookmarksPage() {
   const guest = error === 'guest';
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8">
-      <div className="flex items-baseline justify-between mb-4">
-        <h1 className="text-2xl font-semibold">Bookmark</h1>
-        {items && items.length > 0 && !guest && (
-          <button
-            onClick={() => setConfirmOpen(true)}
-            disabled={clearing}
-            className="text-xs text-secondary hover:text-error transition-colors"
-            title="Hapus semua bookmark"
-          >
-            {clearing ? 'Menghapus...' : 'Clear all'}
-          </button>
+    <main className="relative max-w-6xl mx-auto px-4 py-10 md:py-14">
+      <div className="page-decoration" aria-hidden="true" />
+
+      <div className="relative z-10">
+        <header className="flex items-end justify-between gap-4 mb-8">
+          <div>
+            <p className="eyebrow mb-2">Koleksimu</p>
+            <h1 className="font-display text-3xl md:text-4xl font-semibold tracking-tight text-primary">
+              Bookmark
+            </h1>
+            {items && items.length > 0 && (
+              <p className="mt-1.5 text-sm text-secondary">
+                <span className="text-primary font-semibold tabular">{items.length}</span> judul tersimpan
+              </p>
+            )}
+          </div>
+          {items && items.length > 0 && !guest && (
+            <button
+              onClick={() => setConfirmOpen(true)}
+              disabled={clearing}
+              className="btn btn-ghost !min-h-[38px] text-xs text-secondary hover:text-error"
+              title="Hapus semua bookmark"
+            >
+              {clearing ? 'Menghapus…' : 'Hapus semua'}
+            </button>
+          )}
+        </header>
+
+        {guest && (
+          <div className="panel flex flex-col items-center text-center px-6 py-14">
+            <div className="w-12 h-12 rounded-full border border-border-default flex items-center justify-center mb-4 bg-sunken">
+              <BookmarkIcon className="w-5 h-5 text-muted" />
+            </div>
+            <p className="text-primary font-medium mb-1">Masuk untuk lihat bookmark</p>
+            <p className="text-sm text-secondary max-w-sm mb-5">
+              Bookmark tersinkron otomatis antar perangkat lewat akun Google.
+            </p>
+            <Link href="/login" prefetch={false} className="btn btn-primary">Masuk sekarang</Link>
+          </div>
         )}
-      </div>
+        {error && error !== 'guest' && (
+          <div className="text-error text-sm panel px-4 py-3" role="alert">{error}</div>
+        )}
 
-      {guest && (
-        <div className="text-secondary text-sm">
-          Masuk untuk lihat bookmark.{' '}
-          <Link href="/login" prefetch={false} className="text-accent hover:underline">Masuk sekarang</Link>
-        </div>
-      )}
-      {error && error !== 'guest' && <div className="text-error text-sm">{error}</div>}
+        {items === null && !error && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4" aria-busy="true">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} className="aspect-[3/4] skeleton" aria-hidden="true" />
+            ))}
+          </div>
+        )}
 
-      {items === null && !error && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="aspect-[3/4] animate-pulse rounded border border-subtle bg-card" />
-          ))}
-        </div>
-      )}
+        {items && items.length === 0 && !guest && (
+          <div className="panel flex flex-col items-center text-center px-6 py-14">
+            <div className="w-12 h-12 rounded-full border border-border-default flex items-center justify-center mb-4 bg-sunken">
+              <BookmarkIcon className="w-5 h-5 text-muted" />
+            </div>
+            <p className="text-primary font-medium mb-1">Belum ada bookmark</p>
+            <p className="text-sm text-secondary max-w-sm mb-5">
+              Simpan judul favoritmu dengan tombol bookmark di halaman detail.
+            </p>
+            <Link href="/search" prefetch={false} className="btn btn-primary">Cari manga</Link>
+          </div>
+        )}
 
-      {items && items.length === 0 && !guest && (
-        <div className="text-center py-12">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mx-auto text-muted mb-3" aria-hidden="true">
-            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-          </svg>
-          <p className="text-secondary mb-2">Belum ada bookmark.</p>
-          <Link href="/search" prefetch={false} className="text-accent hover:underline">Cari manga</Link>
-        </div>
-      )}
+        {items && items.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-6 anim-slide-up">
+            {items.map((m) => {
+              const source = m.bookmark_source || 'komiku';
+              return (
+                <div key={m.slug} className="group">
+                  <MangaCard
+                    source={source}
+                    manga={{ id: m.external_id || m.slug, title: m.title ?? '', cover: m.cover_image || null, slug: m.slug }}
+                    type={m.type ?? m.status}
+                    sources={m.bookmark_source ? [m.bookmark_source] : undefined}
+                  />
+                  <div className="mt-1.5 text-[10px] text-muted/70">
+                    {m.bookmark_created_at ? `ditambahkan ${relativeTime(m.bookmark_created_at)}` : ''}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-      {items && items.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {items.map((m) => {
-            const source = m.bookmark_source || 'komiku';
-            return (
-              <div key={m.slug} className="group">
-                <MangaCard
-                  source={source}
-                  manga={{ id: m.external_id || m.slug, title: m.title ?? '', cover: m.cover_image || null, slug: m.slug }}
-                  type={m.type ?? m.status}
-                  sources={m.bookmark_source ? [m.bookmark_source] : undefined}
-                />
-                <div className="mt-1 text-[10px] text-muted truncate">{m.title}</div>
-                {m.bookmark_created_at && <div className="text-[10px] text-muted/60">ditambahkan {relativeTime(m.bookmark_created_at)}</div>}
+        {/* Clear-all confirmation — irreversible, dialog eksplisit */}
+        {confirmOpen && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" aria-modal="true" role="dialog" aria-labelledby="clear-all-title">
+            <div className="w-full max-w-sm panel p-6 text-center shadow-[0_24px_64px_-16px_oklch(0%_0_0/0.8)]">
+              <h2 id="clear-all-title" className="text-lg font-semibold text-primary">Hapus semua bookmark?</h2>
+              <p className="text-sm text-secondary mt-2">Semua judul yang tersimpan akan hilang. Tindakan ini tidak bisa dibatalkan.</p>
+              <div className="mt-5 flex gap-2 justify-center">
+                <button onClick={() => setConfirmOpen(false)} disabled={clearing} className="btn btn-ghost !min-h-[40px] text-sm">
+                  Batal
+                </button>
+                <button onClick={clearAll} disabled={clearing} className="btn !min-h-[40px] text-sm bg-error/15 text-error border border-error/30 hover:bg-error/25">
+                  {clearing ? 'Menghapus…' : 'Hapus semua'}
+                </button>
               </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Clear-all confirmation (kept inline to avoid forcing a text-match gate) */}
-      {confirmOpen && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-sm" aria-modal="true" role="dialog">
-          <div className="w-full max-w-sm rounded-2xl bg-card border border-border-default p-6 text-center">
-            <h2 className="text-lg font-semibold text-primary">Hapus semua bookmark?</h2>
-            <p className="text-sm text-secondary mt-2">Tindakan ini tidak bisa dibatalkan.</p>
-            <div className="mt-4 flex gap-2 justify-center">
-              <button onClick={() => setConfirmOpen(false)} disabled={clearing} className="px-4 py-2 text-sm border border-border-subtle rounded-lg hover:bg-bg-secondary">
-                Batal
-              </button>
-              <button onClick={clearAll} disabled={clearing} className="px-4 py-2 text-sm bg-error/10 text-error rounded-lg hover:bg-error/20">
-                {clearing ? 'Menghapus...' : 'Hapus semua'}
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </main>
   );
 }
