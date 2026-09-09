@@ -10,8 +10,12 @@ export default async function LegacyChapter({ params, searchParams }: {
 }) {
   const { chapterId, slug } = await params;
   const sp = await searchParams;
+  // Jangan bungkus redirect dalam try/catch — NEXT_REDIRECT adalah throw yang
+  // harus propagate ke Next.js, bukan error biasa.
+  let r: Awaited<ReturnType<typeof getResolve>> | null = null;
   try {
-    const r = await getResolve(sp.id ?? slug);
-    permanentRedirect(typedChapterUrl(r.type, r.slug, chapterId));
-  } catch { permanentRedirect('/'); }
+    r = await getResolve(sp.id ?? slug);
+  } catch { r = null; }
+  if (!r) permanentRedirect('/');
+  permanentRedirect(typedChapterUrl(r.type, r.slug, chapterId));
 }
