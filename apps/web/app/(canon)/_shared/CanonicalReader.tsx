@@ -6,9 +6,9 @@ import { ReaderSkeleton } from '@/components/Skeleton';
 
 // Canonical chapter reader: getResolve → getChapter(recommended/chosen).
 // ChapterId URL kanonik adalah raw id (typedChapterUrl memangkas prefix
-// `source:`). ReaderShell + URL internalnya masih format lama sementara
-// (Task 5 memigrasikan); slug yang diteruskan ke ReaderShell adalah
-// sourceSlug agar fetch internal (getChapters) tetap jalan.
+// `source:`). Slug yang diteruskan ke ReaderShell adalah sourceSlug agar
+// fetch internal (getChapters) tetap jalan; `type` diteruskan supaya semua
+// URL internal ReaderShell/SourceSwitcher kanonik-typed.
 async function CanonicalReaderContent({ type, slug, chapterId }: {
   type: string;
   slug: string;
@@ -61,6 +61,7 @@ async function CanonicalReaderContent({ type, slug, chapterId }: {
       chapterTitle={chapter.title}
       seriesTitle={series?.title || slug}
       seriesType={series?.type}
+      type={resolved.type}
       pages={pages}
       apiUrl={API_URL}
     />

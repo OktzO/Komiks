@@ -103,6 +103,9 @@ export type ComicType = (typeof VALID_TYPES)[number];
 export const isValidType = (t: string): t is ComicType =>
   (VALID_TYPES as readonly string[]).includes(t);
 
+export const safeType = (t?: string | null): ComicType =>
+  isValidType(t ?? '') ? (t as ComicType) : 'manga';
+
 export const typedUrl = (type: string, slug: string): string =>
   `/${type}/${encodeURIComponent(slug)}`;
 

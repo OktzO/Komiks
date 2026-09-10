@@ -159,8 +159,12 @@ router.post('/history', async (c: Context) => {
 router.get('/history', async (c: Context) => {
   const user = getSessionUserFromContext(c);
   const rows = await queryOnUserOwner<Record<string, unknown>>(c.env, user.id,
-    `SELECT c.* FROM reading_history rh
+    `SELECT c.*, COALESCE(s2.type, s3.type) AS type
+     FROM reading_history rh
      JOIN chapters c ON c.id = rh.chapter_id
+     LEFT JOIN series s2 ON s2.slug = c.series_slug
+     LEFT JOIN manga_source_link msl ON msl.source_slug = c.series_slug
+     LEFT JOIN series s3 ON s3.id = msl.manga_id
      WHERE rh.user_id = ?1 ORDER BY rh.updated_at DESC LIMIT 50`,
     [user.id], 'reading_history');
   c.header('Cache-Control', 'no-store');

@@ -1,11 +1,11 @@
 import Link from 'next/link';
+import { safeType, typedUrl } from '@/lib/api';
 import { SourceBadge } from './SourceBadge';
 import { CoverImage } from './CoverImage';
 import { TypeBadge } from './TypeBadge';
 
 export function MangaCard({
   manga,
-  source = 'komiku',
   sources,
   status,
   type,
@@ -17,7 +17,7 @@ export function MangaCard({
   type?: string | null;
 }) {
   return (
-    <Link href={`/${source}/s/${manga.slug}?id=${manga.id}`} prefetch={false} className="group block">
+    <Link href={typedUrl(safeType(type), manga.slug)} prefetch={false} className="group block">
       <div className="aspect-[3/4] w-full overflow-hidden rounded border border-subtle bg-card relative">
         <CoverImage src={manga.cover} alt={manga.title} title={manga.title} className="h-full w-full" zoom />
         <div className="absolute top-1.5 left-1.5 z-10">

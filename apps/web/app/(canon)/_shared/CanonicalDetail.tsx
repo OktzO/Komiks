@@ -166,7 +166,7 @@ function DetailShell({ series, type, slug, source }: {
           <div className="nav-island flex w-full max-w-md items-center gap-2 rounded-xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.45)]">
             <BookmarkButton slug={slug} title={series.title} cover={series.cover_image} source={source} />
             <Link
-              href={`/${type}/${slug}/${startChapterId}?mangaId=${slug.split('--').pop()}`}
+              href={`/${type}/${slug}/${startChapterId}`}
               prefetch={false}
               className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-white bg-white px-5 text-sm font-semibold text-black hover:opacity-90 transition-opacity"
             >

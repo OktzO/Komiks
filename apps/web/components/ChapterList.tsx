@@ -2,10 +2,17 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { WindowedList } from './WindowedList';
+import { isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
+
+// Type wajib (semua caller pass). Nilai aneh → 'manga' (route kanonik redirect).
+const safeType = (t?: string | null): ComicType =>
+  isValidType(t ?? '') ? (t as ComicType) : 'manga';
 
 interface Ch { id: string; chapter_number: number; title?: string | null }
 
-export function ChapterList({ chapters, source, slug, type }: { chapters: Ch[]; source: string; slug: string; type?: string }) {
+// `source` masih diterima utk kompatibilitas caller, tapi URL chapter kini
+// selalu kanonik-typed.
+export function ChapterList({ chapters, slug, type }: { chapters: Ch[]; source?: string; slug: string; type: string }) {
   const [open, setOpen] = useState(false);
   const [rendered, setRendered] = useState(false);
   // Default "Akhir → Awal": chapter 1 paling akhir. Sort numeric — data API
@@ -34,11 +41,7 @@ export function ChapterList({ chapters, source, slug, type }: { chapters: Ch[]; 
     return () => { document.body.style.overflow = ''; };
   }, [open]);
 
-  const linkHref = (c: Ch) => {
-    const rawId = c.id.includes(':') ? c.id.slice(c.id.lastIndexOf(':') + 1) : c.id;
-    if (type) return `/${type}/${slug}/${rawId}?mangaId=${slug.split('--').pop()}`;
-    return `/${source}/s/${slug}/${rawId}?mangaId=${slug.split('--').pop()}`;
-  };
+  const linkHref = (c: Ch) => typedChapterUrl(safeType(type), slug, c.id);
 
   return (
     <div>

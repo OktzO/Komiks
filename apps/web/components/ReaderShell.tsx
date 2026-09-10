@@ -5,7 +5,13 @@ import Link from 'next/link';
 import { Reader } from './Reader';
 import { SourceSwitcher } from './SourceSwitcher';
 import { WindowedList } from './WindowedList';
-import { getChapters, imgOriginFor } from '@/lib/api';
+import { getChapters, imgOriginFor, isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
+
+// Canonical URL emisi: type tak dikenal → fallback 'manga' (route kanonik
+// redirect ke type benar). Definisi lokal — lib/api.ts tak boleh diedit di
+// task ini.
+const safeType = (t?: string | null): ComicType =>
+  isValidType(t ?? '') ? (t as ComicType) : 'manga';
 
 interface PageUrl {
   proxyUrl: string;
@@ -33,6 +39,7 @@ export function ReaderShell({
   chapterTitle,
   seriesTitle,
   seriesType,
+  type,
   pages,
   apiUrl,
 }: {
@@ -43,6 +50,7 @@ export function ReaderShell({
   chapterTitle?: string | null;
   seriesTitle: string;
   seriesType?: string | null;
+  type?: string;
   pages: PageUrl[];
   apiUrl: string;
 }) {
@@ -136,7 +144,7 @@ export function ReaderShell({
   };
   const toggleAutoScroll = () => setAutoScroll((a) => !a);
 
-  const chapterUrl = (id: string) => `/${source}/s/${slug}/${id}`;
+  const chapterUrl = (id: string) => typedChapterUrl(safeType(type), slug, id);
   // Next/prev dari daftar chapter asli (bukan tebakan slug-chapter-N):
   // tetangga terdekat berdasarkan chapter_number, tahan gap + urutan apa pun.
   const nextCh = chapters
@@ -254,6 +262,7 @@ export function ReaderShell({
                     chapterNumber={chapterNumber}
                     apiUrl={apiUrl}
                     mode="reader"
+                    type={type}
                   />
                   <p className="px-1 pt-2 text-[11px] text-muted">Halaman {activeIdx + 1} / {pages.length}</p>
                 </div>
@@ -317,6 +326,7 @@ export function ReaderShell({
                 chapterNumber={chapterNumber}
                 apiUrl={apiUrl}
                 embedded
+                type={type}
               />
               <div className="sheet-list -mx-1 mt-2">
                 {chapters.length === 0 ? (
@@ -328,7 +338,7 @@ export function ReaderShell({
                     return (
                       <Link
                         key={c.id}
-                        href={`/${source}/s/${slug}/${c.id}`}
+                        href={chapterUrl(c.id)}
                         onClick={() => setSheetOpen(false)}
                         className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-sm transition-colors ${
                           isCurrent

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { getAuthApiUrl } from '@/lib/api';
+import { getAuthApiUrl, safeType, typedChapterUrl } from '@/lib/api';
 
 interface HistoryItem {
   id: string;
@@ -11,6 +11,7 @@ interface HistoryItem {
   series_title?: string | null;
   cover_image?: string | null;
   source?: string;
+  type?: string | null;
   updated_at?: number;
 }
 
@@ -76,8 +77,7 @@ export function ContinueReadingRail() {
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
         {history.map((item) => {
           const rawId = item.id.includes(':') ? item.id.slice(item.id.lastIndexOf(':') + 1) : item.id;
-          const source = item.source || 'komiku';
-          const href = `/${source}/s/${item.series_slug}/${rawId}`;
+          const href = typedChapterUrl(safeType(item.type), item.series_slug, rawId);
 
           return (
             <Link

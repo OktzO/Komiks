@@ -2,6 +2,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { SOURCE_ORDER, sourceLabel } from './SourceBadge';
+import { isValidType, typedChapterUrl, typedUrl, type ComicType } from '@/lib/api';
+
+// Type tak dikenal/absen → 'manga' (route kanonik redirect ke type benar).
+const safeType = (t?: string | null): ComicType =>
+  isValidType(t ?? '') ? (t as ComicType) : 'manga';
 
 // Source switcher. Two modes:
 // - 'detail': a "Source" button under the manga title. Tap → dropdown panel
@@ -160,17 +165,18 @@ export function SourceSwitcher({
     }
     if (mode === 'detail') {
       if (source === currentSource) { setOpen(false); return; }
-      if (type && canonicalSlug) {
-        router.push(`/${type}/${encodeURIComponent(canonicalSlug)}`);
-        return;
-      }
-      router.push(`/${source}/s/${encodeURIComponent(link.sourceSlug)}?id=${encodeURIComponent(link.sourceSlug)}`);
+      router.push(typedUrl(safeType(type), canonicalSlug ?? link.sourceSlug));
     } else {
       if (source === currentSource) return;
       // Bawa ke chapter yang sama di source lain. Kalau tidak ada chapter
       // number (detail flow), mendarat di halaman detail source tersebut.
-      const base = `/${source}/s/${encodeURIComponent(link.sourceSlug)}`;
-      router.push(chapterNumber > 0 ? `${base}/${encodeURIComponent(link.sourceSlug)}-chapter-${chapterNumber}?id=${encodeURIComponent(link.sourceSlug)}` : `${base}?id=${encodeURIComponent(link.sourceSlug)}`);
+      const slug = canonicalSlug ?? link.sourceSlug;
+      const t = safeType(type);
+      router.push(
+        chapterNumber > 0
+          ? typedChapterUrl(t, slug, `${link.sourceSlug}-chapter-${chapterNumber}`)
+          : typedUrl(t, slug)
+      );
     }
   };
 

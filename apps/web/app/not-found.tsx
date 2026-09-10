@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { fetchHomepage } from '@/lib/api';
+import { fetchHomepage, safeType, typedUrl } from '@/lib/api';
 
 /* ── Terminal log lines — animasi dikte, baris demi baris ────────────────── */
 const LOG = [
@@ -23,7 +23,7 @@ const QUICK_LINKS = [
   { href: '/status', label: 'Status Sumber' },
 ];
 
-type Suggest = { slug: string; title: string; source: string; cover_image?: string | null; cover?: string | null };
+type Suggest = { slug: string; title: string; type?: string | null; cover_image?: string | null; cover?: string | null };
 
 const itemOf = (m: any) => m.data ?? m;
 
@@ -43,7 +43,7 @@ export default function NotFound() {
           .map((m: any) => ({
             slug: m.slug,
             title: m.title,
-            source: Array.isArray(m.sources) && m.sources.includes('komiku') ? 'komiku' : (m.source ?? 'komiku'),
+            type: m.type ?? null,
             cover_image: m.cover_image ?? m.cover ?? null,
           }));
         // Acak → tidak selalu 5 judul yang sama tiap kali kena 404.
@@ -193,8 +193,8 @@ export default function NotFound() {
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
               {suggestions.map((s) => (
                 <Link
-                  key={`${s.source}-${s.slug}`}
-                  href={`/${s.source}/s/${s.slug}?id=${s.slug}`}
+                  key={s.slug}
+                  href={typedUrl(safeType(s.type), s.slug)}
                   prefetch={false}
                   className="group block"
                 >

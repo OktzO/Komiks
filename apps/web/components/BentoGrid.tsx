@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { safeType, typedUrl } from '@/lib/api';
 import { CoverImage } from './CoverImage';
 import { TypeBadge } from './TypeBadge';
 import { SourceBadge } from './SourceBadge';
@@ -37,8 +38,6 @@ export function BentoGrid({ items }: BentoGridProps) {
   const featured = normalized[0];
   const sideItems = normalized.slice(1, 5);
 
-  const featuredSource = featured.sources?.includes('komiku') ? 'komiku' : featured.source;
-
   return (
     <section className="mb-14">
       <div className="flex items-baseline justify-between mb-5">
@@ -54,7 +53,7 @@ export function BentoGrid({ items }: BentoGridProps) {
         {/* Main Large Bento Item (7 Cols on desktop) */}
         <div className="lg:col-span-7">
           <Link
-            href={`/${featuredSource}/s/${featured.slug}?id=${featured.slug}`}
+            href={typedUrl(safeType(featured.type), featured.slug)}
             prefetch={false}
             className="group block h-full bento-featured-card relative min-h-[320px] sm:min-h-[380px] p-6 flex flex-col justify-end"
           >
@@ -114,11 +113,10 @@ export function BentoGrid({ items }: BentoGridProps) {
         {/* 4 Secondary Bento Items (5 Cols on desktop, 2x2 grid) */}
         <div className="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           {sideItems.map((item, idx) => {
-            const itemSource = item.sources?.includes('komiku') ? 'komiku' : item.source;
             return (
               <Link
                 key={`${item.source}-${item.slug}`}
-                href={`/${itemSource}/s/${item.slug}?id=${item.slug}`}
+                href={typedUrl(safeType(item.type), item.slug)}
                 prefetch={false}
                 className="group bento-card p-3.5 flex flex-col justify-between"
               >

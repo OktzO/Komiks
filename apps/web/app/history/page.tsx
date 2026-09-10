@@ -1,9 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { getAuthApiUrl } from '@/lib/api';
+import { getAuthApiUrl, isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
 
-type HistoryChapter = { id: string; series_slug: string; chapter_number: number; title?: string | null };
+// History API kirim `type` per row (nullable) — lama/legacy row → 'manga'.
+const safeType = (t?: string | null): ComicType =>
+  isValidType(t ?? '') ? (t as ComicType) : 'manga';
+
+type HistoryChapter = { id: string; series_slug: string; chapter_number: number; title?: string | null; type?: string | null };
 
 function HistoryIcon({ className }: { className?: string }) {
   return (
@@ -93,26 +97,23 @@ export default function HistoryPage() {
 
         {chapters && chapters.length > 0 && (
           <div className="panel divide-y divide-border-subtle overflow-hidden anim-slide-up">
-            {chapters.map((c) => {
-              const rawId = c.id.includes(':') ? c.id.slice(c.id.lastIndexOf(':') + 1) : c.id;
-              return (
-                <Link
-                  key={c.id}
-                  href={`/komiku/s/${c.series_slug}/${rawId}`}
-                  className="flex items-center justify-between gap-4 px-5 py-3.5 text-sm transition-colors hover:bg-elevated"
-                >
-                  <span className="text-primary font-medium truncate">
-                    Ch. <span className="tabular">{c.chapter_number}</span>{c.title ? <span className="text-secondary font-normal"> — {c.title}</span> : ''}
-                  </span>
-                  <span className="flex items-center gap-1.5 text-xs text-muted shrink-0">
-                    Lanjut
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden="true">
-                      <path d="m9 18 6-6-6-6" />
-                    </svg>
-                  </span>
-                </Link>
-              );
-            })}
+            {chapters.map((c) => (
+              <Link
+                key={c.id}
+                href={typedChapterUrl(safeType(c.type), c.series_slug, c.id)}
+                className="flex items-center justify-between gap-4 px-5 py-3.5 text-sm transition-colors hover:bg-elevated"
+              >
+                <span className="text-primary font-medium truncate">
+                  Ch. <span className="tabular">{c.chapter_number}</span>{c.title ? <span className="text-secondary font-normal"> — {c.title}</span> : ''}
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-muted shrink-0">
+                  Lanjut
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </span>
+              </Link>
+            ))}
           </div>
         )}
       </div>

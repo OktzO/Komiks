@@ -1,5 +1,5 @@
 import { SourceBadge } from '@/components/SourceBadge';
-import { searchMerged, type MergedManga } from '@/lib/api';
+import { searchMerged, safeType, typedUrl, type MergedManga } from '@/lib/api';
 import Link from 'next/link';
 import { Suspense } from 'react';
 
@@ -55,10 +55,9 @@ function EmptyState({ q }: { q: string }) {
 }
 
 function ResultRow({ m }: { m: MergedManga }) {
-  const source = m.sources?.includes('komiku') ? 'komiku' : m.source;
   return (
     <Link
-      href={`/${source}/s/${m.slug}?id=${m.slug}`}
+      href={typedUrl(safeType(m.type), m.slug)}
       prefetch={false}
       className="group flex gap-4 p-3 panel panel-hover items-center"
     >

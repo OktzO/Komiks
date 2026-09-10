@@ -2,7 +2,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
-import { fetchMe, apiGet, roleLabel, type AuthUser } from '@/lib/api';
+import { fetchMe, apiGet, roleLabel, isValidType, typedUrl, type AuthUser, type ComicType } from '@/lib/api';
+
+// Admin bookmarks API belum kirim `type` — safeType(undefined) → '/manga'
+// (route kanonik redirect ke type benar). Field opsional siap saat API nambah.
+const safeType = (t?: string | null): ComicType =>
+  isValidType(t ?? '') ? (t as ComicType) : 'manga';
 
 type UserDetail = {
   id: number;
@@ -19,6 +24,7 @@ type BookmarkRow = {
   title: string | null;
   cover_image: string | null;
   added_at: number;
+  type?: string | null;
 };
 
 function formatDate(ts: number | null): string {
@@ -195,7 +201,7 @@ export default function AdminUserDetailPage() {
                     )}
                     <div className="min-w-0 flex-1">
                       <Link
-                        href={`/komiku/s/${b.series_slug}`}
+                        href={typedUrl(safeType(b.type), b.series_slug)}
                         className="text-sm text-primary hover:text-accent transition-colors truncate block"
                       >
                         {b.title || b.series_slug}

@@ -1,4 +1,4 @@
-import { fetchHomepage } from '@/lib/api';
+import { fetchHomepage, safeType, typedUrl } from '@/lib/api';
 import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
 import { TypeBadge } from '@/components/TypeBadge';
@@ -111,11 +111,10 @@ async function HomeFeed() {
           <div className="grid md:grid-cols-2 gap-3.5">
             {updates.map((m) => {
               const item = itemOf(m);
-              const source = (m.sources?.includes('komiku') ?? item.sources?.includes('komiku')) ? 'komiku' : item.source;
               return (
                 <Link
                   key={`${item.source}-${item.slug}`}
-                  href={`/${source}/s/${item.slug}?id=${item.slug}`}
+                  href={typedUrl(safeType(item.type), item.slug)}
                   prefetch={false}
                   className="bento-card flex items-center gap-3.5 p-3 group hover:border-border-default transition-all"
                 >
