@@ -16,7 +16,7 @@ declare global {
 }
 
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
-const TURNSTILE_SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+const TURNSTILE_SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad';
 
 function Turnstile({ onToken }: { onToken: (token: string | null) => void }) {
   const holder = useRef<HTMLDivElement>(null);
