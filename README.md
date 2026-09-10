@@ -211,7 +211,7 @@ Komiks/
 
 - URL halaman satu-satunya: `/manga|manhwa|manhua/{slug}` — route lama `/{source}/s/*` **dihapus total** (404).
 - Halaman detail streaming: shell render dulu, chapter + source di-stream via Suspense; auto default source.
-- Endpoint baru `GET /api/resolve/:slug` (KV two-tier + enrich background 4s budget + singleflight pages).
+- Endpoint baru `GET /api/resolve/:slug` (KV two-tier + enrich background 4s budget + singleflight pages). Slug belum ter-index → live-scrape fallback + auto-index ke D1 + negative cache 5 menit.
 - Semua link internal typed (`typedUrl`/`typedChapterUrl`/`safeType`); query `?id=`/`?mangaId=` dihapus.
 - Turnstile login gate (widget explicit render + `onload=` param; verify server-side di `GET /auth/google`).
 - API `GET /history` kini menyertakan `type` per row.
