@@ -85,3 +85,9 @@ cd apps/web && npx next dev --port 3000
 - Rate limit 60 req/min per IP via in-memory Map per Worker isolate
 - Cron health-check + B2 eviction jalan hourly di akun-1 (`EVICTION_OWNER=1`)
 
+
+## 8. Catatan opsional (2026-09-10)
+- **akun-1 sengaja minim secret** (hanya `ALLOWED_ORIGINS` + `TURNSTILE_SECRET_KEY`) — akun-1 nopang web (`manga-web`) juga, jadi dijaga hemat. Login/B2 yang kena akun-1 akan fail ke worker lain (500 → failover) — by design, jangan dianggap gap.
+- **Token CF tipe `cfut_`** tidak bisa POST (termasuk `wrangler secret put` → auth 10000/10405). Workaround: PUT raw API sebagai upsert:
+  `curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data '{"name":"SECRET","text":"...","type":"secret_text"}' .../workers/scripts/<name>/secrets`
+- Deploy mapping: `wrangler.toml`=akun1, `wrangler.origin.toml`=akun2, `wrangler.origin3.toml`=akun3, `wrangler.origin4.toml`=akun4. Web deploy butuh Node 22 (wrangler 4).
