@@ -1,7 +1,6 @@
 // KV-backed B2 usage tracker. Each account has a counter key `b2:usage:<idx>`
-// holding JSON `{ bytes: number; updatedAt: number }`. Usage is additive +
-// occasionally reconciled from native B2 API by the cron (Task 15/16).
-import { resolveB2Accounts } from './b2Config';
+// holding JSON `{ bytes: number; updatedAt: number }`. Usage is additive;
+// source-of-truth = KV + tabel b2_usage global.
 import type { Context, Env } from './context';
 import { writeWithFallback } from './dbWrite';
 import { internalExec, internalQuery } from './peers';
@@ -21,8 +20,6 @@ export type UsageKv = {
   put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
 };
 
-export type B2Account = { keyId: string; appKey: string; bucket: string };
-
 export const DEFAULT_QUOTA_BYTES = 10 * 1024 * 1024 * 1024; // 10 GiB per account
 
 export const quotaBytes = (env: { B2_QUOTA_BYTES?: string }): number =>
@@ -39,12 +36,47 @@ export const setB2Usage = async (kv: UsageKv, idx: number, bytes: number): Promi
   await kv.put(key(idx), JSON.stringify({ bytes, updatedAt: Date.now() }));
 };
 
-export const addB2Usage = async (kv: UsageKv, idx: number, delta: number): Promise<number> => {
-  const current = await getB2Usage(kv, idx);
-  const bytes = current + delta;
-  await setB2Usage(kv, idx, bytes);
-  return bytes;
+// ── Batch flush (ops A) ────────────────────────────────────────────────────
+// addB2Usage lama: KV GET+PUT per gambar (level request) → kuota KV write
+// free 1.000/hari habis untuk < 100 chapter cold/hari. Kini delta diakumulasi
+// di memori isolate dan di-flush maksimal 1×/FLUSH_MS. Akurasi pemakaian
+// maximal tertunda FLUSH_MS saat isolate mati / request sepi — aman karena
+// threshold eviction 80% (≈2GB longgar di bawah 10GB).
+const FLUSH_MS = 60_000;
+const pendingKv = new Map<number, number>();
+const knownKv = new Map<number, number>(); // nilai terakhir yang diketahui (KV + flush)
+let lastKvFlush = 0;
+let kvFlushBusy = false;
+
+const flushKvUsage = async (kv: UsageKv): Promise<void> => {
+  if (kvFlushBusy || pendingKv.size === 0 || Date.now() - lastKvFlush < FLUSH_MS) return;
+  kvFlushBusy = true;
+  lastKvFlush = Date.now();
+  try {
+    for (const [idx, delta] of [...pendingKv]) {
+      pendingKv.delete(idx);
+      const total = (await getB2Usage(kv, idx)) + delta;
+      await setB2Usage(kv, idx, total);
+      knownKv.set(idx, total);
+    }
+  } catch {
+    // KV put gagal → delta yang sedang diproses hilang (drift kecil).
+    // Diterima: blokir user request demi counter tidak sebanding.
+  } finally {
+    kvFlushBusy = false;
+  }
 };
+
+export const addB2Usage = async (kv: UsageKv, idx: number, delta: number): Promise<number> => {
+  pendingKv.set(idx, (pendingKv.get(idx) ?? 0) + delta);
+  await flushKvUsage(kv); // hanya menulis KV bila jendela flush tiba
+  return (knownKv.get(idx) ?? 0) + (pendingKv.get(idx) ?? 0);
+};
+
+// Dengan batching, getB2Usage bisa tertunda FLUSH_MS — include pending lokal
+// agar deteksi "akun nyaris penuh" (uploadToStorage) tidak kebas.
+export const getB2UsageLive = async (kv: UsageKv, idx: number): Promise<number> =>
+  (await getB2Usage(kv, idx)) + (pendingKv.get(idx) ?? 0);
 
 export const usageRatio = async (
   env: { B2_QUOTA_BYTES?: string },
@@ -53,68 +85,39 @@ export const usageRatio = async (
 ): Promise<number> => {
   const quota = quotaBytes(env);
   if (quota <= 0) return 0;
-  return (await getB2Usage(kv, idx)) / quota;
+  return (await getB2UsageLive(kv, idx)) / quota;
 };
 
-// Native B2 API usage (b2_authorize_account → b2_list_buckets).
-// list_buckets tidak mengembalikan bytes per-bucket; KV aditif tetap
-// source-of-truth. Fungsi ini hanya verifikasi kredensial + bucket.
-export const b2NativeUsage = async (b2: B2Account): Promise<{ fileCount: number; bytes: number } | null> => {
-  try {
-    const authRes = await fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
-      headers: { Authorization: `Basic ${btoa(`${b2.keyId}:${b2.appKey}`)}` },
-    });
-    if (!authRes.ok) return null;
-    const auth = (await authRes.json()) as {
-      accountId: string;
-      authorizationToken: string;
-      apiUrl: string;
-      apiInfo?: { storageApi?: { apiUrl?: string } };
-    };
-    const accountId = auth.accountId;
-    const authorizationToken = auth.authorizationToken;
-    const apiUrl = auth.apiUrl || auth.apiInfo?.storageApi?.apiUrl;
-    if (!accountId || !apiUrl || !authorizationToken) return null;
-    const listRes = await fetch(`${apiUrl}/b2api/v3/b2_list_buckets`, {
-      method: 'POST',
-      headers: { Authorization: authorizationToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId }),
-    });
-    if (!listRes.ok) return null;
-    const list = (await listRes.json()) as { buckets?: Array<{ bucketName: string; bucketId: string }> };
-    const bucket = list.buckets?.find((b) => b.bucketName === b2.bucket);
-    if (!bucket) return null;
-    // Bucket ada + kredensial valid, tapi bytes akurat tidak tersedia tanpa
-    // listing semua objek → kembalikan null agar caller TIDAK overwrite KV.
-    return null;
-  } catch {
-    return null;
-  }
-};
+// Dihapus: b2NativeUsage/syncB2UsageFromBuckets (cron). B2 list_buckets tidak
+// mengembalikan bytes per-bucket → fungsi selalu return null, hanya membuang
+// 2 HTTP request per akun per jam. KV aditif + tabel b2_usage global tetap
+// source-of-truth; rekonsiliasi bytes asli butuh b2_list_file_versions penuh
+// (Class C mahal) — tak sebanding untuk free tier.
 
-export const syncB2UsageFromBuckets = async (env: {
-  B2_CONFIG?: string;
-  B2_ACCOUNTS?: string;
-  CACHE_KV: UsageKv;
-}): Promise<void> => {
-  const accounts = resolveB2Accounts(env.B2_CONFIG, env.B2_ACCOUNTS);
-  for (let i = 0; i < accounts.length; i++) {
-    const usage = await b2NativeUsage(accounts[i]).catch(() => null);
-    if (usage && typeof usage.bytes === 'number' && usage.bytes > 0) {
-      await setB2Usage(env.CACHE_KV, i, usage.bytes);
-    }
-  }
-};
+// Global b2_usage table: dibatch sama dengan timer yang sama (ops A).
+// SQL ON CONFLICT menambah (bytes + delta), jadi akumulasi delta aman.
+const pendingGlobal = new Map<string, number>();
+let lastGlobalFlush = 0;
+let globalFlushBusy = false;
 
 export const addB2UsageGlobal = async (c: Context, accountName: string, delta: number): Promise<void> => {
+  pendingGlobal.set(accountName, (pendingGlobal.get(accountName) ?? 0) + delta);
+  if (globalFlushBusy || pendingGlobal.size === 0 || Date.now() - lastGlobalFlush < FLUSH_MS) return;
+  globalFlushBusy = true;
+  lastGlobalFlush = Date.now();
   try {
-    await writeWithFallback(
-      c,
-      'b2_usage',
-      'INSERT INTO b2_usage (account_name, bytes, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_name) DO UPDATE SET bytes = b2_usage.bytes + excluded.bytes, updated_at = excluded.updated_at',
-      [accountName, delta, Math.floor(Date.now() / 1000)]
-    );
-  } catch {}
+    for (const [name, d] of [...pendingGlobal]) {
+      pendingGlobal.delete(name);
+      await writeWithFallback(
+        c,
+        'b2_usage',
+        'INSERT INTO b2_usage (account_name, bytes, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_name) DO UPDATE SET bytes = b2_usage.bytes + excluded.bytes, updated_at = excluded.updated_at',
+        [name, d, Math.floor(Date.now() / 1000)]
+      ).catch(() => {});
+    }
+  } finally {
+    globalFlushBusy = false;
+  }
 };
 
 export const getB2UsageGlobal = async (c: Context, accountName: string): Promise<number | null> => {

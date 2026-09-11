@@ -66,7 +66,10 @@ const makeLimiter = (limit: number, window: number): MiddlewareHandler<{ Binding
 };
 
 export const rateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  if (c.req.path.startsWith('/api/_internal')) return next();
+  // /api/_internal + /api/admin punya limiter sendiri; bucket key dipakai
+  // bersama antar limiter, jadi tanpa skip ini request admin terhitung 2×
+  // (600/min lalu 60/min) → admin tertahan di 60/min.
+  if (c.req.path.startsWith('/api/_internal') || c.req.path.startsWith('/api/admin')) return next();
   return makeLimiter(60, 60)(c, next);
 };
 export const rateLimitIdentify: MiddlewareHandler<{ Bindings: Env }> = makeLimiter(10, 60);

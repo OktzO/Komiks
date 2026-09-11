@@ -313,7 +313,7 @@ const readStoredPageRowsCached = async (
   return rows;
 };
 
-// LRU touch must land on the owner D1 too (the row lives there). Best-effort.
+// LRU touch per halaman (dipakai /img, disampling — lihat imgRouter). Best-effort.
 const touchOwnerPage = async (c: Context, chapterId: string, pageNo: number): Promise<void> => {
   const owner = ownerFor(c.env, chapterId);
   if (owner.self) {
@@ -322,6 +322,23 @@ const touchOwnerPage = async (c: Context, chapterId: string, pageNo: number): Pr
   }
   const sql = 'UPDATE chapter_pages SET last_access = ?1 WHERE chapter_id = ?2 AND page_number = ?3';
   const params = [Math.floor(Date.now() / 1000), chapterId, pageNo];
+  const ok = await internalExec(c.env, owner.url, { sql, params, table: 'chapter_pages' }).catch(() => false);
+  if (!ok) c.executionCtx.waitUntil(enqueueOutbox(c.env, owner.url, 'chapter_pages', sql, params));
+};
+
+// Batch LRU touch: 1 query untuk seluruh chapter (semua halaman 1 chapter
+// pasti di owner D1 yang sama — sharding key = chapterId). Menggantikan
+// loop per-halaman (N writes per chapter view → 1 write). Presisi LRU
+// per-halaman dikorbankan ke per-chapter; eviction tetap benar karena yang
+// diperhatikan hanyalah "kapan chapter terakhir dibaca".
+const touchOwnerChapter = async (c: Context, chapterId: string): Promise<void> => {
+  const sql = 'UPDATE chapter_pages SET last_access = ?1 WHERE chapter_id = ?2';
+  const params = [Math.floor(Date.now() / 1000), chapterId];
+  const owner = ownerFor(c.env, chapterId);
+  if (owner.self) {
+    await c.env.DB.prepare(sql).bind(...params).run().catch(() => {});
+    return;
+  }
   const ok = await internalExec(c.env, owner.url, { sql, params, table: 'chapter_pages' }).catch(() => false);
   if (!ok) c.executionCtx.waitUntil(enqueueOutbox(c.env, owner.url, 'chapter_pages', sql, params));
 };
@@ -342,7 +359,10 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
     const accountIdx = -(i + 1);
     const ratio = await usageRatio(c.env, c.env.CACHE_KV, i).catch(() => 0);
     if (ratio > 0.9) {
+      // Jangan upload ke akun nyaris penuh (B2 melewati 10GB free → kena tagih).
+      // Trigger eviction di background, lalu coba akun berikutnya.
       c.executionCtx.waitUntil(evictStaleStorage(c.env).catch(() => {}));
+      continue;
     }
     try {
       const res = await b2PutObject(b2, b2Key, opts.body as ArrayBuffer, opts.contentType);
@@ -527,23 +547,31 @@ export const enrichChapterCounts = async (
       return { source: t.source, sourceSlug: t.sourceSlug, count: chapters.length, lastScrapedAt: Math.floor(Date.now() / 1000) };
     })
   );
-  let changed = false;
+  // Batch upsert: env.DB.batch = 1 subrequest D1 (vs N upsert terpisah).
+  // Penting di Workers Free (50 subrequest/invocation) — route /sources
+  // sudah mahal karena live-resolve + auto-index.
+  const upsertStmts = [];
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
     const hit = counted[i];
     if (hit?.status === 'fulfilled') {
-      await db.upsertSourceLink({
-        mangaId,
-        source: t.source,
-        sourceSlug: t.sourceSlug,
-        hasChapterList: 1,
-        chapterCount: hit.value.count,
-        lastScrapedAt: hit.value.lastScrapedAt,
-      });
-      changed = true;
+      upsertStmts.push(
+        c.env.DB.prepare(
+          `INSERT INTO manga_source_link (manga_id, source, source_slug, has_chapter_list, chapter_count, last_scraped_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+           ON CONFLICT(source, source_slug) DO UPDATE SET
+             manga_id = excluded.manga_id,
+             has_chapter_list = excluded.has_chapter_list,
+             chapter_count = excluded.chapter_count,
+             last_scraped_at = excluded.last_scraped_at`
+        ).bind(mangaId, t.source, t.sourceSlug, 1, hit.value.count, hit.value.lastScrapedAt)
+      );
     }
   }
-  if (changed) await c.env.CACHE_KV.delete(cacheKey).catch(() => {});
+  if (upsertStmts.length > 0) {
+    await c.env.DB.batch(upsertStmts).catch(() => []);
+    await c.env.CACHE_KV.delete(cacheKey).catch(() => {});
+  }
 };
 
 // Aggregated sources for a manga: GET /api/reader/:source/series/:sourceId/sources
@@ -675,24 +703,25 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
               const r = await c.env.DB.prepare('SELECT id FROM series WHERE slug = ?1 LIMIT 1').bind(slug).first<{ id: number }>();
               if (!r) return null;
               // Seed link rows (count 0 dulu), lalu enrich real counts (gate KV).
-              await db.upsertSourceLink({
-                mangaId: r.id,
-                source,
-                sourceSlug: sourceId,
-                hasChapterList: 1,
-                chapterCount: 0,
-                lastScrapedAt: Math.floor(Date.now() / 1000),
-              });
-              for (const rl of resolved) {
-                await db.upsertSourceLink({
-                  mangaId: r.id,
-                  source: rl.source,
-                  sourceSlug: rl.sourceSlug,
-                  hasChapterList: rl.hasChapterList ? 1 : 0,
-                  chapterCount: rl.chapterCount,
-                  lastScrapedAt: Math.floor(Date.now() / 1000),
-                });
-              }
+              // Batch: N link = 1 subrequest (bukan N) — jaga bawah 50/invocation.
+              const now = Math.floor(Date.now() / 1000);
+              const seedRows = [
+                { src: source, slug: sourceId, hasList: 1, count: 0 },
+                ...resolved.map((rl) => ({ src: rl.source, slug: rl.sourceSlug, hasList: rl.hasChapterList ? 1 : 0, count: rl.chapterCount })),
+              ];
+              await c.env.DB.batch(
+                seedRows.map((row) =>
+                  c.env.DB.prepare(
+                    `INSERT INTO manga_source_link (manga_id, source, source_slug, has_chapter_list, chapter_count, last_scraped_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(source, source_slug) DO UPDATE SET
+                       manga_id = excluded.manga_id,
+                       has_chapter_list = excluded.has_chapter_list,
+                       chapter_count = excluded.chapter_count,
+                       last_scraped_at = excluded.last_scraped_at`
+                  ).bind(r.id, row.src, row.slug, row.hasList, row.count, now)
+                )
+              ).catch(() => []);
               c.executionCtx.waitUntil(
                 withBudget(enrichChapterCounts(c, r.id, cacheKey), 4000, undefined).catch(() => {})
               );
@@ -772,11 +801,10 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
         return { proxyUrl: `${proxyBase}/${pageNo}`, imgUrl: `${imgBase}/${pageNo}`, b2Url: null };
       }),
     };
-    // LRU touch: update last_access untuk pages yang diakses (background).
+    // LRU touch: 1 write batch untuk seluruh chapter (bukan loop per halaman —
+    // N writes/view menguras kuota D1 write 100rb/hari di free tier).
     c.executionCtx.waitUntil((async () => {
-      for (let i = 0; i < pages.length; i++) {
-        await touchOwnerPage(c, chapterId, i + 1).catch(() => {});
-      }
+      await touchOwnerChapter(c, chapterId).catch(() => {});
       // Eviction trigger: every 100th chapter detail request, run LRU evict.
       // eviction:tick gets a 24h TTL so the key doesn't persist forever.
       const tickRaw = await c.env.CACHE_KV.get('eviction:tick').catch(() => '0');
@@ -993,7 +1021,11 @@ imgRouter.get('/:source/:chapterId/:pageNo', async (c: Context) => {
               const cache = (caches as unknown as { default: Cache }).default;
               c.executionCtx.waitUntil(cache.put(c.req.raw, resp.clone()).catch(() => {}));
             }
-            c.executionCtx.waitUntil(touchOwnerPage(c, chapterId, n).catch(() => {}));
+            // Sampling 1/10: LRU last_access tidak butuh presisi per hit;
+            // 1 write per ~10 view gambar cukup untuk tujuan eviction.
+            if (Math.random() < 0.1) {
+              c.executionCtx.waitUntil(touchOwnerPage(c, chapterId, n).catch(() => {}));
+            }
             return resp;
           }
         } catch { /* B2 down/limit → fallback ke source proxy */ }

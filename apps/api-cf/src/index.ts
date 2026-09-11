@@ -21,7 +21,7 @@ import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
 import { evictStaleStorage, cleanupTempObjects } from './lib/storageEviction';
-import { syncB2UsageFromBuckets, getB2Usage } from './lib/b2Usage';
+import { getB2Usage } from './lib/b2Usage';
 import { writeWithFallback, flushOutbox } from './lib/dbWrite';
 import { recordSecurityEvent } from './lib/securityEvents';
 import { fetchHomepageFromSources } from './routes/homepage';
@@ -154,7 +154,6 @@ export default {
       if (lock) return;
       await kv.put('eviction:lock', '1', { expirationTtl: 600 }).catch(() => {});
       try {
-        await syncB2UsageFromBuckets(env as Env);
         const tmp = await cleanupTempObjects(env as Env).catch(() => ({ cleaned: 0 }));
         console.log(`[cron] temp objects cleaned: ${tmp.cleaned}`);
         const res = await evictStaleStorage(env as Env);
