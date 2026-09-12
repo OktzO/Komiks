@@ -36,8 +36,18 @@ export const loadCanonical = cache(async (slug: string): Promise<{ resolved: Res
     ? { ...resolved, source: picked.source, sourceSlug: picked.sourceSlug }
     : resolved;
 
-  const detailPromise = getSeriesDetail(effective.source, effective.sourceSlug, 'id');
-  const chaptersPromise = getChapters(effective.source, effective.sourceSlug, 'id').catch(() => []);
-  const sourcesPromise = getMangaSources(effective.source, effective.sourceSlug).catch(() => null);
-  return { resolved: effective, detailPromise, chaptersPromise, sourcesPromise };
+  // Probe: source pilihan user bisa sedang down/502 (Komiku sering kena
+  // DDoS-guard). Kalau gagal → jangan 404: pakai source default dari API.
+  const probe = await getSeriesDetail(effective.source, effective.sourceSlug, 'id').catch(() => null);
+  const fallbackToDefault =
+    probe === null && (effective.source !== resolved.source || effective.sourceSlug !== resolved.sourceSlug);
+  const active = fallbackToDefault ? resolved : effective;
+
+  // Probe sudah berhasil → pakai hasilnya (tidak fetch ulang).
+  const detailPromise = probe !== null
+    ? Promise.resolve(probe)
+    : getSeriesDetail(active.source, active.sourceSlug, 'id');
+  const chaptersPromise = getChapters(active.source, active.sourceSlug, 'id').catch(() => []);
+  const sourcesPromise = getMangaSources(active.source, active.sourceSlug).catch(() => null);
+  return { resolved: active, detailPromise, chaptersPromise, sourcesPromise };
 });
