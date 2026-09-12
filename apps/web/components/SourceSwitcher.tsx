@@ -1,8 +1,9 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { SOURCE_ORDER, sourceLabel } from './SourceBadge';
 import { isValidType, typedChapterUrl, typedUrl, type ComicType } from '@/lib/api';
+import { chooseSource, orderedSources, type SourceLink as ChoiceLink } from '@/lib/sourceChoice';
 
 // Type tak dikenal/absen → 'manga' (route kanonik redirect ke type benar).
 const safeType = (t?: string | null): ComicType =>
@@ -125,6 +126,8 @@ export function SourceSwitcher({
   const [recommended, setRecommended] = useState<string | null>(initialRecommended ?? null);
   const [pref, setPref] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [pendingSource, setPendingSource] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
   const recommendedRef = useRef(initialRecommended ?? null);
 
   // Load aggregated sources from API (live-resolve when aggregation empty).
@@ -149,12 +152,24 @@ export function SourceSwitcher({
     setPref(readPref(canonicalSlug));
   }, [canonicalSlug]);
 
-  // Close panel on route change.
+  // Close panel + clear indikator saat navigasi selesai (route berubah).
   useEffect(() => { setOpen(false); }, [router]);
+  useEffect(() => {
+    if (!pending) setPendingSource(null);
+  }, [pending]);
 
   if (links.length <= 1) return null;
 
-  const ordered = SOURCE_ORDER.filter((s) => links.some((l) => l.source === s));
+  // Urutan stabil + "default" dihitung oleh helper yang sama dengan server,
+  // supaya highlight di sini identik dengan badge di halaman komik/landing.
+  const orderedLinks = orderedSources(links as ChoiceLink[]);
+  const ordered = orderedLinks.map((l) => l.source);
+  const defaultSource = chooseSource(links as ChoiceLink[], { recommended, pref, current: currentSource })?.source ?? null;
+
+  // Progress bar pindah source — reuse animasi .route-progress (top bar),
+  // plus label "Memuat…" di chip yang dipilih. Dibungkus useTransition supaya
+  // indikator berhenti tepat saat render selesai, bukan tebakan durasi.
+  const SwitchingBar = pending ? <div className="route-progress" aria-hidden="true" /> : null;
 
   const onPick = (source: string) => {
     const link = links.find((l) => l.source === source);
@@ -163,21 +178,24 @@ export function SourceSwitcher({
       writePref(canonicalSlug, source);
       setPref(source);
     }
-    if (mode === 'detail') {
-      if (source === currentSource) { setOpen(false); return; }
-      router.push(typedUrl(safeType(type), canonicalSlug ?? link.sourceSlug));
-    } else {
-      if (source === currentSource) return;
-      // Bawa ke chapter yang sama di source lain. Kalau tidak ada chapter
-      // number (detail flow), mendarat di halaman detail source tersebut.
-      const slug = canonicalSlug ?? link.sourceSlug;
-      const t = safeType(type);
-      router.push(
-        chapterNumber > 0
-          ? typedChapterUrl(t, slug, `${link.sourceSlug}-chapter-${chapterNumber}`)
-          : typedUrl(t, slug)
-      );
-    }
+    if (source === currentSource) { setOpen(false); return; }
+    setPendingSource(source);
+    const go = () => {
+      if (mode === 'detail') {
+        router.push(typedUrl(safeType(type), canonicalSlug ?? link.sourceSlug));
+      } else {
+        // Bawa ke chapter yang sama di source lain. Kalau tidak ada chapter
+        // number (detail flow), mendarat di halaman detail source tersebut.
+        const slug = canonicalSlug ?? link.sourceSlug;
+        const t = safeType(type);
+        router.push(
+          chapterNumber > 0
+            ? typedChapterUrl(t, slug, `${link.sourceSlug}-chapter-${chapterNumber}`)
+            : typedUrl(t, slug)
+        );
+      }
+    };
+    startTransition(() => { go(); });
   };
 
   // ── Detail mode: "Source" button + dropdown panel with all badges ──
@@ -185,10 +203,12 @@ export function SourceSwitcher({
     const active = ordered.find((s) => s === currentSource);
     return (
       <div className="relative mb-5">
+        {SwitchingBar}
         <button
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-haspopup="listbox"
+          aria-busy={pending || undefined}
           className="inline-flex items-center gap-2 rounded-full border border-border-default bg-card/60 px-3.5 py-1.5 text-xs text-secondary hover:text-primary hover:border-border-subtle transition-colors"
         >
           <SourceIcon source={currentSource} />
@@ -206,12 +226,13 @@ export function SourceSwitcher({
               const link = links.find((l) => l.source === s);
               const isActive = s === currentSource;
               const isPref = pref === s;
-              const isDefault = !pref && s === recommended;
+              const isDefault = !pref && s === defaultSource && !isActive;
+              const isLoading = pendingSource === s;
               return (
                 <button
                   key={s}
                   onClick={() => onPick(s)}
-                  disabled={!link?.hasChapterList}
+                  disabled={!link?.hasChapterList || pending}
                   title={`${sourceLabel(s)}${link?.hasChapterList ? '' : ' (belum ada daftar chapter)'}`}
                   className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors text-left ${
                     isActive ? 'bg-bg-secondary text-primary' : 'text-secondary hover:text-primary hover:bg-bg-secondary/60'
@@ -219,9 +240,15 @@ export function SourceSwitcher({
                 >
                   <SourceIcon source={s} dim="h-5 w-5" />
                   <span className="capitalize flex-1">{sourceLabel(s)}</span>
-                  {isActive && <span className="text-[10px] text-muted">aktif</span>}
-                  {!isActive && isPref && <span className="text-[10px] text-accent">pilihanmu</span>}
-                  {!pref && isDefault && !isActive && <span className="text-[10px] text-muted">default</span>}
+                  {isLoading ? (
+                    <span className="src-spinner" aria-label="Memuat sumber" />
+                  ) : (
+                    <>
+                      {isActive && <span className="text-[10px] text-muted">aktif</span>}
+                      {!isActive && isPref && <span className="text-[10px] text-accent">pilihanmu</span>}
+                      {isDefault && <span className="text-[10px] text-muted">default</span>}
+                    </>
+                  )}
                 </button>
               );
             })}
@@ -236,24 +263,32 @@ export function SourceSwitcher({
     const link = links.find((l) => l.source === s);
     const isActive = s === currentSource;
     const isPref = pref === s;
-    const isDefault = !pref && s === recommended;
+    const isDefault = !pref && s === defaultSource && !isActive;
+    const isLoading = pendingSource === s;
     return (
       <button
         key={s}
         onClick={() => onPick(s)}
-        disabled={!link?.hasChapterList}
+        disabled={!link?.hasChapterList || pending}
+        aria-busy={isLoading || undefined}
         title={`${sourceLabel(s)}${link?.hasChapterList ? '' : ' (belum ada daftar chapter)'}`}
-        className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs transition-colors shrink-0 ${
+        className={`src-chip flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs transition-colors shrink-0 ${
           isActive
             ? 'bg-bg-secondary text-primary ring-1 ring-border-default'
             : 'text-secondary hover:text-primary hover:bg-bg-secondary/60'
-        } ${!link?.hasChapterList ? 'opacity-40' : ''}`}
+        } ${!link?.hasChapterList ? 'opacity-40' : ''} ${isLoading ? 'src-chip-loading' : ''}`}
       >
         <SourceIcon source={s} />
         <span className="capitalize">{sourceLabel(s)}</span>
-        {isActive && <span className="text-[9px] text-muted">· aktif</span>}
-        {!isActive && isPref && <span className="text-[9px] text-accent">· pilihanmu</span>}
-        {!pref && isDefault && !isActive && <span className="text-[9px] text-muted">· default</span>}
+        {isLoading ? (
+          <span className="src-spinner" aria-label="Memuat sumber" />
+        ) : (
+          <>
+            {isActive && <span className="text-[9px] text-muted">· aktif</span>}
+            {!isActive && isPref && <span className="text-[9px] text-accent">· pilihanmu</span>}
+            {isDefault && <span className="text-[9px] text-muted">· default</span>}
+          </>
+        )}
       </button>
     );
   });
@@ -264,6 +299,7 @@ export function SourceSwitcher({
 
   return (
     <div className="sticky top-16 z-40 mb-4">
+      {SwitchingBar}
       <div className="nav-island mx-auto flex items-center gap-2 overflow-x-auto px-3 py-2 rounded-xl" style={{ maxWidth: 'min(1024px, 100%)' }}>
         <span className="text-[10px] uppercase tracking-wider text-muted shrink-0">Sumber:</span>
         {orderedChips}

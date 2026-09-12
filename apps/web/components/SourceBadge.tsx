@@ -23,10 +23,16 @@ export const SOURCE_LABELS: Record<string, string> = {
   shinigami: 'Shinigami',
 };
 
-export function SourceBadge({ sources, size = 'sm' }: { sources?: string[]; size?: 'sm' | 'md' }) {
+// `primary` = source yang sedang dipakai halaman ini. Ditampilkan paling kiri
+// dengan ring accent supaya badge landing/detail/reader terbaca sama: set
+// sumber identik, yang beda hanya mana yang aktif.
+export function SourceBadge({ sources, size = 'sm', primary }: { sources?: string[]; size?: 'sm' | 'md'; primary?: string | null }) {
   if (!sources || sources.length === 0) return null;
   const dim = size === 'md' ? 'h-6 w-6' : 'h-4 w-4';
-  const ordered = SOURCE_ORDER.filter((s) => sources.includes(s));
+  const stable: string[] = SOURCE_ORDER.filter((s) => sources.includes(s));
+  const ordered = primary && stable.some((s) => s === primary)
+    ? [primary, ...stable.filter((s) => s !== primary)]
+    : stable;
   const shown = ordered.slice(0, 3);
   const overflow = ordered.length - shown.length;
   return (
@@ -34,8 +40,10 @@ export function SourceBadge({ sources, size = 'sm' }: { sources?: string[]; size
       {shown.map((s) => (
         <span
           key={s}
-          title={SOURCE_LABELS[s] ?? s}
-          className={`${dim} inline-block overflow-hidden rounded-full ring-1 ring-white/15 bg-white/5 shrink-0`}
+          title={`${SOURCE_LABELS[s] ?? s}${s === primary ? ' (aktif)' : ''}`}
+          className={`${dim} inline-block overflow-hidden rounded-full bg-white/5 shrink-0 ${
+            s === primary ? 'ring-2 ring-accent' : 'ring-1 ring-white/15'
+          }`}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={SOURCE_ICONS[s]} alt={SOURCE_LABELS[s] ?? s} className="h-full w-full object-cover" loading="lazy" />

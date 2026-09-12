@@ -22,15 +22,20 @@ type SeriesDetail = Awaited<ReturnType<typeof getSeriesDetail>>;
 // - Badges multi-source → V1 single badge (picker penuh di SourceSection)
 // BookmarkButton + link Mulai Baca dipertahankan dengan URL lama sementara
 // (Task 5 memigrasikan ke typed URL).
-function DetailShell({ series, type, slug, source }: {
+function DetailShell({ series, type, slug, source, sources }: {
   series: SeriesDetail;
   type: string;
   slug: string;
   source: string;
+  sources?: string[];
 }) {
   const genres: string[] = series.genres ?? [];
   const author: string | null | undefined = series.author;
-  const allSources = [source];
+  // Tampilkan SEMUA sumber yang tersedia (bukan cuma yang aktif) dengan source
+  // aktif ditandai — supaya badge di sini sama dengan set badge di landing.
+  const allSources = sources && sources.length > 0
+    ? [source, ...sources.filter((s) => s !== source)]
+    : [source];
   const chapters = series.chapters;
 
   // Mulai Baca → chapter pertama (chapter_number terkecil).
@@ -87,7 +92,7 @@ function DetailShell({ series, type, slug, source }: {
               <span className={`inline-block h-1.5 w-1.5 rounded-full ${series.status === 'ongoing' ? 'bg-success animate-pulse' : 'bg-muted'}`} aria-hidden="true" />
               {series.status || 'N/A'}
             </span>
-            <SourceBadge sources={allSources} size="sm" />
+            <SourceBadge sources={allSources} size="sm" primary={source} />
           </div>
         </div>
       </div>
@@ -200,7 +205,7 @@ export async function CanonicalDetail({ type, slug }: { type: string; slug: stri
   }
   return (
     <main className="max-w-2xl mx-auto px-4 pb-28">
-      <DetailShell series={series} type={type} slug={slug} source={resolved.source} />
+      <DetailShell series={series} type={type} slug={slug} source={resolved.source} sources={(resolved.sources ?? []).map((s) => s.source)} />
       <Suspense fallback={<ChapterListSkeleton />}>
         <ChapterSection slug={slug} canonicalSlug={resolved.slug} chaptersPromise={chaptersPromise} sourcesPromise={sourcesPromise} source={resolved.source} sourceSlug={resolved.sourceSlug} type={type} />
       </Suspense>
