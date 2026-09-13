@@ -1,0 +1,25 @@
+---
+import '../styles/global.css';
+
+// Shell untuk 404 yang dirender inline dari route reader/detail — sama
+// struktur head + body class seperti halaman reader (tanpa navbar).
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="id" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{`${title} - Oktz.`}</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="min-h-screen bg-base text-primary antialiased">
+    <div class="pt-24"><slot /></div>
+  </body>
+</html>

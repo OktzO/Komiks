@@ -1,0 +1,10 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import AdminMerge from '@/components/pages/AdminMerge';
+
+export const prerender = false;
+---
+
+<AdminLayout title="Merge Queue">
+  <AdminMerge client:load />
+</AdminLayout>

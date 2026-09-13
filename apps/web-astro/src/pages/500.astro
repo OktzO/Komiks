@@ -1,0 +1,13 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+
+Astro.response.status = 500;
+---
+
+<BaseLayout title="Terjadi kesalahan" noindex>
+  <div class="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+    <h1 class="text-2xl font-bold">Terjadi kesalahan</h1>
+    <p class="text-secondary">Silakan coba lagi.</p>
+    <button onclick="location.reload()" class="px-4 py-2 rounded bg-white/10 hover:bg-white/20">Coba lagi</button>
+  </div>
+</BaseLayout>

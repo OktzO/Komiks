@@ -1,0 +1,74 @@
+---
+import '../styles/global.css';
+import Navbar from '@/components/Navbar';
+
+export interface Props {
+  title?: string;
+  description?: string;
+  canonical?: string;
+  noindex?: boolean;
+  /** hide main Navbar (reader pages + admin shell) */
+  bare?: boolean;
+}
+
+const {
+  title,
+  description = 'Baca manga, manhwa, dan manhua terjemahan Bahasa Indonesia. Gratis, rapi, dan cepat.',
+  canonical,
+  noindex = false,
+  bare = false,
+} = Astro.props;
+
+const SITE = 'https://oktzz.xyz';
+const SITE_NAME = 'Oktz. - Baca Komik Bahasa Indonesia';
+const pageTitle = title ? `${title} - Oktz.` : SITE_NAME;
+// canonical prop boleh path-relative — absolutize selalu (SEO).
+const canonicalUrl = canonical
+  ? new URL(canonical, SITE).href
+  : new URL(Astro.url.pathname, SITE).href;
+
+const jsonLd = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: 'Oktz.',
+  url: SITE,
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: `${SITE}/search?q={search_term_string}`,
+    'query-input': 'required name=search_term_string',
+  },
+}).replaceAll('<', '\\u003c');
+---
+
+<!doctype html>
+<html lang="id" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalUrl} />
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="id_ID" />
+    <meta property="og:site_name" content="Oktz." />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content="/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content="/og.png" />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <script type="application/ld+json" set:html={jsonLd} />
+  </head>
+  <body class="min-h-screen bg-base text-primary antialiased">
+    {!bare && <Navbar client:idle />}
+    {!bare && <div class="pt-24"><slot /></div>}
+    {bare && <slot />}
+  </body>
+</html>

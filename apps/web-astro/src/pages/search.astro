@@ -1,0 +1,152 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { SourceBadge } from '@/components/SourceBadge';
+import { searchMerged, safeType, typedUrl, type MergedManga } from '@/lib/api';
+
+export const prerender = false;
+
+const q = Astro.url.searchParams.get('q')?.trim() ?? '';
+const POPULAR = ['one piece', 'solo leveling', 'jujutsu kaisen', 'blue lock', 'dandadan'];
+
+let results: MergedManga[] = [];
+let error: string | null = null;
+if (q) {
+  try {
+    const res = await searchMerged(q);
+    results = res.data || [];
+  } catch (e) {
+    error = String(e);
+  }
+}
+---
+
+<BaseLayout title={q ? `Hasil: ${q}` : 'Cari'} canonical="/search">
+  <main class="relative max-w-3xl mx-auto px-4 py-10 md:py-14 min-h-[80vh]">
+    <div class="page-decoration" aria-hidden="true"></div>
+
+    <div class="relative z-10">
+      {/* Header */}
+      <header class={q ? 'mb-8' : 'mb-10 text-center'}>
+        {!q && <p class="eyebrow mb-4">Cari di 5 sumber sekaligus</p>}
+        <h1 class={`font-display font-semibold tracking-tight text-primary ${q ? 'text-xl md:text-2xl' : 'text-4xl md:text-5xl'}`}>
+          {q ? 'Hasil pencarian' : 'Mau baca apa hari ini?'}
+        </h1>
+        {!q && (
+          <p class="mt-3 text-secondary text-sm md:text-base max-w-md mx-auto">
+            Satu kotak pencarian, semua sumber komik Indonesia.
+          </p>
+        )}
+      </header>
+
+      {/* Search form */}
+      <form action="/search" class="relative z-10 mb-8" role="search">
+        <div class="flex items-center gap-2 panel !rounded-full p-1.5 pl-4 shadow-[0_8px_32px_-16px_oklch(0%_0_0/0.6)]">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] shrink-0 text-muted" aria-hidden="true">
+            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            type="search"
+            name="q"
+            value={q}
+            placeholder="Judul manga, manhwa, manhua…"
+            aria-label="Cari judul manga"
+            class="flex-1 bg-transparent border-0 text-primary text-[15px] placeholder:text-muted focus:outline-none min-w-0 h-11"
+          />
+          <button type="submit" class="btn btn-primary !min-h-[44px] shrink-0">
+            Cari
+          </button>
+        </div>
+      </form>
+
+      {/* Popular searches — hanya saat belum ada query */}
+      {!q && (
+        <div class="mb-10">
+          <p class="eyebrow mb-3">Populer</p>
+          <div class="flex flex-wrap gap-2">
+            {POPULAR.map((term) => (
+              <a
+                href={`/search?q=${encodeURIComponent(term)}`}
+                class="glass-pill rounded-full px-3.5 py-1.5 text-sm text-secondary hover:text-primary"
+              >
+                {term}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {q && error && (
+        <div class="text-error text-sm panel px-4 py-3 mb-4" role="alert">
+          Gagal memuat hasil. Coba lagi sebentar — {error}
+        </div>
+      )}
+
+      {q && !error && results.length === 0 && (
+        <div class="panel flex flex-col items-center text-center px-6 py-14">
+          <div class="w-12 h-12 rounded-full border border-border-default flex items-center justify-center mb-4 bg-sunken">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-muted" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+            </svg>
+          </div>
+          <p class="text-primary font-medium mb-1">Tidak ada hasil untuk “{q}”</p>
+          <p class="text-sm text-secondary max-w-sm">
+            Coba kata kunci lain, atau periksa ejaan judulnya. Pencarian mencakup komiku, BacaKomik, Thrive, Shinigami, dan ManhwaIndo.
+          </p>
+        </div>
+      )}
+
+      {q && !error && results.length > 0 && (
+        <>
+          <div class="flex items-baseline justify-between mb-5">
+            <p class="text-sm text-secondary">
+              <span class="text-primary font-semibold tabular">{results.length}</span> hasil untuk
+              <span class="text-primary font-medium"> “{q}”</span>
+            </p>
+          </div>
+          <div class="flex flex-col gap-2.5 anim-slide-up">
+            {results.map((m) => (
+              <a
+                href={typedUrl(safeType(m.type), m.slug)}
+                class="group flex gap-4 p-3 panel panel-hover items-center"
+              >
+                <div class="relative h-[104px] w-[72px] shrink-0 overflow-hidden rounded-inner border border-border-subtle bg-sunken">
+                  {m.cover_image ? (
+                    <img
+                      src={m.cover_image}
+                      alt={m.title}
+                      loading="lazy"
+                      class="h-full w-full object-cover transition-transform duration-300 ease-out-expo group-hover:scale-[1.06]"
+                    />
+                  ) : (
+                    <div class="flex h-full w-full items-center justify-center p-1 text-center text-[9px] leading-tight text-muted">{m.title}</div>
+                  )}
+                </div>
+
+                <div class="flex flex-col flex-1 min-w-0 justify-center gap-1.5">
+                  <h3 class="text-[15px] text-primary font-medium line-clamp-2 leading-snug transition-colors group-hover:text-accent">
+                    {m.title}
+                  </h3>
+                  <div class="flex items-center gap-2 text-xs">
+                    {m.type && (
+                      <span class="px-2 py-0.5 border border-border-subtle rounded-full text-muted capitalize">{m.type}</span>
+                    )}
+                    {m.status && <span class="text-muted capitalize">{m.status.replace(/-/g, ' ')}</span>}
+                  </div>
+                  <SourceBadge sources={m.sources?.length ? m.sources : [m.source]} />
+                </div>
+
+                <svg
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"
+                  class="w-4 h-4 shrink-0 text-muted transition-all duration-200 group-hover:text-accent group-hover:translate-x-0.5" aria-hidden="true"
+                >
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </a>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  </main>
+</BaseLayout>

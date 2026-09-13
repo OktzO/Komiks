@@ -1,0 +1,10 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import AdminMonitoring from '@/components/pages/AdminMonitoring';
+
+export const prerender = false;
+---
+
+<AdminLayout title="Monitoring">
+  <AdminMonitoring client:load />
+</AdminLayout>

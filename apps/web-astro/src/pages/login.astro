@@ -1,0 +1,8 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AuthForm from '@/components/AuthForm';
+---
+
+<BaseLayout title="Masuk" canonical="/login">
+  <AuthForm client:load />
+</BaseLayout>

@@ -1,0 +1,12 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import SourceMonitorPage from '@/components/pages/SourceMonitorPage';
+
+export const prerender = false;
+
+const { source } = Astro.params;
+---
+
+<BaseLayout title={`Status: ${source}`} noindex canonical={`/status/${source}`}>
+  <SourceMonitorPage client:load source={source!} />
+</BaseLayout>

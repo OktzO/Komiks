@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import NotFoundPage from '@/components/pages/NotFoundPage';
+
+// Prerendered 404 — Cloudflare assets serve 404.html dengan status 404.
+// Astro.rewrite('/404') dari route dinamis tetap render halaman ini.
+export const prerender = true;
+
+Astro.response.status = 404;
+---
+
+<BaseLayout title="404 — Halaman tidak ditemukan" noindex>
+  <NotFoundPage client:load />
+</BaseLayout>

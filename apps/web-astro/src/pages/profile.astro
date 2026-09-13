@@ -1,0 +1,8 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import ProfilePage from '@/components/pages/ProfilePage';
+---
+
+<BaseLayout title="Profile" canonical="/profile">
+  <ProfilePage client:load />
+</BaseLayout>

@@ -1,0 +1,12 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import AdminUserDetail from '@/components/pages/AdminUserDetail';
+
+export const prerender = false;
+
+const { id } = Astro.params;
+---
+
+<AdminLayout title={`User ${id}`}>
+  <AdminUserDetail client:load id={id!} />
+</AdminLayout>

@@ -1,0 +1,30 @@
+---
+// Admin shell: sidebar fixed, navbar utama disembunyikan (bare layout).
+// Sidebar client island untuk pathname-based active state.
+import AdminSidebar from '@/components/pages/AdminSidebar';
+import '../styles/global.css';
+
+export interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="id" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{`${title} - Oktz. Admin`}</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="bg-base text-primary min-h-screen antialiased">
+    <AdminSidebar client:load />
+    <div class="md:ml-20 p-4 md:p-8">
+      <slot />
+    </div>
+  </body>
+</html>
