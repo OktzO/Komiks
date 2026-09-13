@@ -1,5 +1,6 @@
 ---
 import { API_URL, getResolve, getChapter, getSeries } from '@/lib/api';
+import { ClientRouter } from 'astro:transitions';
 import ReaderShell from '@/components/ReaderShell';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import NotFoundShell from '@/components/NotFoundShell.astro';
@@ -71,6 +72,8 @@ if (notFound) Astro.response.status = 404;
       <title>{`${series?.title || slug} — Ch. ${chapterNum} - Oktz.`}</title>
       <meta name="robots" content="noindex, nofollow" />
       <link rel="canonical" href={`/${type}/${slug}/${chapterId}`} />
+      <ClientRouter fallback="swap" />
+      <script src="@/scripts/nav-skeleton.ts"></script>
     </head>
     <body class="min-h-screen bg-base text-primary antialiased">
       <ReaderShell

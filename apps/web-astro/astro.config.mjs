@@ -7,6 +7,9 @@ import react from '@astrojs/react';
 export default defineConfig({
   output: 'server',
   site: 'https://oktzz.xyz',
+  // Prefetch link saat hover/viewport → navigasi terasa instan (skeleton
+  // + view transitions menutup gap sisanya).
+  prefetch: { prefetchAll: true, defaultStrategy: 'hover' },
   adapter: cloudflare({
     imageService: 'passthrough',
   }),
