@@ -34,3 +34,4 @@ apps/api-cf/.auth-keys.json
 
 # isolated git worktrees (superpowers:using-git-worktrees)
 .worktrees/
+apps/web-astro/.astro/
