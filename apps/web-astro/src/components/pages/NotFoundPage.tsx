@@ -195,7 +195,7 @@ export default function NotFound() {
                       <img
                         src={s.cover_image}
                         alt={s.title}
-                        loading="lazy"
+                        loading="lazy" referrerpolicy="no-referrer"
                         decoding="async"
                         className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                       />

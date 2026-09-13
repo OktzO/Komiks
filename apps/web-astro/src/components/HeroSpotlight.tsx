@@ -39,6 +39,7 @@ export function HeroSpotlight() {
         <form
           action="/search"
           method="get"
+          data-search-form=""
           className="anim-rise mt-8 max-w-xl mx-auto"
           style={{ animationDelay: '180ms' }}
         >
@@ -61,6 +62,7 @@ export function HeroSpotlight() {
               type="search"
               placeholder="Cari judul, genre, atau kreator…"
               autoComplete="off"
+              
               className="w-full bg-transparent text-sm sm:text-base text-primary placeholder:text-muted outline-none py-1.5"
             />
             <button

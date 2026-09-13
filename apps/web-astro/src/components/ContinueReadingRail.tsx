@@ -85,7 +85,7 @@ export function ContinueReadingRail() {
             >
               <div className="w-10 h-14 shrink-0 overflow-hidden rounded bg-bg-secondary border border-border-subtle flex items-center justify-center text-xs text-muted">
                 {item.cover_image ? (
-                  <img src={item.cover_image} alt="" className="h-full w-full object-cover" loading="lazy" />
+                  <img src={item.cover_image} alt="" className="h-full w-full object-cover" loading="lazy" referrerpolicy="no-referrer" />
                 ) : (
                   <span className="font-mono text-[10px]">Ch.{item.chapter_number}</span>
                 )}

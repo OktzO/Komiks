@@ -156,7 +156,7 @@ export function Reader({
       <img
         src={r > 0 ? pageImageUrl(pages[i], r) : u}
         alt={`Halaman ${i + 1}`}
-        loading="lazy"
+        loading="lazy" referrerpolicy="no-referrer"
         data-idx={i}
         ref={(el) => setImgRef(i, el)}
         className="max-w-full h-auto"

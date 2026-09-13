@@ -99,9 +99,17 @@
 html, body {
   background: var(--bg-base);
   color: var(--text-primary);
+  color-scheme: dark;
   font-family: var(--font-geist-sans), 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Kontrol form native (input, textarea, select) default-nya fieldtext hitam
+   saat color-scheme belum aktif/unsupported — kunci eksplisit. */
+input, textarea, select {
+  color: var(--text-primary);
+  caret-color: var(--accent);
 }
 
 * { border-color: var(--border-subtle); }

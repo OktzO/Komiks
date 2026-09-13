@@ -26,7 +26,7 @@ export function CoverImage({
       <img
         src={src}
         alt={alt}
-        loading={priority ? 'eager' : 'lazy'}
+        loading={priority ? 'eager' : 'lazy'} referrerpolicy="no-referrer"
         fetchPriority={priority ? 'high' : 'auto'}
         decoding="async"
         className={`relative h-full w-full ${objectClass} ${zoom ? 'transition-transform duration-300 group-hover:scale-[1.03]' : ''}`}

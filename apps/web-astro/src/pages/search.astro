@@ -39,7 +39,7 @@ if (q) {
       </header>
 
       {/* Search form */}
-      <form action="/search" class="relative z-10 mb-8" role="search">
+      <form action="/search" data-search-form class="relative z-10 mb-8" role="search">
         <div class="flex items-center gap-2 panel !rounded-full p-1.5 pl-4 shadow-[0_8px_32px_-16px_oklch(0%_0_0/0.6)]">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] shrink-0 text-muted" aria-hidden="true">
             <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
@@ -114,7 +114,7 @@ if (q) {
                     <img
                       src={m.cover_image}
                       alt={m.title}
-                      loading="lazy"
+                      loading="lazy" referrerpolicy="no-referrer"
                       class="h-full w-full object-cover transition-transform duration-300 ease-out-expo group-hover:scale-[1.06]"
                     />
                   ) : (

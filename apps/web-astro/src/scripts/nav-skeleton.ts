@@ -4,7 +4,9 @@
 // 1. Klik link internal → top progress bar muncul segera.
 // 2. Render >250ms → skeleton shell target muncul di atas halaman lama
 //    (halaman detail/reader punya pola skeleton sama dengan web lama).
-// 3. Swap selesai / abort → bersih otomatis.
+// 3. Form search submit → SPA navigate + skeleton rows + tombol spinner.
+// 4. Swap selesai / abort → bersih otomatis.
+import { navigate } from 'astro:transitions/client';
 ;(() => {
   if (typeof window === 'undefined') return;
 
@@ -26,11 +28,12 @@
   };
 
   // Target route → tipe skeleton shell (pola web lama).
-  // /{type}/{slug} → detail skeleton; /{type}/{slug}/{ch} → reader; sisanya → generic.
-  const shellFor = (pathname: string): 'detail' | 'reader' | 'generic' => {
+  // /{type}/{slug} → detail skeleton; /{type}/{slug}/{ch} → reader; /search → rows; sisanya → generic.
+  const shellFor = (pathname: string): 'detail' | 'reader' | 'generic' | 'search' => {
     const segs = pathname.split('/').filter(Boolean);
     if (segs.length === 2 && ['manga', 'manhwa', 'manhua'].includes(segs[0])) return 'detail';
     if (segs.length === 3 && ['manga', 'manhwa', 'manhua'].includes(segs[0])) return 'reader';
+    if (segs[0] === 'search') return 'search';
     return 'generic';
   };
 
@@ -57,7 +60,7 @@
     }
   };
 
-  const skeletonHTML = (kind: 'detail' | 'reader' | 'generic'): string => {
+  const skeletonHTML = (kind: 'detail' | 'reader' | 'generic' | 'search'): string => {
     const row = (h: string) => `<div class="skeleton" style="height:${h};margin-bottom:12px"></div>`;
     const cover = `<div class="skeleton" style="width:144px;height:208px;border-radius:12px;flex-shrink:0"></div>`;
     if (kind === 'detail') {
@@ -66,10 +69,16 @@
     if (kind === 'reader') {
       return `<div style="display:flex;flex-direction:column;align-items:center;gap:12px"><div class="skeleton" style="height:40px;width:100%;border-radius:12px"></div>${Array.from({ length: 3 }, (_, i) => `<div class="skeleton" style="width:100%;max-width:576px;height:70vh;border-radius:4px;opacity:${1 - i * 0.15}"></div>`).join('')}</div>`;
     }
+    if (kind === 'search') {
+      // Row = cover 72x104 + 2 baris teks — pola ResultRow halaman search.
+      return row('40px') + Array.from({ length: 5 }, () =>
+        `<div style="display:flex;gap:16px;padding:12px;border:1px solid var(--border-subtle);border-radius:var(--radius);margin-bottom:10px;background:var(--bg-card)"><div class="skeleton" style="width:72px;height:104px;border-radius:8px;flex-shrink:0"></div><div style="flex:1">${row('18px')}${row('14px')}</div></div>`
+      ).join('');
+    }
     return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px">${Array.from({ length: 10 }, () => `<div class="skeleton" style="aspect-ratio:3/4;border-radius:8px"></div>`).join('')}</div>`;
   };
 
-  const showSkeleton = (kind: 'detail' | 'reader' | 'generic') => {
+  const showSkeleton = (kind: 'detail' | 'reader' | 'generic' | 'search') => {
     if (skeletonEl) return;
     skeletonEl = document.createElement('div');
     skeletonEl.id = 'nav-skeleton';
@@ -99,9 +108,40 @@
     if (!isInternalNav(href)) return;
     if (a.dataset.navSkip !== undefined) return;
     // sama-origin non-hash → nav interhal, tampilkan fx.
+    startNavFx(href);
+  };
+
+  const startNavFx = (href: string) => {
     showProgress();
     const u = new URL(href, window.location.href);
-    showTimer = setTimeout(() => showSkeleton(shellFor(u.pathname)), SKELETON_DELAY);
+    const kind = shellFor(u.pathname);
+    showTimer = setTimeout(() => showSkeleton(kind), kind === 'search' ? 150 : SKELETON_DELAY);
+  };
+
+  // Form search: submit → SPA navigate + tombol spinner "Mencari…" + skeleton
+  // row instan (pola ui-ux: loading→done feedback, cegah double-submit).
+  const onDocSubmit = (e: Event) => {
+    const form = e.target as HTMLFormElement | null;
+    if (!form || !form.matches?.('form[data-search-form]')) return;
+    const fd = new FormData(form);
+    const q = String(fd.get('q') ?? '').trim();
+    if (!q) return; // submit kosong → biarkan validasi native
+    e.preventDefault();
+    if (progressEl || skeletonEl) return; // sudah aktif (double submit) → blok
+    const action = new URL(form.getAttribute('action') || window.location.pathname, window.location.href);
+    action.search = '';
+    const params = new URLSearchParams();
+    params.set('q', q);
+    action.search = `?${params}`;
+    const btn = form.querySelector('button[type="submit"]') as HTMLElement | null;
+    if (btn && !btn.dataset.busy) {
+      btn.dataset.busy = '1';
+      btn.style.opacity = '0.85';
+      btn.style.pointerEvents = 'none';
+      btn.innerHTML = '<span class="src-spinner" aria-hidden="true"></span><span style="margin-left:8px">Mencari…</span>';
+    }
+    startNavFx(action.href);
+    navigate(action.href);
   };
 
   // ClientRouter swap selesai / batal / popstate → bersih.
@@ -109,6 +149,7 @@
   document.addEventListener('astro:page-load', clearNavFx);
   window.addEventListener('popstate', () => setTimeout(clearNavFx, 0));
   document.addEventListener('click', onDocClick, true);
+  document.addEventListener('submit', onDocSubmit, true);
   // safety: bila fetch nav stuck >15s (network), jangan biarkan skeleton selamanya.
   setInterval(() => {
     if (skeletonEl && document.visibilityState === 'hidden') clearNavFx();
