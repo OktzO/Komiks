@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Reader } from './Reader';
 import { SourceSwitcher } from './SourceSwitcher';
 import { WindowedList } from './WindowedList';
-import { getChapters, imgOriginFor, isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
+import { getChapters, getChapter, imgOriginFor, isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
 
 // Canonical URL emisi: type tak dikenal → fallback 'manga' (route kanonik
 // redirect ke type benar). Definisi lokal — lib/api.ts tak boleh diedit di
@@ -28,6 +28,12 @@ interface ShellItem {
 // Sembunyi saat scroll ke bawah; muncul hanya lewat tap (stage / pill,
 // tap lagi → sembunyi lagi). Semua gerak transform+opacity saja (GPU
 // compositor, `will-change: transform`) → ringan saat scroll panjang.
+//
+// ⭐ Async-first: `pages=null` (server budget habis — source scrape dingin) →
+// shell + skeleton tampil instan, self-fetch getChapter lewat candidates
+// (urutan chosen→kanonik, sama dgn logika server). seriesTitle='' → self-fetch
+// getSeries. Semua kandidat gagal → panel error (bukan 404 server — data bisa
+// tiba telat tanpa berarti tidak ada).
 export function ReaderShell({
   source,
   slug,
@@ -37,7 +43,8 @@ export function ReaderShell({
   seriesTitle,
   seriesType,
   type,
-  pages,
+  pages: initialPages,
+  fetchCandidates,
   apiUrl,
 }: {
   source: string;
@@ -48,7 +55,8 @@ export function ReaderShell({
   seriesTitle: string;
   seriesType?: string | null;
   type?: string;
-  pages: PageUrl[];
+  pages: PageUrl[] | null;
+  fetchCandidates?: string[];
   apiUrl: string;
 }) {
   const [hidden, setHidden] = useState(false);
@@ -58,8 +66,47 @@ export function ReaderShell({
   const [chapters, setChapters] = useState<ShellItem[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [autoScroll, setAutoScroll] = useState(false);
+  const [lazyPages, setLazyPages] = useState<PageUrl[] | null>(initialPages);
+  const [lazyFailed, setLazyFailed] = useState(false);
+  const [lazySeries, setLazySeries] = useState<{ title?: string; type?: string | null } | null>(null);
   const scrollState = useRef({ y: 0, dir: 0 });
   const autoRaf = useRef<number | null>(null);
+
+  const pages = lazyPages ?? [];
+
+  // Self-fetch pages saat server telat pulang (budget habis).
+  useEffect(() => {
+    if (initialPages !== null || !fetchCandidates || fetchCandidates.length === 0) return;
+    let alive = true;
+    (async () => {
+      for (const src of fetchCandidates) {
+        try {
+          const got = await getChapter(src, chapterId);
+          if (alive && got && got.pages && got.pages.length > 0) {
+            setLazyPages(got.pages.map((pg) => ({ ...pg })));
+            return;
+          }
+        } catch { /* kandidat berikutnya */ }
+      }
+      if (alive) setLazyFailed(true);
+    })();
+    return () => { alive = false; };
+  }, [initialPages, fetchCandidates, chapterId]);
+
+  // Self-fetch judul series bila server tidak sempat.
+  useEffect(() => {
+    if (seriesTitle || !source || !slug) return;
+    let alive = true;
+    import('@/lib/api').then(({ getSeries }) => {
+      getSeries(source, slug)
+        .then((s) => { if (alive && s?.title) setLazySeries({ title: s.title, type: s.type }); })
+        .catch(() => {});
+    });
+    return () => { alive = false; };
+  }, [seriesTitle, source, slug]);
+
+  const dispSeriesTitle = seriesTitle || lazySeries?.title || slug;
+  const dispSeriesType = seriesType ?? lazySeries?.type ?? null;
 
   useEffect(() => {
     let alive = true;
@@ -204,9 +251,9 @@ export function ReaderShell({
         <div className="nav-island reader-top-inner">
           <button type="button" aria-label="Kembali ke halaman sebelumnya" onClick={() => history.back()} className="rbtn shrink-0">{ArrowLeft}</button>
           <div className="min-w-0 flex-1 px-2 text-center">
-            <p className="truncate text-[13px] font-medium leading-tight">{seriesTitle}</p>
+            <p className="truncate text-[13px] font-medium leading-tight">{dispSeriesTitle}</p>
             <p className="truncate text-[10px] uppercase tracking-wider text-muted">
-              Chapter {chapterNumber}{chapterTitle ? ` · ${chapterTitle}` : ''} · {seriesType ?? 'manga'}
+              Chapter {chapterNumber}{chapterTitle ? ` · ${chapterTitle}` : ''} · {dispSeriesType ?? 'manga'}
             </p>
           </div>
           <a href="/" aria-label="Kembali ke beranda" className="rbtn shrink-0">{HomeIcon}</a>
@@ -358,15 +405,33 @@ export function ReaderShell({
       </div>
 
       <div className="reader-stage" onClick={onStageClick}>
-        <Reader
-          source={source}
-          pages={pages}
-          apiUrl={apiUrl}
-          nextChapterId={nextCh?.id ?? null}
-          mode={mode}
-          onModeChange={setMode}
-          onActivePage={setActiveIdx}
-        />
+        {lazyPages === null && !lazyFailed ? (
+          <div className="flex flex-col items-center gap-3" aria-busy="true" aria-label="Memuat halaman">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="skeleton w-full max-w-xl" style={{ height: '70vh', opacity: 1 - i * 0.15 }} />
+            ))}
+            <p className="text-xs text-muted font-mono mt-1">memuat halaman…</p>
+          </div>
+        ) : lazyFailed ? (
+          <div className="mx-auto mt-10 max-w-sm rounded-xl border border-border-default bg-card p-6 text-center">
+            <p className="text-sm text-primary font-medium mb-1">Halaman tidak bisa dimuat</p>
+            <p className="text-xs text-secondary mb-4">Sumber mungkin sedang gangguan — coba lagi sebentar.</p>
+            <div className="flex justify-center gap-2">
+              <button type="button" onClick={() => location.reload()} className="rounded-lg border border-border-default px-4 py-2 text-sm hover:bg-bg-secondary transition-colors">Coba lagi</button>
+              <a href={`/${type}/${slug}`} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-[color:var(--accent-ink)] hover:opacity-90 transition-opacity">Kembali ke komik</a>
+            </div>
+          </div>
+        ) : (
+          <Reader
+            source={source}
+            pages={pages}
+            apiUrl={apiUrl}
+            nextChapterId={nextCh?.id ?? null}
+            mode={mode}
+            onModeChange={setMode}
+            onActivePage={setActiveIdx}
+          />
+        )}
       </div>
     </main>
   );

@@ -1,10 +1,11 @@
 {
-  "name": "manga-web-astro",
+  "name": "manga-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "astro dev",
+    "dev:web": "astro dev",
     "build": "astro build",
     "preview": "wrangler dev",
     "deploy": "astro build && wrangler deploy",

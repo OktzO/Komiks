@@ -1,3 +1,6 @@
+// Astro server-render pass-through → attr harus lowercase HTML-valid (React TS tidak
+// mengenalnya; spread tanpa cast lolos excess-property check).
+const NO_REF = { referrerpolicy: "no-referrer" };
 export function CoverImage({
   src,
   alt,
@@ -26,7 +29,7 @@ export function CoverImage({
       <img
         src={src}
         alt={alt}
-        loading={priority ? 'eager' : 'lazy'} referrerpolicy="no-referrer"
+        loading={priority ? 'eager' : 'lazy'} {...NO_REF}
         fetchPriority={priority ? 'high' : 'auto'}
         decoding="async"
         className={`relative h-full w-full ${objectClass} ${zoom ? 'transition-transform duration-300 group-hover:scale-[1.03]' : ''}`}

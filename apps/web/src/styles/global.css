@@ -803,3 +803,6 @@ a:hover { color: var(--accent); }
   filter: blur(20px);
 }
 
+
+/* ── Cover hotlink broken → sembunyikan img, tampilkan teks placeholder ── */
+img[data-broken] { visibility: hidden; }

@@ -150,6 +150,27 @@ import { navigate } from 'astro:transitions/client';
   window.addEventListener('popstate', () => setTimeout(clearNavFx, 0));
   document.addEventListener('click', onDocClick, true);
   document.addEventListener('submit', onDocSubmit, true);
+  // ── Cover hotlink recovery: sumber CDN sering flaky (403/404 sesaat).
+  // Retry 1x dengan cache-buster; gagal lagi → tandai broken (CSS menyembunyikan
+  // <img>, placeholder teks CoverImage di belakangnya jadi terlihat).
+  // Reader imgs di-skip — punya retry chain sendiri (worker/rute). ──
+  document.addEventListener('error', (e) => {
+    const el = e.target as HTMLElement | null;
+    if (!el || el.tagName !== 'IMG') return;
+    const img = el as HTMLImageElement;
+    const src = img.currentSrc || img.src;
+    if (!/^https?:/.test(src) || src.includes('/img/') || src.includes('/api/reader/') || src.includes('/sources/') || src.includes('/fonts/')) return;
+    const n = Number(img.dataset.retryN || 0);
+    if (n === 0) {
+      img.dataset.retryN = '1';
+      setTimeout(() => {
+        img.src = src + (src.includes('?') ? '&' : '?') + 'rx=1';
+      }, 700);
+    } else {
+      img.dataset.broken = '1';
+    }
+  }, true);
+
   // safety: bila fetch nav stuck >15s (network), jangan biarkan skeleton selamanya.
   setInterval(() => {
     if (skeletonEl && document.visibilityState === 'hidden') clearNavFx();

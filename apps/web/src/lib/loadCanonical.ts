@@ -8,13 +8,6 @@ export interface SourceAgg {
   recommendedSource: string | null;
 }
 
-export interface CanonicalLoad {
-  resolved: ResolveData;
-  detail: SeriesDetail;
-  chapters: Chapter[];
-  sources: SourceAgg | null;
-}
-
 // Cookie preferensi source: { [canonicalSlug]: sourceKey }. Ditulis client
 // (SourceSwitcher) saat user memilih source; dibaca di sini supaya pilihan
 // itu benar-benar dipakai server render — bukan hanya highlight di client.
@@ -34,14 +27,26 @@ const readPrefFor = (cookieHeader: string | undefined, slug: string): string | n
   }
 };
 
-// Port loadCanonical (Next.js cache() + cookies()) ke Astro: dipanggil sekali
-// per request dari frontmatter page, hasil objek plain — tanpa React cache().
-export async function loadCanonical(slug: string, cookieHeader: string | undefined): Promise<CanonicalLoad> {
+// ⭐ Async-first (pengganti streaming Suspense Next.js): frontmatter page cuma
+// await resolve + series detail (cepat, KV-warm) — chapters & sources DIBERI
+// TENGGAH (budget ms). Yang pulang dalam budget di-SSR (SEO link utuh); yang
+// telat diselesaikan island client-side → chapter list "nyusul" tanpa menahan
+// hero/sinopsis tampil.
+export interface CanonicalQuick {
+  resolved: ResolveData;
+  detail: SeriesDetail;
+  chapters: Chapter[] | null;
+  sources: SourceAgg | null;
+  chaptersPromise: Promise<Chapter[]>;
+  sourcesPromise: Promise<SourceAgg | null>;
+}
+
+const withBudget = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+  Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+
+export async function loadCanonicalQuick(slug: string, cookieHeader: string | undefined, budget = 250): Promise<CanonicalQuick> {
   const resolved = await getResolve(slug);
 
-  // Pilihan user menang atas recommended — asal source-nya tersedia untuk
-  // judul ini (punya daftar chapter). resolved.sources ikut dipakai so
-  // halaman tidak pernah menampilkan source yang tidak punya datanya.
   const pref = readPrefFor(cookieHeader, resolved.slug);
   const links: SourceLink[] = (resolved.sources ?? []).map((s) => s as SourceLink);
   const picked = chooseSource(links, { recommended: resolved.recommendedSource, pref, current: resolved.source });
@@ -59,7 +64,12 @@ export async function loadCanonical(slug: string, cookieHeader: string | undefin
   const detail = probe !== null
     ? probe
     : await getSeriesDetail(active.source, active.sourceSlug, 'id');
-  const chapters = await getChapters(active.source, active.sourceSlug, 'id').catch(() => []);
-  const sources = await getMangaSources(active.source, active.sourceSlug).catch(() => null);
-  return { resolved: active, detail, chapters, sources };
+
+  const chaptersPromise = getChapters(active.source, active.sourceSlug, 'id');
+  const sourcesPromise = getMangaSources(active.source, active.sourceSlug);
+  const [chapters, sources] = await Promise.all([
+    withBudget(chaptersPromise, budget),
+    withBudget(sourcesPromise, budget),
+  ]);
+  return { resolved: active, detail, chapters, sources, chaptersPromise, sourcesPromise };
 }

@@ -288,8 +288,10 @@ export const imgOriginFor = (imgPath: string, retry = 0): string => {
       imgOriginsWarming = true;
       getOrigins().catch(() => {}).finally(() => { imgOriginsWarming = false; });
     }
+    // ⚠️ Fallback = API worker yang punya route /img — BUKAN IMG_BASE_URL
+    // (oktzz.xyz). Setelah cutover, oktzz.xyz = Worker Astro tanpa /img → 404.
     if (AUTH_API_URL && AUTH_API_URL !== API_URL) return AUTH_API_URL;
-    return IMG_BASE_URL;
+    return API_URL;
   }
   const idx = (murmur3_32(imgPath) + retry) % effective.length;
   return effective[idx];

@@ -1,3 +1,6 @@
+// Astro server-render pass-through → attr harus lowercase HTML-valid (React TS tidak
+// mengenalnya; spread tanpa cast lolos excess-property check).
+const NO_REF = { referrerpolicy: "no-referrer" };
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { getChapter, imgOriginFor } from '@/lib/api';
 
@@ -35,7 +38,14 @@ export function Reader({
 
   // Round-robin /img/*: hash stabil per halaman → worker sama (cache hangat),
   // retry>0 → geser ke worker lain (failover). Akun-1 (origin utama) dieksklusi.
+  // retry>=2 → pindah RUTE: proxyUrl legacy (/api/reader/*/page/*) — beda cache
+  // path + beda jalur fetch (source-CDN langsung) → bisa lolos saat /img (B2
+  // first) kena 502/403 source. retry>=3 → API utama (akun-1, paling stabil).
   const pageImageUrl = (p: { proxyUrl: string; imgUrl?: string | null; b2Url?: string | null }, retry = 0): string => {
+    if (retry >= 2) {
+      const base = retry >= 3 ? apiUrl : imgOriginFor(p.imgUrl ?? p.proxyUrl, retry);
+      return `${base}${p.proxyUrl}?retry=${retry}`;
+    }
     const base = p.imgUrl ? imgOriginFor(p.imgUrl, retry) : apiUrl;
     return `${base}${p.imgUrl ?? p.proxyUrl}${retry > 0 ? `?retry=${retry}` : ''}`;
   };
@@ -43,7 +53,7 @@ export function Reader({
 
   const handleImageError = useCallback((i: number) => {
     const current = retries[i] ?? 0;
-    if (current < 2) {
+    if (current < 3) {
       clearTimeout(retryTimers.current[i]);
       retryTimers.current[i] = setTimeout(() => {
         setRetries((prev) => ({ ...prev, [i]: (prev[i] ?? 0) + 1 }));
@@ -156,7 +166,7 @@ export function Reader({
       <img
         src={r > 0 ? pageImageUrl(pages[i], r) : u}
         alt={`Halaman ${i + 1}`}
-        loading="lazy" referrerpolicy="no-referrer"
+        loading="lazy" {...NO_REF}
         data-idx={i}
         ref={(el) => setImgRef(i, el)}
         className="max-w-full h-auto"

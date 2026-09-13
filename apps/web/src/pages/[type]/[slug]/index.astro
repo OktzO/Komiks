@@ -1,24 +1,29 @@
 ---
 import BaseLayout from '@/layouts/BaseLayout.astro';
-import ChapterSection from '@/components/ChapterSection';
+import { ChapterSection } from '@/components/ChapterSection';
 import BookmarkButton from '@/components/BookmarkButton';
 import SourceSwitcher from '@/components/SourceSwitcher';
 import Synopsis from '@/components/Synopsis';
 import SourceBadge, { SOURCE_LABELS } from '@/components/SourceBadge';
 import { TYPE_META, TypeBadge } from '@/components/TypeBadge';
 import NotFoundPage from '@/components/pages/NotFoundPage';
-import { loadCanonical } from '@/lib/loadCanonical';
+import { loadCanonicalQuick } from '@/lib/loadCanonical';
 import { API_URL } from '@/lib/api';
 
 export const prerender = false;
 
 const { type, slug } = Astro.params;
 
-// 404 asli (pre-render body) bila slug tak dikenal — bukan soft-404.
+// ⭐ Async-first (pola streaming Next lama): hero + sinopsis + detail-info
+// (dari endpoint consolidated, KV-warm) SELALU di-SSR; chapters & sources
+// diberi budget 300ms — telat → island fetch sendiri client-side (skeleton
+// nyusul), page tidak pernah nunggu yang lambat.
+const BUDGET_MS = 300;
+
 let notFound = false;
-let loaded: Awaited<ReturnType<typeof loadCanonical>> | null = null;
+let loaded: Awaited<ReturnType<typeof loadCanonicalQuick>> | null = null;
 try {
-  loaded = await loadCanonical(slug!, Astro.request.headers.get('cookie') ?? undefined);
+  loaded = await loadCanonicalQuick(slug!, Astro.request.headers.get('cookie') ?? undefined, BUDGET_MS);
 } catch {
   notFound = true;
 }
@@ -28,8 +33,11 @@ if (loaded && loaded.resolved.type !== type) {
 }
 const resolved = loaded?.resolved ?? { slug: '', type: 'manga', source: '', sourceSlug: '', recommendedSource: null, sources: [] };
 const series = loaded?.detail ?? { slug: '', external_id: '', source: '', title: '', type: '', status: '' } as any;
-const chapters = loaded?.chapters ?? [];
+const chapters = loaded?.chapters ?? null;
 const sources = loaded?.sources ?? null;
+// Fallback bab awal dari payload consolidated (detail sudah bawa chapters
+// ringkas) → toolbox "Mulai Baca" tetap tampil cepat walau list lambat.
+const chaptersForToolbox: any[] = chapters ?? series.chapters ?? [];
 
 const desc = (series.synopsis ?? '').replace(/\s+/g, ' ').trim().slice(0, 160) || undefined;
 
@@ -50,14 +58,17 @@ const allSources = (resolved.sources ?? []).length > 0
   : [resolved.source];
 
 // Mulai Baca → chapter pertama (chapter_number terkecil).
-const startChapter = chapters.length > 0
-  ? chapters.reduce((min, c) => (c.chapter_number < min.chapter_number ? c : min))
+const startChapter = chaptersForToolbox.length > 0
+  ? chaptersForToolbox.reduce((min: any, c: any) => (c.chapter_number < min.chapter_number ? c : min))
   : null;
 const startChapterId = startChapter
   ? (startChapter.id.includes(':') ? startChapter.id.slice(startChapter.id.lastIndexOf(':') + 1) : startChapter.id)
   : null;
 
 const srcAgg = sources && sources.sources.length > 1 ? sources : null;
+// sources belum pulang dalam budget → SourceSwitcher self-fetch (initial
+// links undefined); render container saja kalau resolve menunjukkan >1 sumber.
+const showSources = srcAgg !== null || resolved.sources.length > 1;
 
 if (notFound) Astro.response.status = 404;
 ---
@@ -171,23 +182,22 @@ if (notFound) Astro.response.status = 404;
 
     <div class="border-t border-border-subtle my-4"></div>
 
-    {/* Chapter list — interaktif (sheet) */}
+    {/* Chapter list — async-first: SSR kalau <=budget, skeleton+client-fetch kalau telat */}
     <ChapterSection
       client:load
       initialChapters={chapters}
-      recSource={sources?.recommendedSource ?? null}
-      recSourceSlug={null}
       source={resolved.source}
       sourceSlug={resolved.sourceSlug}
       slug={resolved.slug}
       type={type!}
-      apiUrl={API_URL}
     />
 
-    {/* Source switcher section */}
-    {srcAgg && (
+    {/* Source switcher — self-fetch island saat data belum pulang dalam budget */}
+    {showSources && (
       <div class="mt-4">
-        <p class="text-xs text-muted mb-2">{srcAgg.sources.length} sumber · terbanyak {srcAgg.sources.reduce((m, l) => Math.max(m, l.chapterCount ?? 0), 0)} chapter</p>
+        {srcAgg && (
+          <p class="text-xs text-muted mb-2">{srcAgg.sources.length} sumber · terbanyak {srcAgg.sources.reduce((m, l) => Math.max(m, l.chapterCount ?? 0), 0)} chapter</p>
+        )}
         <SourceSwitcher
           client:load
           currentSource={resolved.source}
@@ -196,8 +206,8 @@ if (notFound) Astro.response.status = 404;
           chapterNumber={0}
           apiUrl={API_URL}
           mode="detail"
-          links={srcAgg.sources}
-          recommendedSource={srcAgg.recommendedSource}
+          links={srcAgg ? srcAgg.sources : undefined}
+          recommendedSource={srcAgg ? srcAgg.recommendedSource : undefined}
           type={type}
         />
       </div>

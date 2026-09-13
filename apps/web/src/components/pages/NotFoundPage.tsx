@@ -1,3 +1,6 @@
+// Astro server-render pass-through → attr harus lowercase HTML-valid (React TS tidak
+// mengenalnya; spread tanpa cast lolos excess-property check).
+const NO_REF = { referrerpolicy: "no-referrer" };
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -195,7 +198,7 @@ export default function NotFound() {
                       <img
                         src={s.cover_image}
                         alt={s.title}
-                        loading="lazy" referrerpolicy="no-referrer"
+                        loading="lazy" {...NO_REF}
                         decoding="async"
                         className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                       />

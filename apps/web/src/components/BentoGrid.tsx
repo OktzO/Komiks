@@ -1,3 +1,6 @@
+// Astro server-render pass-through → attr harus lowercase HTML-valid (React TS tidak
+// mengenalnya; spread tanpa cast lolos excess-property check).
+const NO_REF = { referrerpolicy: "no-referrer" };
 import { safeType, typedUrl } from '@/lib/api';
 import { CoverImage } from './CoverImage';
 import { TypeBadge } from './TypeBadge';
@@ -62,7 +65,7 @@ export function BentoGrid({ items }: BentoGridProps) {
                   src={featured.cover_image}
                   alt=""
                   className="w-full h-full object-cover opacity-25 filter blur-xl scale-110 transition-transform duration-700 group-hover:scale-125"
-                  loading="lazy" referrerpolicy="no-referrer"
+                  loading="lazy" {...NO_REF}
                 />
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-bg-base via-bg-base/80 to-transparent" />

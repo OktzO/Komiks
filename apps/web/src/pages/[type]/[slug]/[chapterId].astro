@@ -1,0 +1,102 @@
+---
+import { API_URL, getResolve, getChapter, getSeries } from '@/lib/api';
+import { ClientRouter } from 'astro:transitions';
+import ReaderShell from '@/components/ReaderShell';
+import NotFoundPage from '@/components/pages/NotFoundPage';
+import NotFoundShell from '@/components/NotFoundShell.astro';
+
+export const prerender = false;
+
+const { type, slug, chapterId } = Astro.params;
+
+// Canonical chapter reader: getResolve → getChapter(recommended/chosen).
+// ⭐ Async-first: resolve (CEPAT, KV) menentukan 404/301; chapter pages diberi
+// budget 400ms — telat (source scrape dingin) → shell + skeleton nyusul via
+// island self-fetch, TTFB tetap instan seperti streaming Suspense era Next.
+const budget = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+  Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+
+let notFound = false;
+let resolved: Awaited<ReturnType<typeof getResolve>> | null = null;
+try {
+  resolved = await getResolve(slug!);
+} catch {
+  notFound = true;
+}
+if (resolved && resolved.type !== type) {
+  return Astro.redirect(`/${resolved.type}/${encodeURIComponent(slug!)}/${encodeURIComponent(chapterId!)}`, 301);
+}
+
+let chapter: Awaited<ReturnType<typeof getChapter>> | null = null;
+let readSource = '';
+let candidates: string[] = [];
+if (resolved) {
+  const src0 = resolved.recommendedSource ?? resolved.source;
+  const link = resolved.sources.find((l) => l.source === src0);
+  const sourceSlug = link?.sourceSlug ?? resolved.sourceSlug;
+  // Chapter id hidup di namespace per-source; urutan chosen → kanonik (sama
+  // dgn server loop) — dipakai juga oleh island saat self-fetch.
+  candidates = [...new Set([src0, resolved.source])];
+  readSource = candidates[0];
+  const found = await budget((async () => {
+    for (const src of candidates) {
+      try {
+        const got = await getChapter(src, chapterId!);
+        if (got && got.pages && got.pages.length > 0) return { got, src };
+      } catch { /* kandidat berikutnya */ }
+    }
+    return null;
+  })(), 400);
+  if (found) {
+    chapter = found.got;
+    readSource = found.src;
+  }
+  // Lazy (budget habis / semua gagal): JANGAN 404 server-side — island
+  // self-fetch; 404 baru diputuskan client bila semua kandidat tanpa pages.
+}
+
+const readSlug = resolved && chapter && readSource === resolved.source ? resolved.sourceSlug : (candidates.length > 0 ? (resolved!.sources.find((l) => l.source === readSource)?.sourceSlug ?? resolved!.sourceSlug) : '');
+const series = chapter && resolved ? await budget(getSeries(readSource, readSlug), 250) : null;
+
+// Judul bab dari id bila data belum tiba (slug-chapter-123 / uuid → tanpa no).
+const numFromId = (id: string): string | null => id.match(/chapter-(\d+(?:\.\d+)?)/)?.[1] ?? null;
+const chapterNum = chapter?.chapter_number ?? Number(numFromId(chapterId!) ?? 0);
+const pages = (chapter?.pages || []).map((p) => ({ ...p }));
+const lazy = !notFound && chapter === null;
+
+if (notFound) Astro.response.status = 404;
+---
+
+{notFound ? (
+  <NotFoundShell title="404 — Halaman tidak ditemukan">
+    <NotFoundPage client:load />
+  </NotFoundShell>
+) : (
+  <html lang="id" class="dark">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>{`${series?.title || slug} — Ch. ${chapterNum} - Oktz.`}</title>
+      <meta name="robots" content="noindex, nofollow" />
+      <link rel="canonical" href={`/${type}/${slug}/${chapterId}`} />
+      <ClientRouter fallback="swap" />
+      <script src="@/scripts/nav-skeleton.ts"></script>
+    </head>
+    <body class="min-h-screen bg-base text-primary antialiased">
+      <ReaderShell
+        client:load
+        source={readSource}
+        slug={readSlug}
+        chapterId={chapterId!}
+        chapterNumber={chapterNum}
+        chapterTitle={chapter?.title ?? null}
+        seriesTitle={series?.title ?? ''}
+        seriesType={series?.type ?? null}
+        type={resolved!.type}
+        pages={lazy ? null : pages}
+        fetchCandidates={lazy ? candidates : undefined}
+        apiUrl={API_URL}
+      />
+    </body>
+  </html>
+)}

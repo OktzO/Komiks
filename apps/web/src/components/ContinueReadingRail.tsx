@@ -1,3 +1,6 @@
+// Astro server-render pass-through → attr harus lowercase HTML-valid (React TS tidak
+// mengenalnya; spread tanpa cast lolos excess-property check).
+const NO_REF = { referrerpolicy: "no-referrer" };
 import { useEffect, useState } from 'react';
 import { getAuthApiUrl, safeType, typedChapterUrl } from '@/lib/api';
 
@@ -85,7 +88,7 @@ export function ContinueReadingRail() {
             >
               <div className="w-10 h-14 shrink-0 overflow-hidden rounded bg-bg-secondary border border-border-subtle flex items-center justify-center text-xs text-muted">
                 {item.cover_image ? (
-                  <img src={item.cover_image} alt="" className="h-full w-full object-cover" loading="lazy" referrerpolicy="no-referrer" />
+                  <img src={item.cover_image} alt="" className="h-full w-full object-cover" loading="lazy" {...NO_REF} />
                 ) : (
                   <span className="font-mono text-[10px]">Ch.{item.chapter_number}</span>
                 )}
