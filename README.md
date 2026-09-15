@@ -3,7 +3,7 @@
 > Platform baca manga/manhwa/manhua multi-source, di-backbone oleh 4 Cloudflare Workers (round-robin load balancing), D1 sharded, dan storage Backblaze B2 multi-account. Frontend Astro 7 (hybrid SSR + React islands) yang di-deploy sebagai Cloudflare Worker dengan static assets.
 
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)
-![Astro](https://img.shields.io/badge/Astro-7-orange?logo=astro) ![React](https://img.shields.io/badge/React-19-island-blue?logo=react)
+![Astro](https://img.shields.io/badge/Astro-7-orange?logo=astro) ![React](https://img.shields.io/badge/React_19-islands-282C34?logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
 ![Hono](https://img.shields.io/badge/Hono-3-E36002)
 ![Backblaze B2](https://img.shields.io/badge/Storage-Backblaze_B2-E21E29?logo=backblaze&logoColor=white)
