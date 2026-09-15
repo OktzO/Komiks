@@ -214,7 +214,7 @@ Komiks/
 - **Status**: `mapStatusText` terpusat (`packages/shared/src/status.ts`) — 5 adapter nggak pernah default `'ongoing'` lagi; tanpa info source → `'unknown'`. UI: tamat → "End", unknown → "-" (halaman detail; disembunyikan di kartu search/home). DB tetap 4-value (di-sanitize `upsertSeries`, status known tidak pernah tertimpa).
 - **Update chapter 24 jam (lazy, user-triggered)**: fresh TTL `series:full`/`series:detail`/`chapters:list` 10 menit → **24 jam** (stale 7d). Buka setelah expire → stale instan + 1 revalidate background → persist snapshot (`chapter_count`, `last_scraped_at`, status tamat) ke D1 + mirror cache chapter + invalidate cache `/sources`.
 - **Anti dobel**: singleflight dua lapis di `readThroughCache` — Map in-isolate sinkron (5 request bersamaan = 1 `load()`, dibuktikan unit test) + lock KV antar-isolate best-effort (KV nggak punya atomic conditional-write lagi; upgrade path = Durable Object kalau perlu dedupe global keras).
-- Realita deploy web: domain `oktzz.xyz` ter-bind ke worker `manga-web` (build Astro), preview `manga-web-astro` worker terpisah — dua-duanya harus di-deploy (lihat `apps/web/DEPLOY.md`).
+- Realita deploy web: satu worker saja — `manga-web` (production `oktzz.xyz` + preview `manga-web.oktz.workers.dev`); worker preview lama `manga-web-astro` sudah dihapus. API = `manga-api` dst seperti biasa.
 
 **2026-09-10 — Era URL kanonik typed** ([spec](docs/superpowers/specs/2026-09-08-canonical-typed-streaming-design.md), commit `641a835`):
 

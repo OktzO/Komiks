@@ -27,14 +27,11 @@ npm run deploy       # = astro build && wrangler deploy  → worker `manga-web` 
 - assets: `../client` (binding ASSETS)
 - KV `SESSION` auto-provision (Astro sessions — tidak dipakai app, biarkan)
 
-Ada worker KEDUA `manga-web-astro` (preview `manga-web-astro.oktz.workers.dev`).
-Deploy ke preview: salin `dist/server/wrangler.json` → ganti `"name":
-"manga-web-astro"` (opsional: id SESSION `656236bfc878468bafc64d1c80304e9a`)
-→ simpan DI DALAM `dist/server/` (path assets relatif ke config) → `npx wrangler
-deploy --config dist/server/wrangler.astro.json`. Kedua worker harus di-deploy
-agar kode nyambung di production & preview.
+Preview URL worker = `https://manga-web.<account>.workers.dev` (aktifkan
+workers.dev di dashboard bila 404). Worker preview lama `manga-web-astro`
+SUDAH DIHAPUS (2026-09-15) — satu-satunya web worker: `manga-web`.
 
-## Env vars (dashboard Worker `manga-web-astro` → Settings → Variables)
+## Env vars (dashboard Worker `manga-web` → Settings → Variables)
 
 | Var | Nilai production | Catatan |
 |---|---|---|
@@ -52,14 +49,13 @@ di dashboard. Di GitHub Actions: secrets → env pada step build.
 
 `.env.local` (gitignored) dipakai dev + build lokal. Jangan commit.
 
-## Custom domain cutover
+## Custom domain (kondisi saat ini)
 
-1. Deploy worker baru → dapat URL `manga-web-astro.<account>.workers.dev`.
-2. Uji paritas di URL itu: halaman detail, reader, bookmark, admin, sitemap.
-3. Domain oktzz.xyz: Workers & Pages → manga-web-astro → Settings →
-   Domains & Routes → add custom domain `oktzz.xyz` (atau re-point record).
-4. Matikan worker `manga-web` (Next.js/OpenNext) setelah aman.
-5. Hapus `apps/web` dari repo setelah 1–2 minggu stabil.
+Cutover SELESAI: `oktzz.xyz` sudah ter-bind ke worker `manga-web` (build Astro)
+sejak 2026-09-15. Alur deploy normal: `npm run deploy` → worker `manga-web`
+langsung ter-update. Worker `manga-web-astro` (eks percobaan Astro) sudah
+dihapus; namespace KV `SESSION` lamanya (`656236...`) boleh dihapus dari
+dashboard.
 
 ## Rendering matrix
 
