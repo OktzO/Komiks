@@ -53,9 +53,10 @@ interface ChapterDetailData {
 // ---- helpers ----------------------------------------------------------------
 
 const statusMap = (n?: number): Series['status'] => {
+  if (n === 1) return 'ongoing';
   if (n === 2) return 'completed';
   if (n === 3) return 'hiatus';
-  return 'ongoing';
+  return 'unknown';
 };
 
 const typeFrom = (d: ListItem): Series['type'] => {

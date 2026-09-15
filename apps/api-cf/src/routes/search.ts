@@ -4,6 +4,7 @@ import type { Series } from '@manga-platform/shared';
 import type { Env, Context } from '../lib/context';
 import { getDb, json, sha256Hex } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
+import { withBudget } from './reader.ts';
 
 export const router = new Hono<{ Bindings: Env }>();
 
@@ -32,12 +33,14 @@ const parseLimit = (raw: string | undefined, def = 20, max = 50): number => {
 };
 
 router.get('/search', async (c: Context) => {
+  const t0 = Date.now();
   const q = c.req.query('q')?.trim() || '';
   const limit = parseLimit(c.req.query('limit'));
 
   // KV cache lookup (now also caches empty-query homepage result).
   const cacheKey = `search:${await sha256Hex(q)}`;
   const cached = await c.env.CACHE_KV.get(cacheKey, { type: 'json' });
+  console.log(`[search-timing] kv-get=${Date.now() - t0}ms q=${q.slice(0, 20)}`);
   if (cached) {
     c.header('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
     return json(c, { ...(cached as object), cached: true });
@@ -63,6 +66,7 @@ router.get('/search', async (c: Context) => {
     const r = await db.prepare('SELECT * FROM series ORDER BY updated_at DESC LIMIT ?1').bind(limit).all();
     localResults = r.results ?? [];
   }
+  console.log(`[search-timing] d1=${Date.now() - t0}ms q=${q.slice(0, 20)}`);
 
   // Empty query → homepage feed. Merge local D1 rows WITH live homepage
   // listings from all sources, deduped by normalized title so a manga on
@@ -75,14 +79,20 @@ router.get('/search', async (c: Context) => {
       { key: 'shinigami', start: Date.now() },
       { key: 'manhwaindo', start: Date.now() },
     ];
-    const settled = await Promise.allSettled(
-      sourceDefs.map(({ key, start }) =>
-        retryUpstream(async () => {
-          const a = getAdapter(key, c.env as unknown as AdapterEnv);
-          if (!a) throw new Error(`${key} adapter unavailable`);
-          return { key, start, results: await a.search({ q: '', limit: limit > 20 ? limit : 24 }) };
-        })
-      )
+    // Budget total 6.5s: source stall (Komiku DDoS-guard, 15s×attempt) tidak
+    // boleh block response — frontend timeout di 8s. Partial results tetap ok.
+    const settled = await withBudget(
+      Promise.allSettled(
+        sourceDefs.map(({ key, start }) =>
+          retryUpstream(async () => {
+            const a = getAdapter(key, c.env as unknown as AdapterEnv);
+            if (!a) throw new Error(`${key} adapter unavailable`);
+            return { key, start, results: await a.search({ q: '', limit: limit > 20 ? limit : 24 }) };
+          })
+        )
+      ),
+      6500,
+      [] as PromiseSettledResult<{ key: string; start: number; results: Series[] }>[]
     );
 
     const allResults: Record<string, { data: any; sources: string[] }> = {};
@@ -111,7 +121,8 @@ router.get('/search', async (c: Context) => {
     for (const row of localResults as unknown as Array<Record<string, unknown>>) {
       addResult(row, (row.source as string) || 'local');
     }
-    const merged = Object.values(allResults).slice(0, limit > 20 ? limit : 60);
+    // Flatten FeedItem → row (frontend searchMerged baca m.title/m.slug langsung).
+    const merged = Object.values(allResults).map((v) => ({ ...v.data, sources: v.sources })).slice(0, limit > 20 ? limit : 60);
     const payload = { data: merged, total: merged.length, sources_queried: sourcesQueried, cached: false };
     c.executionCtx.waitUntil(
       c.env.CACHE_KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: 300 }).catch(() => {})
@@ -129,21 +140,27 @@ router.get('/search', async (c: Context) => {
     { key: 'manhwaindo', start: Date.now() },
   ];
 
-  const settled = await Promise.allSettled(
-    sourceDefs.map(({ key, start }) =>
-      retryUpstream(async () => {
-        const a = getAdapter(key, c.env as unknown as AdapterEnv);
-        if (!a) throw new Error(`${key} adapter unavailable`);
-        sourcesQueried.push(key);
-        return { key, start, results: await a.search({ q, limit }) };
-      })
-    )
+  // Budget total 6.5s (sama dengan path empty-q) — partial results tetap dikirim.
+  const settled = await withBudget(
+    Promise.allSettled(
+      sourceDefs.map(({ key, start }) =>
+        retryUpstream(async () => {
+          const a = getAdapter(key, c.env as unknown as AdapterEnv);
+          if (!a) throw new Error(`${key} adapter unavailable`);
+          return { key, start, results: await a.search({ q, limit }) };
+        })
+      )
+    ),
+    6500,
+    [] as PromiseSettledResult<{ key: string; start: number; results: Series[] }>[]
   );
 
   const resultsBySource: Record<string, Series[]> = {};
+  console.log(`[search-timing] adapters-done=${Date.now() - t0}ms settled=${settled.length} q=${q.slice(0, 20)}`);
   for (const r of settled) {
     if (r.status === 'fulfilled') {
       resultsBySource[r.value.key] = r.value.results;
+      sourcesQueried.push(r.value.key);
       recordHealth(c, r.value.key, r.value.start, true);
     } else {
       const reason = String((r as PromiseRejectedResult).reason ?? '');
@@ -173,7 +190,8 @@ router.get('/search', async (c: Context) => {
   for (const s of resultsBySource.shinigami ?? []) addResult(s, 'shinigami');
   for (const s of resultsBySource.manhwaindo ?? []) addResult(s, 'manhwaindo');
 
-  const merged = Object.values(allResults).slice(0, limit);
+  // Flatten FeedItem → row (frontend searchMerged baca m.title/m.slug langsung).
+  const merged = Object.values(allResults).map((v) => ({ ...v.data, sources: v.sources })).slice(0, limit);
   const payload = { data: merged, total: merged.length, sources_queried: sourcesQueried, cached: false };
 
   c.executionCtx.waitUntil(

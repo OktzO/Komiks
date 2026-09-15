@@ -1,7 +1,7 @@
 ---
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import { SourceBadge } from '@/components/SourceBadge';
-import { searchMerged, safeType, typedUrl, type MergedManga } from '@/lib/api';
+import { searchMerged, safeType, typedUrl, statusKnown, statusLabel, type MergedManga } from '@/lib/api';
 
 export const prerender = false;
 
@@ -130,7 +130,7 @@ if (q) {
                     {m.type && (
                       <span class="px-2 py-0.5 border border-border-subtle rounded-full text-muted capitalize">{m.type}</span>
                     )}
-                    {m.status && <span class="text-muted capitalize">{m.status.replace(/-/g, ' ')}</span>}
+                    {statusKnown(m.status) && <span class="text-muted">{statusLabel(m.status)}</span>}
                   </div>
                   <SourceBadge sources={m.sources?.length ? m.sources : [m.source]} />
                 </div>

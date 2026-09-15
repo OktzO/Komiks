@@ -4,6 +4,7 @@
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { decodeHtmlEntities } from '@manga-platform/shared/entities';
+import { mapStatusText } from '@manga-platform/shared/status';
 import { MANHWA_BASE, fetchHtml, fetchRobots, isPathAllowed } from './client.js';
 import type { ManhwaFetchEnv, RobotsResult } from './client.js';
 
@@ -51,7 +52,7 @@ const parseSearchHtml = (html: string): Series[] => {
         source_url: href.startsWith('http') ? href : MANHWA_BASE + href,
         cover_image: cover_image,
         type,
-        status: 'ongoing',
+        status: 'unknown',
       } as Series);
     }
   }
@@ -61,7 +62,7 @@ const parseSearchHtml = (html: string): Series[] => {
 // Parse detail page: H1, alternative, genres, synopsis, imptdt label pairs.
 const parseDetailHtml = (html: string): {
   title: string; alt_title: string | null; synopsis: string | null; cover_image: string | null;
-  author: string | null; status: 'ongoing' | 'completed'; type: 'manga' | 'manhwa' | 'manhua';
+  author: string | null; status: 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown'; type: 'manga' | 'manhwa' | 'manhua';
   genres: string[];
 } => {
   const title = (decodeHtmlEntities(html.match(/<h1[^>]*class="[^"]*entry-title[^"]*"[^>]*>([^<]+)<\/h1>/)?.[1]?.trim() ?? '') ?? '');
@@ -80,8 +81,7 @@ const parseDetailHtml = (html: string): {
     .map((m) => [m[1].trim().toLowerCase(), (m[2] ?? m[3] ?? '').trim()] as const);
   const find = (label: string): string | null => imptdt.find(([l]) => l === label)?.[1] ?? null;
 
-  const statusRaw = (find('status') ?? '').toLowerCase();
-  const status = (statusRaw.includes('completed') || statusRaw.includes('selesai') ? 'completed' : 'ongoing') as 'ongoing' | 'completed';
+  const status = mapStatusText(find('status'));
   const typeRaw = (find('type') ?? '').toLowerCase();
   const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
   const authorRaw = find('posted by');

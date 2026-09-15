@@ -9,7 +9,8 @@
     "./types": "./types.ts",
     "./r2-routing": "./src/r2-routing.ts",
     "./http": "./src/http.ts",
-    "./entities": "./src/entities.ts"
+    "./entities": "./src/entities.ts",
+    "./status": "./src/status.ts"
   },
   "dependencies": {
     "zod": "^3.25.76"

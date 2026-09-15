@@ -6,6 +6,7 @@
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { decodeHtmlEntities } from '@manga-platform/shared/entities';
+import { mapStatusText } from '@manga-platform/shared/status';
 import { THRIVE_BASE, fetchHtml, parseNextData, fetchRobots, isPathAllowed } from './client.js';
 import type { RobotsResult } from './client.js';
 
@@ -52,8 +53,7 @@ const toSeries = (d: ThriveDetail): Series => {
   // default 'manga'. Part 3 refines via D1 aggregation.
   const g = (d.tags || []).join(' ').toLowerCase();
   const type = (g.includes('manhua') ? 'manhua' : g.includes('manhwa') ? 'manhwa' : 'manga') as 'manga' | 'manhwa' | 'manhua';
-  const st = (d.status || '').toLowerCase();
-  const status = (st === 'completed' ? 'completed' : 'ongoing') as 'ongoing' | 'completed';
+  const status = mapStatusText(d.status);
   return {
     slug: d.id,
     external_id: d.id,
@@ -106,7 +106,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
             title,
             cover_image: m[2],
             type: 'manga',
-            status: 'ongoing',
+            status: 'unknown',
           } as Series);
         }
         return items.slice(0, limit);
@@ -116,26 +116,26 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
         'sci-fi', 'slice-of-life', 'shounen', 'shoujo', 'mystery', 'seinen',
       ];
       const seen = new Map<string, Series>();
-      for (const g of genreSlugs) {
-        try {
-          const html = await fetchHtml(`${THRIVE_BASE}/genre/${g}`, 10000);
-          const links = Array.from(html.matchAll(/href="\/title\/([0-9a-f-]{36})"[^>]*>[\s\S]*?<div[^>]*>([^<]{2,120})<\/div>/g));
-          for (const m of links) {
-            const id = m[1];
-            const title = m[2].trim();
-            if (!title.toLowerCase().includes(query)) continue;
-            seen.set(id, {
-              slug: id,
-              external_id: id,
-              source: 'thrive',
-              source_url: `${THRIVE_BASE}/title/${id}/`,
-              title,
-              cover_image: null,
-              type: 'manga',
-              status: 'ongoing',
-            } as Series);
-          }
-        } catch { /* skip failed genre page */ }
+      // Paralel (dulu sekuensial 12 fetch × 10s timeout = 12-120s → hang /api/search).
+      const pages = await Promise.allSettled(genreSlugs.map((g) => fetchHtml(`${THRIVE_BASE}/genre/${g}`, 10000)));
+      for (const page of pages) {
+        if (page.status !== 'fulfilled') continue; /* skip failed genre page */
+        const links = Array.from(page.value.matchAll(/href="\/title\/([0-9a-f-]{36})"[^>]*>[\s\S]*?<div[^>]*>([^<]{2,120})<\/div>/g));
+        for (const m of links) {
+          const id = m[1];
+          const title = m[2].trim();
+          if (!title.toLowerCase().includes(query)) continue;
+          seen.set(id, {
+            slug: id,
+            external_id: id,
+            source: 'thrive',
+            source_url: `${THRIVE_BASE}/title/${id}/`,
+            title,
+            cover_image: null,
+            type: 'manga',
+            status: 'unknown',
+          } as Series);
+        }
       }
       return Array.from(seen.values()).slice(0, limit);
     },
@@ -252,7 +252,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
           title,
           cover_image: m[2],
           type: 'manga',
-          status: 'ongoing',
+          status: 'unknown',
         } as Series);
       }
       return items;

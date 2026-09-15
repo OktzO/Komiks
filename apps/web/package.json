@@ -9,7 +9,7 @@
     "build": "astro build",
     "preview": "wrangler dev",
     "deploy": "astro build && wrangler deploy",
-    "test": "bun test test/canonical-url.test.ts && bun test test/round-robin.test.ts",
+    "test": "bun test test/canonical-url.test.ts && bun test/round-robin.test.ts",
     "lint": "astro check"
   },
   "dependencies": {

@@ -95,6 +95,10 @@ const resetFailures = (c: Context, key: string): void => {
   );
 };
 
+// Cold-path singleflight per-isolate (lihat langkah 3b di readThroughCache).
+// Entry dihapus di finally → hanya promise yang sedang in-flight yang tinggal.
+const coldInflight = new Map<string, Promise<{ source: 'fresh' | 'stale'; data: unknown }>>();
+
 /**
  * Read-through cache with stale-while-revalidate + circuit breaker.
  *
@@ -169,8 +173,8 @@ export const readThroughCache = async <T>(
     try {
       const peer = await peerFallback();
       if (peer != null) {
-        c.env.CACHE_KV.put(freshKey, JSON.stringify(peer), { expirationTtl: freshTtl }).catch(() => {});
-        c.env.CACHE_KV.put(staleKey, JSON.stringify(peer), { expirationTtl: staleTtl }).catch(() => {});
+        cachePut(c, freshKey, peer, freshTtl);
+        cachePut(c, staleKey, peer, staleTtl);
         resetFailures(c, circuitKey);
         closeCircuit(c, circuitKey);
         return { source: 'fresh', data: peer };
@@ -178,21 +182,56 @@ export const readThroughCache = async <T>(
     } catch { /* peer error → fall through to origin */ }
   }
 
-  try {
-    const data = await load();
-    // Write both tiers.
-    c.env.CACHE_KV.put(freshKey, JSON.stringify(data), { expirationTtl: freshTtl }).catch(() => {});
-    c.env.CACHE_KV.put(staleKey, JSON.stringify(data), { expirationTtl: staleTtl }).catch(() => {});
-    resetFailures(c, circuitKey);
-    closeCircuit(c, circuitKey);
-    return { source: 'fresh', data };
-  } catch (e) {
-    const n = await incrementFailures(c, circuitKey, circuitTtl);
-    if (n >= circuitThreshold) openCircuit(c, circuitKey, circuitTtl);
-    if (serveStaleOnError && stale !== null) {
-      return { source: 'stale', data: stale };
+  // 3b. Singleflight pada cold path. Dua lapis:
+  //  (1) Map in-isolate sinkron — request concurrent yang mendarat di isolate
+  //      yang sama SHARING satu Promise fetch (race get-then-put KV dihilangkan
+  //      untuk kasus paling umum "5 user buka bersamaan").
+  //  (2) Lock KV lintas-isolate/colo (best-effort — KV tanpa atomic onlyIf dan
+  //      read lintas-colo eventual ≤60s): waiter poll ≤3s lalu ikut fetch bila
+  //      lock lepas. Worst case lintas-colo tetap beberapa duplikat/24h —
+  //      semua downstream write idempoten.
+  type Cached<T2> = { source: 'fresh' | 'stale'; data: T2 };
+  const ex = coldInflight.get(cacheKey) as Promise<Cached<T>> | undefined;
+  if (ex) return await ex;
+
+  const flight = (async (): Promise<Cached<T>> => {
+    if (!circuitOpen) {
+      const held = await c.env.CACHE_KV.get(lockKey).catch(() => null);
+      if (held !== null) {
+        const cleared = await waitForLockClear(c, lockKey, 3000);
+        if (cleared) {
+          const raced = await cacheGet<T>(c, freshKey);
+          if (raced !== null) return { source: 'fresh', data: raced };
+        }
+      } else {
+        await c.env.CACHE_KV.put(lockKey, '1', { expirationTtl: lockTtl }).catch(() => {});
+      }
     }
-    throw e;
+    try {
+      const data = await load();
+      // Write both tiers (waitUntil: jangan floating — bisa ter-freeze
+      // setelah response dikirim).
+      cachePut(c, freshKey, data, freshTtl);
+      cachePut(c, staleKey, data, staleTtl);
+      resetFailures(c, circuitKey);
+      closeCircuit(c, circuitKey);
+      return { source: 'fresh', data };
+    } catch (e) {
+      const n = await incrementFailures(c, circuitKey, circuitTtl);
+      if (n >= circuitThreshold) openCircuit(c, circuitKey, circuitTtl);
+      if (serveStaleOnError && stale !== null) {
+        return { source: 'stale', data: stale };
+      }
+      throw e;
+    } finally {
+      if (!circuitOpen) c.env.CACHE_KV.delete(lockKey).catch(() => {});
+    }
+  })();
+  coldInflight.set(cacheKey, flight as Promise<Cached<unknown>>);
+  try {
+    return await flight;
+  } finally {
+    coldInflight.delete(cacheKey);
   }
 };
 

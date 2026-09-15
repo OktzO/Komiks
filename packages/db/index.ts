@@ -425,16 +425,19 @@ export const db = (client: D1Database): Db => {
     upsertSeries: async (p) => {
       const genres = p.genres ? JSON.stringify(p.genres) : null;
       const tags = p.tags ? JSON.stringify(p.tags) : null;
+      // 'unknown' → NULL: insert jadi 'ongoing' (DB CHECK), update tidak
+      // menimpa status known yang sudah tersimpan (CASE COALESCE di bawah).
+      const status = p.status && p.status !== 'unknown' ? p.status : null;
       await prep(
         `INSERT INTO series (slug, external_id, source, title, synopsis, type, status, author, artist, cover_image, genres, tags, alt_titles, source_url, cover_r2_key, language, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, unixepoch())
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, COALESCE(?7, 'ongoing'), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, unixepoch())
          ON CONFLICT(slug) DO UPDATE SET
-           title=excluded.title, synopsis=excluded.synopsis, status=excluded.status,
+           title=excluded.title, synopsis=excluded.synopsis, status=COALESCE(excluded.status, series.status),
            author=excluded.author, artist=excluded.artist, cover_image=excluded.cover_image,
            genres=excluded.genres, tags=excluded.tags, alt_titles=excluded.alt_titles,
            source_url=excluded.source_url, cover_r2_key=excluded.cover_r2_key,
            language=excluded.language, updated_at=unixepoch()`
-      ).bind(p.slug, p.external_id ?? null, p.source, p.title, p.synopsis ?? null, p.type, p.status ?? 'ongoing', p.author ?? null, p.artist ?? null, p.cover_image ?? null, genres, tags, p.alt_titles ?? null, p.source_url ?? null, p.cover_r2_key ?? null, p.language ?? null).run();
+      ).bind(p.slug, p.external_id ?? null, p.source, p.title, p.synopsis ?? null, p.type, status, p.author ?? null, p.artist ?? null, p.cover_image ?? null, genres, tags, p.alt_titles ?? null, p.source_url ?? null, p.cover_r2_key ?? null, p.language ?? null).run();
       return { slug: p.slug };
     },
 

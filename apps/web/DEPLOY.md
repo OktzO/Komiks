@@ -19,13 +19,20 @@ Butuh **Node >= 22.12**.
 ## Deploy
 
 ```bash
-npm run deploy       # = astro build && wrangler deploy
+npm run deploy       # = astro build && wrangler deploy  → worker `manga-web` (production; domain oktzz.xyz ter-bind ke sini — cek via GET /accounts/{a}/workers/domains)
 ```
 
 `wrangler deploy` membaca `dist/server/wrangler.json` (auto-generated):
-- name: `manga-web-astro`
+- name: `manga-web` ← production domain `oktzz.xyz` ter-bind ke worker ini (2026-09-15)
 - assets: `../client` (binding ASSETS)
 - KV `SESSION` auto-provision (Astro sessions — tidak dipakai app, biarkan)
+
+Ada worker KEDUA `manga-web-astro` (preview `manga-web-astro.oktz.workers.dev`).
+Deploy ke preview: salin `dist/server/wrangler.json` → ganti `"name":
+"manga-web-astro"` (opsional: id SESSION `656236bfc878468bafc64d1c80304e9a`)
+→ simpan DI DALAM `dist/server/` (path assets relatif ke config) → `npx wrangler
+deploy --config dist/server/wrangler.astro.json`. Kedua worker harus di-deploy
+agar kode nyambung di production & preview.
 
 ## Env vars (dashboard Worker `manga-web-astro` → Settings → Variables)
 

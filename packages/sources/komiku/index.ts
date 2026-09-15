@@ -4,6 +4,7 @@
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { decodeHtmlEntities } from '@manga-platform/shared/entities';
+import { mapStatusText } from '@manga-platform/shared/status';
 import { KOMIKU_SELECTORS } from './selectors.js';
 import { fetchRobots, isPathAllowed, KOMIKU_BASE, KOMIKU_UA, KOMIKU_REFERER } from './client.js';
 import type { RobotsResult } from './client.js';
@@ -55,7 +56,7 @@ const parseSearchHtml = (html: string, _sel: typeof KOMIKU_SELECTORS.search): Se
       source_url: href.startsWith('http') ? href : KOMIKU_BASE + href,
       cover_image,
       type,
-      status: 'ongoing',
+      status: 'unknown',
     } as Series;
   }).filter((s) => s.title);
 };
@@ -141,7 +142,7 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
   };
   const author = findVal(/^Author:/i);
   const statusRaw = findVal(/^Status:/i);
-  const status = statusRaw ? (statusRaw.toLowerCase().includes('end') ? 'completed' : 'ongoing') : 'ongoing';
+  const status = mapStatusText(statusRaw);
   // Alt titles ("Judul Alternatif" row) — used for dedup matching + search.
   const altTitlesRaw = findVal(/^Judul Alternatif:/i) ?? findVal(/^Judul Lain:/i);
   const alt_titles = (altTitlesRaw ?? '')

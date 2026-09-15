@@ -2,7 +2,8 @@
 
 ## Prasyarat
 - Cloudflare account (D1, KV, Workers)
-- Node 20+ (build) + Wrangler 4 (`@opennextjs/cloudflare`)
+- **Node >=22.12** untuk build web Astro (Astro 7 tidak dukung Node 20) + Wrangler 4
+- API worker: wrangler 3.114 dari root node_modules (jangan wrangler 4 + compat lama = error 1042)
 
 ## 1. Buat resources CF
 ```bash
@@ -11,14 +12,10 @@ npx wrangler kv namespace create CACHE_KV  # catat id → wrangler.toml
 ```
 Update `apps/api-cf/wrangler.toml` dengan ID asli. Storage pakai Backblaze B2 (bukan R2) — credentials di-set via `B2_ACCOUNTS` secret JSON array.
 
-## 1b. Buat resources CF (web — ISR cache)
-```bash
-cd apps/web
-npx wrangler kv namespace create NEXT_INC_CACHE_KV
-# catat id → update apps/web/wrangler.jsonc, ganti "REPLACE_WITH_KV_NAMESPACE_ID"
-npx wrangler kv namespace create --preview NEXT_INC_CACHE_KV
-# catat preview_id → wrangler.jsonc jika perlu
-```
+## 1b. Web resources
+Tidak ada. Web Astro (`apps/web`) auto-provision 1 KV `SESSION` saat deploy pertama
+(`@astrojs/cloudflare` v14). ISR cache `NEXT_INC_CACHE_KV` zaman OpenNext sudah
+tidak dipakai — namespace lamanya boleh dihapus dari dashboard setelah cutover.
 
 ## 2. Simpan secrets
 ```bash
@@ -47,15 +44,22 @@ npx wrangler deploy
 ```
 Catat URL Worker (mis. `https://manga-api.<sub>.workers.dev`).
 
-## 5. Deploy Frontend (Worker via OpenNext)
+## 5. Deploy Frontend (Worker — Astro SSR + static assets)
 ```bash
 cd apps/web
-# Set API URL ke Worker deploy
-echo "NEXT_PUBLIC_API_URL=https://manga-api.xxx.workers.dev" > .env.local
-npx opennextjs-cloudflare build
-npx wrangler deploy   # config dari apps/web/wrangler.jsonc
+# Set API URL ke Worker deploy (client di-inline saat build; SSR baca process.env)
+cat > .env.local <<'EOF'
+PUBLIC_API_URL=https://manga-api.xxx.workers.dev
+PUBLIC_AUTH_API_URL=https://manga-api-2.xxx.workers.dev
+PUBLIC_SITE_URL=https://oktzz.xyz
+PUBLIC_TURNSTILE_SITE_KEY=<sitekey>
+EOF
+npm run deploy   # = astro build && wrangler deploy (worker: manga-web)
 ```
-Frontend jalan sebagai Worker (bukan Pages) dengan `nodejs_compat`. Tidak perlu `runtime='edge'` per-halaman — App Router default runtime sudah cocok.
+Frontend jalan sebagai Worker dengan static assets (`@astrojs/cloudflare` v14 — Pages
+tidak didukung lagi sejak adapter v13/Astro 6). Hybrid: halaman statis prerendered
+(zero-JS), detail/reader/admin SSR per-request. `public/_headers` utk aset statis;
+`src/middleware.ts` utk security headers response SSR. Detail: `apps/web/DEPLOY.md`.
 
 ## 6. Setup domain + WAF
 - Custom domain di Worker frontend + Worker API

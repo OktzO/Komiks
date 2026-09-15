@@ -1,9 +1,9 @@
 # Komiks — Platform Baca Komik Indonesia
 
-> Platform baca manga/manhwa/manhua multi-source, di-backbone oleh 4 Cloudflare Workers (round-robin load balancing), D1 sharded, dan storage Backblaze B2 multi-account. Frontend Next.js 16 yang di-deploy sebagai Cloudflare Worker via OpenNext.
+> Platform baca manga/manhwa/manhua multi-source, di-backbone oleh 4 Cloudflare Workers (round-robin load balancing), D1 sharded, dan storage Backblaze B2 multi-account. Frontend Astro 7 (hybrid SSR + React islands) yang di-deploy sebagai Cloudflare Worker dengan static assets.
 
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![Astro](https://img.shields.io/badge/Astro-7-orange?logo=astro) ![React](https://img.shields.io/badge/React-19-island-blue?logo=react)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
 ![Hono](https://img.shields.io/badge/Hono-3-E36002)
 ![Backblaze B2](https://img.shields.io/badge/Storage-Backblaze_B2-E21E29?logo=backblaze&logoColor=white)
@@ -56,6 +56,8 @@ Semua dokumen project — dikurasi supaya gampang dicari.
 | Search | FTS5 + LIKE fallback di D1, digabung live search ke 5 source |
 | Homepage | Hero spotlight, bento grid, trending, marquee update, genre pills, lanjut baca — feed 5 source dengan cache 12 jam |
 | Bookmark & history | Multi-source, guest-friendly (tampil walau belum login), sinkron antar perangkat saat login |
+| Status akurat | Label mengikuti data source: tamat → **End** (dot merah), jalan → **Ongoing** (dot hijau); source tanpa info status → **-** (adapter tidak pernah lagi ngarang "ongoing") |
+| Update chapter 24 jam | Lazy + anti dobel: selama < 24 jam nol request ke source; user buka setelah > 24 jam → stale disajikan instan + 1 revalidate background (singleflight Map isolate + lock KV) → chapter baru & status ter-persist ke D1 |
 | Login | Google OAuth + Cloudflare Turnstile captcha |
 | Status source | Halaman `/status` — passive health + latency per source |
 | Identify | Cari judul dari upload cover (perceptual hash, hamming ≤ 8) |
@@ -69,7 +71,7 @@ Semua dokumen project — dikurasi supaya gampang dicari.
 | Storage B2 multi-account | Hash-pick akun by key, quota-aware eviction (evict > 30 hari saat usage > 80%), 100% B2 (R2 dihapus) |
 | Image proxy B2-first | `/img/*` — serve dari B2 server-side (SigV4), edge-cache immutable 1 tahun, SSRF allowlist, hotlink guard |
 | Admin dashboard | Storage trend, source health, request stats, security events, moderasi user, LB settings, merge queue |
-| Read-through cache | Two-tier KV (fresh 10 min + stale 24 jam) + stampede protection + peer KV fallback |
+| Read-through cache | Two-tier KV + circuit breaker + peer KV fallback; series/chapters fresh 24 jam (stale 7 hari) — cold-start & revalidate di-coalesce singleflight |
 | Cron otomatis | Outbox flush, eviction, usage snapshot, homepage feed refresh + push ke peer |
 
 ## URL Kanonik
@@ -85,14 +87,14 @@ Satu-satunya format URL halaman. URL lama `/{source}/s/{slug}` sudah **dihapus t
 
 - API `GET /api/resolve/:slug` memetakan slug kanonik → source + `recommendedSource` + daftar source lain.
 - Salah type di URL → `permanentRedirect` otomatis ke type yang benar.
-- Semua link internal (homepage, search, bookmark, history, reader) dibangun via helper `typedUrl` / `typedChapterUrl` + `safeType` di `apps/web/lib/api.ts`.
+- Semua link internal (homepage, search, bookmark, history, reader) dibangun via helper `typedUrl` / `typedChapterUrl` + `safeType` di `apps/web/src/lib/api.ts`.
 
 ## Arsitektur
 
 ```
-4 Cloudflare Worker (round-robin LB)        Cloudflare Worker (OpenNext)
+4 Cloudflare Worker (round-robin LB)        Cloudflare Worker (Astro SSR + assets)
 ┌───────────────────────────────────────┐    ┌───────────────────────────────────────┐
-│  akun-1  manga-api     (fallback)     │    │  apps/web  manga-web                  │
+│  akun-1  manga-api     (fallback)     │    │  apps/web  manga-web  (Astro)        │
 │  akun-2  manga-api-2   (primary)      │◄──►│  pages/, components/, lib/            │
 │  akun-3  manga-api-3   (primary)      │    │  lib/api.ts (getAuthApiUrl, RR)       │
 │  akun-4  manga-api-4   (primary)      │    └───────────────────────────────────────┘
@@ -143,7 +145,7 @@ git clone git@github.com:OktzO/Komiks.git && cd Komiks
 npm install                    # npm workspaces
 
 npm run dev:api                # Worker API → http://localhost:8787
-npm run dev:web                # Next.js    → http://localhost:3000
+npm run dev:web                # Astro      → http://localhost:4321
 ```
 
 Setup pertama kali (D1, KV, secrets, migrations) → lihat [`docs/DEPLOY.md`](docs/DEPLOY.md).
@@ -160,14 +162,13 @@ bun apps/web/test/round-robin.test.ts
 bun apps/web/test/canonical-url.test.ts
 
 # Typecheck
-cd apps/web     && npx tsc --noEmit
+cd apps/web     && npx astro check
 cd apps/api-cf  && npx tsc --noEmit
 
-# E2E (butuh dev server + API)
-npx playwright test apps/web/e2e/
+# E2E — porting utk Astro: TODO (spec lama canonical-streaming belum dipindah)
 ```
 
-Total: **33 test file** di repo (api-cf 16, sources 5, db 4, lb 3, web 2, e2e 1, shared 1, vision 1).
+Total: **34 test file** di repo (api-cf 17, sources 6, db 4, lb 3, web 2, shared 1, vision 1). Catatan: `round-robin.test.ts` itu self-check assert langsung — jalankan `bun apps/web/test/round-robin.test.ts` (bukan `bun test`).
 
 ## Deploy
 
@@ -178,8 +179,8 @@ CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... npx wrangler deploy --config 
 CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... npx wrangler deploy --config apps/api-cf/wrangler.origin.toml   # akun-2 (primary)
 # idem wrangler.origin3.toml (akun-3), wrangler.origin4.toml (akun-4)
 
-# Web — Node 22 + wrangler 4 (OpenNext → Cloudflare Worker)
-cd apps/web && npx opennextjs-cloudflare build && npx wrangler deploy
+# Web — Node >=22 + wrangler 4 (Astro → Cloudflare Worker + static assets)
+cd apps/web && npm run deploy   # = astro build && wrangler deploy
 
 # Migrations ke semua 4 D1
 ./scripts/migrate-all-4.sh       # CF_TOKEN_AKUN1..4 di env
@@ -193,7 +194,7 @@ Mapping config: `wrangler.toml` = akun-1 · `wrangler.origin.toml` = akun-2 · `
 Komiks/
 ├── apps/
 │   ├── api-cf/           # Worker API (Hono) — routes/, lib/, test/ (16 file)
-│   └── web/              # Next.js 16 App Router — (canon)/, components/, lib/
+│   └── web/              # Astro 7 — src/pages (hybrid SSR), src/components (React islands), src/lib
 ├── packages/
 │   ├── db/               # D1 client + schema + migrations
 │   ├── shared/           # Zod types, murmur3, B2 key routing
@@ -206,6 +207,14 @@ Komiks/
 ```
 
 ## Perubahan Terbaru
+
+**2026-09-15 — Status akurat + sistem update chapter 24 jam + fix CORS preview**:
+
+- **Bug "chapter hilang" di `*.workers.dev`**: bukan API error — island client diblok CORS karena origin preview tidak ada di `ALLOWED_ORIGINS` (fail-closed). Kini include `*.oktz.workers.dev` (subdomain zona sendiri) — per-isolate worker di-set via raw `PUT /workers/scripts/{name}/secrets`.
+- **Status**: `mapStatusText` terpusat (`packages/shared/src/status.ts`) — 5 adapter nggak pernah default `'ongoing'` lagi; tanpa info source → `'unknown'`. UI: tamat → "End", unknown → "-" (halaman detail; disembunyikan di kartu search/home). DB tetap 4-value (di-sanitize `upsertSeries`, status known tidak pernah tertimpa).
+- **Update chapter 24 jam (lazy, user-triggered)**: fresh TTL `series:full`/`series:detail`/`chapters:list` 10 menit → **24 jam** (stale 7d). Buka setelah expire → stale instan + 1 revalidate background → persist snapshot (`chapter_count`, `last_scraped_at`, status tamat) ke D1 + mirror cache chapter + invalidate cache `/sources`.
+- **Anti dobel**: singleflight dua lapis di `readThroughCache` — Map in-isolate sinkron (5 request bersamaan = 1 `load()`, dibuktikan unit test) + lock KV antar-isolate best-effort (KV nggak punya atomic conditional-write lagi; upgrade path = Durable Object kalau perlu dedupe global keras).
+- Realita deploy web: domain `oktzz.xyz` ter-bind ke worker `manga-web` (build Astro), preview `manga-web-astro` worker terpisah — dua-duanya harus di-deploy (lihat `apps/web/DEPLOY.md`).
 
 **2026-09-10 — Era URL kanonik typed** ([spec](docs/superpowers/specs/2026-09-08-canonical-typed-streaming-design.md), commit `641a835`):
 
@@ -229,4 +238,6 @@ Penting yang sering kejadian — daftar lengkap di skill reference:
 - Redirect di server component **jangan dibungkus try/catch** — `NEXT_REDIRECT` adalah throw yang harus propagate.
 - Script Turnstile explicit render **wajib** param `&onload=onTurnstileLoad` di URL — tanpa itu widget tidak pernah muncul.
 - Token Cloudflare tipe `cfut_` tidak bisa POST (termasuk `wrangler secret put`) — set secret via raw `PUT /workers/scripts/{name}/secrets` (upsert).
+- Origin frontend baru (domain/preview workers.dev) **wajib** masuk secret `ALLOWED_ORIGINS` di semua worker API — fail-closed: tanpa itu semua island client (chapter list, switcher, bookmark) kena CORS dan `/img` menolak referer. Jangan pakai wildcard lintas-akun (corsMw selalu kirim `Allow-Credentials: true`).
+- Adapter source **dilarang** default status `'ongoing'` — pakai `mapStatusText`; nilai tak dikenal = `'unknown'` (UI render "-").
 - Dashboard chart kosong ~2 jam pertama setelah deploy (`db_usage_snapshot` butuh ≥ 2 titik cron).

@@ -115,6 +115,18 @@ export const getMangaSources = (source: string, sourceId: string) =>
 export const VALID_TYPES = ['manga', 'manhwa', 'manhua'] as const;
 export type ComicType = (typeof VALID_TYPES)[number];
 
+// Label status untuk UI: source bilang tamat → "End"; tidak ada info status
+// dari source ('unknown'/kosong) → "-" (jangan pernah ngarang "Ongoing").
+const STATUS_LABELS: Record<string, string> = {
+  ongoing: 'Ongoing',
+  completed: 'End',
+  hiatus: 'Hiatus',
+  cancelled: 'Cancelled',
+};
+export const statusLabel = (s?: string | null): string =>
+  !s || s === 'unknown' ? '-' : STATUS_LABELS[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
+export const statusKnown = (s?: string | null): boolean => !!s && s !== 'unknown';
+
 export const isValidType = (t: string): t is ComicType =>
   (VALID_TYPES as readonly string[]).includes(t);
 

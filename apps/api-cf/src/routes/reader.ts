@@ -384,6 +384,63 @@ const uploadToStorage = async (c: Context, opts: { source: string; slug: string;
   // Semua B2 gagal → proxy-only mode (response user tetap jalan).
 };
 
+// ─── Sistem update chapter 24 jam (lazy, user-triggered) ────────────────────
+// Sumber cek = readThroughCache: fresh tier 24h → tidak ada request ke source
+// selama < 24h. User buka page setelah 24h → stale hit → respons tetap stale
+// (instan) + SATU revalidate background dengan lock KV `l:{cacheKey}` —
+// 5 user bersamaan = tetap 1 request source (lock skip yang telat masuk).
+// Lock KV best-effort lintas-colo (read eventual ≤60s, tanpa atomic onlyIf —
+// docs KV Jun 2026): worst case beberapa duplikat check/hari per series;
+// semua write di bawah idempoten (UPSERT) → duplikat harmless.
+// Sinkronkan juga key chapters:list (dibaca island ChapterSection saat SSR
+// budget kelewat) supaya dua cache tidak beda umur.
+const SYNC_FRESH_TTL = 86400;
+const SYNC_STALE_TTL = 604800;
+
+const mirrorChaptersToCacheKey = (c: Context, chaptersKey: string, chapters: Chapter[]): void => {
+  c.executionCtx.waitUntil((async () => {
+    const payload = JSON.stringify({ data: chapters });
+    await c.env.CACHE_KV.put(`f:${chaptersKey}`, payload, { expirationTtl: SYNC_FRESH_TTL }).catch(() => {});
+    await c.env.CACHE_KV.put(`s:${chaptersKey}`, payload, { expirationTtl: SYNC_STALE_TTL }).catch(() => {});
+  })());
+};
+
+// Persist hasil source-check ke D1 (kanonik: series + manga_source_link).
+// Dipanggil HANYA dari loader readThroughCache (sudah ≤1×/24h + ter-lock via
+// `l:{cacheKey}`) — nol request source tambahan, tanpa gate sendiri. Semua
+// write idempoten (UPDATE nilai absolut) → cold-start multi-isolate yang
+// race tetap aman. 'unknown' tidak pernah menimpa status known di DB.
+const persistSeriesSnapshot = async (
+  c: Context,
+  source: string,
+  sourceSlug: string,
+  series: Series,
+  chapterCount: number
+): Promise<void> => {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const stmts = [
+      c.env.DB.prepare(
+        `UPDATE manga_source_link SET chapter_count = ?1, has_chapter_list = 1, last_scraped_at = ?2
+         WHERE source = ?3 AND source_slug = ?4`
+      ).bind(chapterCount, now, source, sourceSlug),
+    ];
+    if (series.status && series.status !== 'unknown') {
+      stmts.push(
+        c.env.DB.prepare(
+          `UPDATE series SET status = ?1, updated_at = unixepoch()
+           WHERE id = (SELECT manga_id FROM manga_source_link WHERE source = ?2 AND source_slug = ?3)
+             AND status != ?1`
+        ).bind(series.status, source, sourceSlug)
+      );
+    }
+    await c.env.DB.batch(stmts).catch(() => []);
+    // Invalidate cache /sources (chapter count + rekomendasi source bisa berubah).
+    await c.env.CACHE_KV.delete(`sources:${source}:${sourceSlug}`).catch(() => {});
+    await c.env.CACHE_KV.delete(`f:sources:${source}:${sourceSlug}`).catch(() => {});
+  } catch { /* best-effort — snapshot bukan jalur kritis */ }
+};
+
 // Consolidated series detail + chapters in a single Worker invocation.
 // GET /api/reader/:source/series/:sourceId/detail?lang=id
 // Returns { data: { ...series, chapters: [...] } }.
@@ -427,6 +484,10 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
           r = { series, chapters };
         }
         const { series, chapters } = r;
+        // 24h update system: persist snapshot ke D1 + mirror daftar chapter ke
+        // cache chapters:list (satu-satunya sumber = fetch yang lagi jalan ini).
+        c.executionCtx.waitUntil(persistSeriesSnapshot(c, source, sourceId, series, chapters.length));
+        mirrorChaptersToCacheKey(c, `chapters:list:${source}:${sourceId}:${lang}`, chapters);
         // Index chapterId → slug (KV 1 jam) supaya B2 cache-aside bisa resolve
         // slug dari chapterId (thrive pakai uuid yang tidak bisa di-parse).
         //
@@ -446,7 +507,7 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
         );
         return { data: { ...series, chapters } };
       },
-      { circuitKey: `reader:${source}:detail`, peerFallback: async () => {
+      { freshTtl: SYNC_FRESH_TTL, staleTtl: SYNC_STALE_TTL, circuitKey: `reader:${source}:detail`, peerFallback: async () => {
           const v = await peerKvGet(c.env, cacheKey);
           return v as { data: { chapters: Chapter[] } & Record<string, unknown> } | null;
         } }
@@ -477,7 +538,7 @@ router.get('/:source/series/:sourceId', async (c: Context) => {
       c,
       cacheKey,
       async () => ({ data: await retryUpstream(() => adapter.getSeries(sourceId)) }),
-      { circuitKey: `reader:${source}:detail`, peerFallback: async () => {
+      { freshTtl: SYNC_FRESH_TTL, staleTtl: SYNC_STALE_TTL, circuitKey: `reader:${source}:detail`, peerFallback: async () => {
           const v = await peerKvGet(c.env, cacheKey);
           return v as { data: Series } | null;
         } }
@@ -505,7 +566,7 @@ router.get('/:source/series/:sourceId/chapters', async (c: Context) => {
       c,
       cacheKey,
       async () => ({ data: await retryUpstream(() => adapter.listChapters(sourceId, { lang })) }),
-      { freshTtl: 300, circuitKey: `reader:${source}:detail`, peerFallback: async () => {
+      { freshTtl: SYNC_FRESH_TTL, staleTtl: SYNC_STALE_TTL, circuitKey: `reader:${source}:detail`, peerFallback: async () => {
           const v = await peerKvGet(c.env, cacheKey);
           return v as { data: Chapter[] } | null;
         } }

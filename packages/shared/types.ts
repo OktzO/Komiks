@@ -5,7 +5,9 @@ import { z } from 'zod';
 
 // ---- primitives / reusable enums -----------------------------------------
 export const SeriesType = z.enum(['manga', 'manhwa', 'manhua']);
-export const SeriesStatus = z.enum(['ongoing', 'completed', 'hiatus', 'cancelled']);
+// 'unknown' = sumber tidak punya info status → UI render '-'. DB CHECK series.status
+// tidak menerima 'unknown' — upsertSeries men-sanitize → 'ongoing' saat persist.
+export const SeriesStatus = z.enum(['ongoing', 'completed', 'hiatus', 'cancelled', 'unknown']);
 export const UserRole = z.enum(['user', 'admin']);
 export const LbProvider = z.enum(['cloudflare', 'vercel']);
 

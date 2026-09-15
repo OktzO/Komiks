@@ -8,7 +8,7 @@ import SourceBadge, { SOURCE_LABELS } from '@/components/SourceBadge';
 import { TYPE_META, TypeBadge } from '@/components/TypeBadge';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import { loadCanonicalQuick } from '@/lib/loadCanonical';
-import { API_URL } from '@/lib/api';
+import { API_URL, statusLabel, statusKnown } from '@/lib/api';
 
 export const prerender = false;
 
@@ -107,9 +107,11 @@ if (notFound) Astro.response.status = 404;
         {/* Meta badges — type (flag+glow) + status dengan indikator jelas */}
         <div class="flex items-center justify-center md:justify-start flex-wrap gap-2 mt-2.5">
           <TypeBadge type={series.type} />
-          <span class="inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded border border-border-default text-secondary capitalize">
-            <span class={`inline-block h-1.5 w-1.5 rounded-full ${series.status === 'ongoing' ? 'bg-success animate-pulse' : 'bg-muted'}`} aria-hidden="true" />
-            {series.status || 'N/A'}
+          <span class="inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded border border-border-default text-secondary">
+            {statusKnown(series.status) && (
+              <span class={`inline-block h-1.5 w-1.5 rounded-full ${series.status === 'ongoing' ? 'bg-success animate-pulse' : series.status === 'completed' ? 'bg-error' : 'bg-muted'}`} aria-hidden="true" />
+            )}
+            {statusLabel(series.status)}
           </span>
           <SourceBadge sources={allSources} size="sm" primary={resolved.source} />
         </div>
@@ -144,7 +146,7 @@ if (notFound) Astro.response.status = 404;
         </div>
         <div class="py-2.5">
           <span class="block font-mono text-[10px] font-black uppercase tracking-[0.2em] text-muted mb-1">Status</span>
-          <span class="text-secondary capitalize">{series.status || 'N/A'}</span>
+          <span class="text-secondary">{statusLabel(series.status)}</span>
         </div>
         <div class="py-2.5">
           <span class="block font-mono text-[10px] font-black uppercase tracking-[0.2em] text-muted mb-1">Source</span>

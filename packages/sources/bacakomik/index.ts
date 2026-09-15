@@ -5,6 +5,7 @@
 import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { decodeHtmlEntities } from '@manga-platform/shared/entities';
+import { mapStatusText } from '@manga-platform/shared/status';
 import { BACA_BASE, fetchHtml, fetchRobots, isPathAllowed } from './client.js';
 import type { BacaFetchEnv, RobotsResult } from './client.js';
 
@@ -56,7 +57,7 @@ const parseSearchHtml = (html: string): Series[] => {
         source_url: href.startsWith('http') ? href : BACA_BASE + href,
         cover_image: sanitizeCoverUrl(img),
         type,
-        status: 'ongoing',
+        status: 'unknown',
       } as Series);
     }
   }
@@ -66,7 +67,7 @@ const parseSearchHtml = (html: string): Series[] => {
 // Parse detail page: `.spe` label/value pairs, `.genre-info`, synopsis, cover.
 const parseDetailHtml = (html: string): {
   title: string; synopsis: string | null; cover_image: string | null;
-  author: string | null; status: 'ongoing' | 'completed'; type: 'manga' | 'manhwa' | 'manhua';
+  author: string | null; status: 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown'; type: 'manga' | 'manhwa' | 'manhua';
   genres: string[];
 } => {
   const titleRaw = html.match(/<h1[^>]*class="[^"]*entry-title[^"]*"[^>]*>([\s\S]*?)<\/h1>/)?.[1] ?? '';
@@ -83,8 +84,7 @@ const parseDetailHtml = (html: string): {
     .map((m) => [m[1].trim().toLowerCase(), m[2].replace(/<[^>]+>/g, '').trim()] as const);
   const find = (label: string): string | null => speSpans.find(([l]) => l === label)?.[1] ?? null;
 
-  const statusRaw = find('status')?.toLowerCase() ?? '';
-  const status = (statusRaw.includes('selesai') || statusRaw.includes('completed') ? 'completed' : 'ongoing') as 'ongoing' | 'completed';
+  const status = mapStatusText(find('status'));
   const typeRaw = (find('jenis komik') ?? '').toLowerCase();
   const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
   const authorRaw = find('author');
