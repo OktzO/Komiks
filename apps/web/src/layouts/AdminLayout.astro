@@ -2,7 +2,7 @@
 // Admin shell: sidebar fixed, navbar utama disembunyikan (bare layout).
 // Sidebar client island untuk pathname-based active state.
 import { ClientRouter } from 'astro:transitions';
-import AdminSidebar from '@/components/pages/AdminSidebar';
+import AdminTopbar from '@/components/pages/AdminTopbar';
 import '../styles/global.css';
 
 export interface Props {
@@ -25,8 +25,13 @@ const { title } = Astro.props;
     <script src="@/scripts/nav-skeleton.ts"></script>
   </head>
   <body class="bg-base text-primary min-h-screen antialiased">
-    <AdminSidebar client:load />
-    <div class="md:ml-20 p-4 md:p-8">
+    {/* client:only — SSR React admin islands kena CPU limit 10ms worker free
+        (measured 22-48ms cold) → error 1102 → 503 intermiten (2026-09-15).
+        Admin noindex, tak butuh SEO; render penuh di client. */}
+    <AdminTopbar client:only="react">
+      <div style="max-width:72rem;margin:0 auto;padding:3rem 1rem;font-size:.875rem;opacity:.6">Memuat navigasi…</div>
+    </AdminTopbar>
+    <div class="pt-24 p-4 md:p-8">
       <slot />
     </div>
   </body>
