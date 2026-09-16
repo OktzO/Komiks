@@ -30,7 +30,7 @@ export default function AdminTopbar() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchMe().then((u) => { if (!cancelled) setUser(u); });
+    fetchMe().then((u) => { if (!cancelled) setUser(u); }).catch(() => { if (!cancelled) setUser(null); });
     return () => { cancelled = true; };
   }, []);
 
@@ -38,9 +38,12 @@ export default function AdminTopbar() {
     href === '/admin' ? pathname === href : pathname === href || pathname.startsWith(href + '/');
 
   const handleLogout = async () => {
-    await logout();
-    setUser(null);
-    setOpen(false);
+    try {
+      await logout();
+    } finally {
+      setUser(null);
+      setOpen(false);
+    }
   };
 
   return (
@@ -56,7 +59,7 @@ export default function AdminTopbar() {
               key={l.href}
               href={l.href}
               aria-current={isActive(l.href) ? 'page' : undefined}
-              className={`px-3 py-2 text-sm rounded-full transition-colors ${isActive(l.href) ? 'text-base bg-accent' : 'text-secondary hover:text-primary hover:bg-bg-secondary'}`}
+              className={`px-3 py-2 text-sm rounded-full transition-colors ${isActive(l.href) ? 'text-sm bg-accent text-primary' : 'text-secondary hover:text-primary hover:bg-bg-secondary'}`}
             >
               {l.label}
             </a>
@@ -94,7 +97,7 @@ export default function AdminTopbar() {
             <span />
           </span>
         </button>
-        <nav id="admin-menu" className={open ? 'open' : ''} aria-hidden={!open} aria-label="Menu admin">
+        <nav id="admin-menu" className={open ? 'open' : ''} hidden={!open} aria-hidden={!open} aria-label="Menu admin">
           {NAV.map((l) => (
             <a
               key={l.href}
