@@ -1,0 +1,479 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import TosSectionHeader from '@/components/TosSectionHeader.astro';
+
+const SECTIONS = [
+  { num: '01', id: 'pengertian', label: 'Pengertian' },
+  { num: '02', id: 'layanan', label: 'Layanan' },
+  { num: '03', id: 'hak-cipta', label: 'Hak Cipta & DMCA' },
+  { num: '04', id: 'tanggung-jawab', label: 'Tanggung Jawab Pengguna' },
+  { num: '05', id: 'akun-data', label: 'Akun & Data Pribadi' },
+  { num: '06', id: 'batasan', label: 'Batasan Layanan' },
+  { num: '07', id: 'api-publik', label: 'API Publik' },
+  { num: '08', id: 'limitasi', label: 'Pembatasan Tanggung Jawab' },
+  { num: '09', id: 'perubahan', label: 'Perubahan Ketentuan' },
+  { num: '10', id: 'yurisdiksi', label: 'Hukum Berlaku & Yurisdiksi' },
+  { num: '11', id: 'kontak', label: 'Kontak' },
+];
+---
+
+<BaseLayout
+  title="Syarat & Ketentuan"
+  description="Syarat dan Ketentuan Penggunaan Layanan Oktz. — Platform baca komik Indonesia dari 5 sumber independen."
+>
+  <main class="relative mx-auto max-w-6xl overflow-x-hidden px-4 pb-24 sm:px-6">
+    {/* Ambient glow — idiom hero homepage */}
+    <div
+      aria-hidden="true"
+      class="pointer-events-none absolute inset-x-0 top-0 mx-auto h-72 w-72 rounded-full radial-ambient opacity-70 blur-2xl sm:h-96 sm:w-[560px]"
+    />
+
+    <div class="relative z-10">
+      {/* ── Header ── */}
+      <header class="anim-rise pt-4 sm:pt-10">
+        <div class="inline-flex items-center gap-2 rounded-full glass-pill px-3.5 py-1.5">
+          <span class="status-dot success live" aria-hidden="true" />
+          <span class="font-mono text-[11px] uppercase tracking-[0.22em] text-secondary">Legal · Revisi 2026.09</span>
+        </div>
+
+        <h1 class="mt-6 font-display text-[2.75rem] font-bold leading-[0.95] tracking-tighter text-primary sm:text-6xl lg:text-7xl">
+          Syarat &amp; Ketentuan
+        </h1>
+
+        <p class="mt-5 max-w-2xl text-sm leading-relaxed text-secondary sm:text-base">
+          Dokumen ini menjelaskan aturan penggunaan layanan Oktz. — platform baca komik (manga, manhwa, manhua)
+          bahasa Indonesia yang mengindeks katalog dari 5 sumber independen. Dengan menggunakan platform ini,
+          Anda dianggap membaca dan menyetujui seluruh ketentuan di bawah ini.
+        </p>
+
+        <div class="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
+          <span>rev 2026.09</span>
+          <span aria-hidden="true">/</span>
+          <span>
+            terakhir diperbarui <time datetime="2026-09-18" class="text-secondary">18 sep 2026</time>
+          </span>
+          <span aria-hidden="true">/</span>
+          <span>{SECTIONS.length} pasal</span>
+          <span aria-hidden="true">/</span>
+          <span>
+            ± <span data-read-time>4</span> mnt baca
+          </span>
+        </div>
+
+        <div class="glow-line mt-8" aria-hidden="true" />
+      </header>
+
+      {/* ── TOC rail + artikel ── */}
+      <div class="mt-10 grid items-start gap-10 lg:mt-14 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-16">
+        <nav aria-label="Daftar pasal" class="lg:sticky lg:top-24 lg:self-start">
+          <p class="eyebrow mb-3 lg:mb-4">Daftar Pasal</p>
+          <div class="flex gap-1 overflow-x-auto pb-2 lg:flex-col lg:gap-1 lg:overflow-visible lg:border-l lg:border-border-default lg:pb-0">
+            {SECTIONS.map((s) => (
+              <a
+                href={`#${s.id}`}
+                data-toc={s.id}
+                class="group flex items-center gap-2.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-primary lg:whitespace-normal lg:px-3"
+              >
+                <span class="toc-dot h-1.5 w-1.5 shrink-0 rounded-[2px] border border-border-strong bg-transparent transition-all" aria-hidden="true" />
+                <span class="group-hover:text-accent transition-colors">§{s.num}</span>
+                <span>{s.label}</span>
+              </a>
+            ))}
+          </div>
+        </nav>
+
+        <article data-tos-article class="min-w-0 text-secondary">
+          {/* ── 01 ── */}
+          <section id="pengertian" data-toc-target="pengertian" class="tos-reveal pb-8">
+            <TosSectionHeader n="01" name="Pengertian" />
+            <p class="mt-2 text-sm leading-relaxed sm:text-base">
+              Oktz. («Kami», «Kita», «Platform») adalah layanan agregasi katalog komik (manga, manhwa, manhua)
+              bahasa Indonesia yang mengindeks metadata dari 5 sumber independen: Komiku, BacaKomik.my, Thrive.moe,
+              Shinigami (11.shinigami.asia), ManhwaIndo.my, serta Webtoon (webtoons.com/id). Kami
+              <strong> bukan</strong> penerbit, hosting gambar, atau pemilik hak cipta konten yang ditampilkan.
+            </p>
+          </section>
+
+          {/* ── 02 ── */}
+          <section id="layanan" data-toc-target="layanan" class="tos-reveal pb-8">
+            <TosSectionHeader n="02" name="Layanan yang Disediakan" />
+            <ul class="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed marker:text-accent/70 sm:text-base">
+              <li>Katalog terpadu dengan pencarian, filter genre, dan sorting</li>
+              <li>Halaman detail seri dengan sinopsis, cover, status, dan daftar chapter</li>
+              <li>Reader gambar via proxy CDN (B2 cache-aside + fallback ke sumber asli)</li>
+              <li>Bookmark, riwayat baca, dan preferensi sumber per pengguna</li>
+              <li>API publik (read-only) untuk keperluan non-komersial</li>
+            </ul>
+          </section>
+
+          {/* ── 03 ── */}
+          <section id="hak-cipta" data-toc-target="hak-cipta" class="tos-reveal pb-8">
+            <TosSectionHeader n="03" name="Hak Cipta & Kebijakan DMCA" />
+            <div class="mt-3 space-y-3 text-sm leading-relaxed sm:text-base">
+              <p>
+                Semua hak cipta komik, gambar, dan metadata tetap milik kreator, penerbit, dan platform asal
+                masing-masing. Oktz. hanya mengindeks informasi yang tersedia secara publik (seperti halaman indeks,
+                judul, cover thumbnail, daftar chapter).
+              </p>
+              <p>
+                Jika Anda adalah pemegang hak cipta dan menemukan konten yang melanggar hak Anda, silakan kirim
+                notifikasi DMCA ke:
+              </p>
+            </div>
+
+            {/* Terminal card — idiom halaman 404 */}
+            <div class="mt-4 overflow-hidden rounded-panel border border-border-default bg-sunken">
+              <div class="flex items-center gap-2 border-b border-border-subtle bg-bg-secondary/50 px-4 py-2.5">
+                <span class="flex gap-1.5" aria-hidden="true">
+                  <span class="h-2.5 w-2.5 rounded-full bg-error/70" />
+                  <span class="h-2.5 w-2.5 rounded-full bg-muted/40" />
+                  <span class="h-2.5 w-2.5 rounded-full bg-success/50" />
+                </span>
+                <span class="ml-1 font-mono text-[11px] text-muted">mail — dmca@oktzz.xyz</span>
+              </div>
+              <pre class="overflow-x-auto px-4 py-4 font-mono text-[12px] leading-relaxed text-secondary sm:text-[13px]"><code class="block">email: dmca@oktzz.xyz
+subjek: [DMCA] Laporan Pelanggaran Hak Cipta</code></pre>
+            </div>
+
+            <p class="mt-4 text-sm leading-relaxed sm:text-base">
+              Sertakan: (a) identitas karya yang dilanggar, (b) URL spesifik di Oktz., (c) bukti
+              kepemilikan/otorisasi, (d) pernyataan kebenaran &amp; kontak. Kami akan merespons dalam 5 hari kerja
+              dan menonaktifkan akses jika klaim sah.
+            </p>
+          </section>
+
+          {/* ── 04 ── */}
+          <section id="tanggung-jawab" data-toc-target="tanggung-jawab" class="tos-reveal pb-8">
+            <TosSectionHeader n="04" name="Tanggung Jawab Pengguna" />
+            <ul class="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed marker:text-accent/70 sm:text-base">
+              <li>Gunakan layanan untuk keperluan pribadi, non-komersial.</li>
+              <li>
+                Tidak melakukan scraping massal, bot, atau beban berlebih ke API/Oktz. (rate-limit: 60 req/menit
+                per IP).
+              </li>
+              <li>Tidak memodifikasi, mereverse-engineer, atau mengelabui sistem autentikasi/akses.</li>
+              <li>
+                Menghormati <code>robots.txt</code> dan <code>ToS</code> sumber asli (Komiku, BacaKomik, Thrive,
+                Shinigami, ManhwaIndo, Webtoon).
+              </li>
+            </ul>
+          </section>
+
+          {/* ── 05 ── */}
+          <section id="akun-data" data-toc-target="akun-data" class="tos-reveal pb-8">
+            <TosSectionHeader n="05" name="Akun & Data Pribadi" />
+            <div class="mt-3 space-y-3 text-sm leading-relaxed sm:text-base">
+              <p>Login hanya via Google OAuth (tidak ada password). Data yang disimpan:</p>
+              <ul class="list-disc space-y-1.5 pl-5 marker:text-accent/70">
+                <li>Email, nama, avatar (dari Google)</li>
+                <li>Bookmark, riwayat baca, preferensi sumber</li>
+                <li>Session cookie (ECDSA-signed, HttpOnly, Secure, SameSite=None)</li>
+              </ul>
+              <p>
+                Data <strong>tidak dijual</strong> ke pihak ketiga. Anda dapat menghapus akun kapan saja via halaman
+                Profil → «Hapus Akun» (akan mencabut semua session &amp; menghapus data dalam 30 hari).
+              </p>
+            </div>
+          </section>
+
+          {/* ── 06 ── */}
+          <section id="batasan" data-toc-target="batasan" class="tos-reveal pb-8">
+            <TosSectionHeader n="06" name="Batasan Layanan" />
+            <ul class="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed marker:text-accent/70 sm:text-base">
+              <li>Ketersediaan bergantung pada uptime sumber eksternal (kami tidak mengontrol server mereka).</li>
+              <li>Gambar chapter di-proxy via B2/CDN; jika sumber blokir/berubah, gambar mungkin gagal dimuat.</li>
+              <li>
+                Beberapa chapter/seri mungkin tidak lengkap karena keterbatasan sumber (mis. chapter terkunci
+                daily-pass Webtoon).
+              </li>
+              <li>Kami berusaha akurat, tapi tidak menjamin kelengkapan/kesegaran data 100%.</li>
+            </ul>
+          </section>
+
+          {/* ── 07 ── */}
+          <section id="api-publik" data-toc-target="api-publik" class="tos-reveal pb-8">
+            <TosSectionHeader n="07" name="API Publik" />
+            <div class="mt-3 space-y-3 text-sm leading-relaxed sm:text-base">
+              <p>
+                Endpoint read-only tersedia di <code>/api/*</code> (contoh: <code>/api/search?q=...</code>,
+                <code>/api/resolve/:slug</code>, <code>/api/reader/:source/series/:id/detail</code>).
+              </p>
+              <ul class="list-disc space-y-1.5 pl-5 marker:text-accent/70">
+                <li>
+                  Rate-limit: 60 req/menit per IP (global), 10 req/menit untuk <code>/api/identify</code>.
+                </li>
+                <li>Gunakan <code>User-Agent</code> yang jelas (nama aplikasi + kontak).</li>
+                <li>Komersial/redistribusi data butuh izin tertulis.</li>
+              </ul>
+            </div>
+          </section>
+
+          {/* ── 08 ── */}
+          <section id="limitasi" data-toc-target="limitasi" class="tos-reveal pb-8">
+            <TosSectionHeader n="08" name="Pembatasan Tanggung Jawab" />
+            <p class="mt-3 text-sm leading-relaxed sm:text-base">
+              Oktz. disediakan «sebagaimana adanya» (<em>as-is</em>) tanpa jaminan apa pun. Kami tidak bertanggung
+              jawab atas: kerusakan perangkat, kehilangan data, konten ofensif dari sumber, atau gangguan layanan
+              karena faktor di luar kendali (DDoS, perubahan struktur situs sumber, dll.).
+            </p>
+          </section>
+
+          {/* ── 09 ── */}
+          <section id="perubahan" data-toc-target="perubahan" class="tos-reveal pb-8">
+            <TosSectionHeader n="09" name="Perubahan Ketentuan" />
+            <p class="mt-3 text-sm leading-relaxed sm:text-base">
+              Kami dapat mengupdate ToS kapan saja. Perubahan material akan diumumkan via halaman ini (tanggal
+              «Terakhir diperbarui» di atas) dan/atau banner notifikasi di aplikasi. Penggunaan terus setelah
+              perubahan = menerima versi baru.
+            </p>
+          </section>
+
+          {/* ── 10 ── */}
+          <section id="yurisdiksi" data-toc-target="yurisdiksi" class="tos-reveal pb-8">
+            <TosSectionHeader n="10" name="Hukum Berlaku & Yurisdiksi" />
+            <p class="mt-3 text-sm leading-relaxed sm:text-base">
+              ToS ini diatur oleh hukum Republik Indonesia. Sengketa diselesaikan melalui musyawarah; gagal →
+              Pengadilan Negeri Jakarta Pusat.
+            </p>
+          </section>
+
+          {/* ── 11 ── */}
+          <section id="kontak" data-toc-target="kontak" class="tos-reveal pb-8">
+            <TosSectionHeader n="11" name="Kontak" />
+            <div class="mt-3 grid gap-3 sm:grid-cols-3">
+              {[
+                { label: 'Email umum', addr: 'hello@oktzz.xyz', href: 'mailto:hello@oktzz.xyz' },
+                { label: 'DMCA', addr: 'dmca@oktzz.xyz', href: 'mailto:dmca@oktzz.xyz' },
+                { label: 'Keamanan', addr: 'security@oktzz.xyz', href: 'mailto:security@oktzz.xyz' },
+              ].map((c) => (
+                <a href={c.href} class="panel panel-hover block p-4">
+                  <p class="eyebrow mb-2">{c.label}</p>
+                  <p class="break-all font-mono text-sm text-accent">{c.addr}</p>
+                </a>
+              ))}
+            </div>
+          </section>
+
+          {/* ── Footer ── */}
+          <footer class="tos-reveal mt-2 border-t border-border-strong pt-8">
+            <div class="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <p class="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
+                © 2026 Oktz. — hak cipta gambar &amp; komik milik masing-masing kreator/penerbit.
+              </p>
+              <div class="flex flex-wrap gap-3">
+                <a href="/" class="btn btn-primary">Kembali ke Beranda</a>
+                <a href="/status" class="btn btn-ghost">Status Sumber</a>
+              </div>
+            </div>
+          </footer>
+        </article>
+      </div>
+    </div>
+
+    {/* Reading progress — garis aksen tipis di atas layar */}
+    <div
+      id="tos-progress"
+      aria-hidden="true"
+      class="pointer-events-none fixed inset-x-0 top-0 z-[90] h-[2px] origin-left bg-accent"
+      style="transform: scaleX(0)"
+    />
+  </main>
+
+  <style>
+    :global(html) { scroll-behavior: smooth; }
+
+    /* TOC active state */
+    [data-toc].is-active { color: var(--text-primary); }
+    [data-toc].is-active .toc-dot {
+      background: var(--accent);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    /* Inline code — chip mono halus */
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.875em;
+      color: var(--text-primary);
+      background: oklch(100% 0 0 / 0.06);
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+      padding: 0.15em 0.4em;
+    }
+    pre code { background: none; border: none; padding: 0; color: inherit; }
+
+    strong { color: var(--text-primary); font-weight: 600; }
+
+    /* Progressive reveal — murni enhancement. Konten TIDAK pernah disembunyikan
+       secara default: hanya seksi di bawah viewport yang di-hide oleh JS
+       (`.tos-hide`) lalu di-reveal saat masuk viewport. Tanpa JS / IO gagal →
+       semua tetap terlihat (tidak pernah "hitam"). */
+    :global(.tos-js .tos-reveal.tos-hide) {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 0.55s cubic-bezier(0.16, 1, 0.3, 1), transform 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    :global(.tos-js .tos-reveal.tos-hide.in) { opacity: 1; transform: none; }
+
+    @media (prefers-reduced-motion: reduce) {
+      :global(html) { scroll-behavior: auto; }
+      :global(.tos-js .tos-reveal.tos-hide) {
+        opacity: 1 !important;
+        transform: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+
+  <script>
+    // ToS: progressive reveal per seksi + scrollspy TOC + progress baca + estimasi durasi.
+    let revealIo: IntersectionObserver | undefined;
+    let spyIo: IntersectionObserver | undefined;
+
+    let tocLinks: HTMLElement[] = [];
+    let tocIds: string[] = [];
+    let activeId: string | null = null;
+
+    function setActive(id: string) {
+      if (id === activeId) return;
+      activeId = id;
+      for (const a of tocLinks) {
+        const on = a.getAttribute('data-toc') === id;
+        a.classList.toggle('is-active', on);
+        if (on) a.setAttribute('aria-current', 'true');
+        else a.removeAttribute('aria-current');
+      }
+    }
+
+    function atPageBottom() {
+      const doc = document.documentElement;
+      const max = doc.scrollHeight - doc.clientHeight;
+      return max > 0 && doc.scrollTop + doc.clientHeight >= max - 8;
+    }
+
+    function inViewport(el: HTMLElement, vh = window.innerHeight) {
+      return el.getBoundingClientRect().top < vh - 8;
+    }
+
+    function init() {
+      revealIo?.disconnect();
+      spyIo?.disconnect();
+
+      const sectionEls = Array.from(document.querySelectorAll<HTMLElement>('[data-toc-target]'));
+      tocLinks = Array.from(document.querySelectorAll<HTMLElement>('[data-toc]'));
+      tocIds = sectionEls.map((s) => s.id);
+      if (tocIds.length === 0) return;
+
+      tocLinks.forEach((a) => {
+        a.classList.remove('is-active');
+        a.removeAttribute('aria-current');
+      });
+      activeId = null;
+      setActive(tocIds[0]);
+
+      document.documentElement.classList.add('tos-js');
+
+      const revealEls = Array.from(document.querySelectorAll<HTMLElement>('.tos-reveal'));
+
+      revealIo =
+        typeof IntersectionObserver !== 'undefined'
+          ? new IntersectionObserver(
+              (entries) => {
+                for (const e of entries) {
+                  if (e.isIntersecting) {
+                    e.target.classList.add('in');
+                    revealIo?.unobserve(e.target);
+                  }
+                }
+              },
+              { rootMargin: '0px 0px -8% 0px', threshold: 0.06 },
+            )
+          : undefined;
+
+      if (revealIo) {
+        revealEls.forEach((el) => revealIo?.observe(el));
+        requestAnimationFrame(() => {
+          for (const el of revealEls) {
+            if (!inViewport(el)) el.classList.add('tos-hide');
+          }
+          const vh = window.innerHeight;
+          for (const el of revealEls) {
+            if (el.getBoundingClientRect().top < vh) el.classList.add('in');
+          }
+        });
+        setTimeout(() => {
+          const vh = window.innerHeight;
+          for (const el of revealEls) {
+            if (el.classList.contains('tos-hide') && !el.classList.contains('in') && inViewport(el, vh)) {
+              el.classList.add('in');
+            }
+          }
+        }, 1200);
+      } else {
+        revealEls.forEach((el) => el.classList.add('in'));
+      }
+
+      spyIo =
+        typeof IntersectionObserver !== 'undefined'
+          ? new IntersectionObserver(
+              (entries) => {
+                if (atPageBottom()) {
+                  setActive(tocIds[tocIds.length - 1]);
+                  return;
+                }
+                const visible = entries.filter((e) => e.isIntersecting).map((e) => e.target.id);
+                if (visible.length > 0) setActive(visible[0]);
+              },
+              { rootMargin: '-20% 0px -75% 0px', threshold: 0 },
+            )
+          : undefined;
+      sectionEls.forEach((s) => spyIo?.observe(s));
+
+      const readTime = document.querySelector('[data-read-time]');
+      const article = document.querySelector('[data-tos-article]');
+      if (readTime && article) {
+        const words = (article.textContent ?? '').trim().split(/\s+/).filter(Boolean).length;
+        const mins = Math.max(1, Math.round(words / 200));
+        readTime.textContent = String(mins);
+      }
+
+      onScroll();
+    }
+
+    function onScroll() {
+      const doc = document.documentElement;
+      const max = doc.scrollHeight - doc.clientHeight;
+      const p = max > 0 ? Math.min(1, Math.max(0, doc.scrollTop / max)) : 0;
+      const bar = document.getElementById('tos-progress');
+      if (bar) bar.style.transform = `scaleX(${p})`;
+
+      if (revealIo) {
+        for (const el of document.querySelectorAll<HTMLElement>('.tos-reveal.tos-hide:not(.in)')) {
+          if (inViewport(el)) el.classList.add('in');
+        }
+      }
+
+      if (tocIds.length > 0) {
+        if (atPageBottom()) setActive(tocIds[tocIds.length - 1]);
+        else if (doc.scrollTop <= 4) setActive(tocIds[0]);
+      }
+    }
+
+    let ticking = false;
+    document.addEventListener(
+      'scroll',
+      () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+          ticking = false;
+          onScroll();
+        });
+      },
+      { passive: true },
+    );
+    document.addEventListener('astro:page-load', () => { init(); });
+    window.addEventListener('resize', onScroll);
+    init();
+  </script>
+</BaseLayout>

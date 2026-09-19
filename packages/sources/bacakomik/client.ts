@@ -24,7 +24,12 @@ export const fetchHtml = async (url: string, env?: BacaFetchEnv, timeoutMs = 150
   const headers = { 'User-Agent': BACA_UA, 'Referer': BACA_BASE + '/', 'Accept': 'text/html' };
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
   const text = await res.text().catch(() => '');
-  if (!isChallenge(res, text)) return text;
+  if (!isChallenge(res, text)) {
+    // Non-challenge HTTP errors (404 etc.) must throw: parsing a "Page not
+    // found" body produced phantom Series that got persisted to D1.
+    if (res.status >= 400) throw new Error(`bacakomik fetch ${res.status} ${url}`);
+    return text;
+  }
 
   // Fallback: remote browser rendering (Cloudflare Workers browser binding).
   if (env?.MY_BROWSER) {

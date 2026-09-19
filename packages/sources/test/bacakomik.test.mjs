@@ -62,3 +62,56 @@ test('fetchPageUrls extracts chapter images', () => {
     assert.equal(u.proxyHeaders?.Referer, 'https://bacakomik.my/');
   }
 });
+
+// Regression phantom-write: HTTP 404 must throw, NOT parse into a Series
+// with title = slug (e.g. "11") — that's how bot probes polluted D1.
+test('getSeries/getSeriesDetail throw on HTTP 404 (no fabricated Series)', async () => {
+  const orig = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response('<!DOCTYPE html><html><body>Page not found</body></html>', { status: 404 });
+    const adapter = bacakomikAdapter();
+    await assert.rejects(() => adapter.getSeries('11'), /404/);
+    await assert.rejects(() => adapter.getSeriesDetail('11'), /404/);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('getSeries uses the canonical slug when the requested slug redirects', async () => {
+  const orig = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(detailFixture, { status: 200 });
+    const series = await bacakomikAdapter().getSeries('2');
+    assert.equal(series.slug, 'nano-machine');
+    assert.equal(series.external_id, 'nano-machine');
+    assert.equal(series.source_url, 'https://bacakomik.my/komik/nano-machine/');
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('getSeriesDetail uses the canonical slug when the requested slug redirects', async () => {
+  const orig = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(detailFixture, { status: 200 });
+    const { series, chapters } = await bacakomikAdapter().getSeriesDetail('2');
+    assert.equal(series.slug, 'nano-machine');
+    assert.equal(series.external_id, 'nano-machine');
+    assert.ok(chapters.length > 0, 'chapters keep series_slug from canonical slug');
+    assert.ok(chapters.every((c) => c.series_slug === 'nano-machine'));
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test('getSeries throws when 200 page has no title (slug fallback removed)', async () => {
+  const orig = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response('<html><body>no entry-title</body></html>', { status: 200 });
+    const adapter = bacakomikAdapter();
+    await assert.rejects(() => adapter.getSeries('11'), /no title/);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});

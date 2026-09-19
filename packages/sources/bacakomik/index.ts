@@ -65,13 +65,19 @@ const parseSearchHtml = (html: string): Series[] => {
 };
 
 // Parse detail page: `.spe` label/value pairs, `.genre-info`, synopsis, cover.
+// canonicalSlug: dari rel=canonical (URL slug sebenarnya setelah redirect
+// WordPress — mis. /komik/2/ → /komik/321-2/), null bila tidak ada/diluar /komik/.
 const parseDetailHtml = (html: string): {
   title: string; synopsis: string | null; cover_image: string | null;
   author: string | null; status: 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown'; type: 'manga' | 'manhwa' | 'manhua';
-  genres: string[];
+  genres: string[]; canonicalSlug: string | null;
 } => {
   const titleRaw = html.match(/<h1[^>]*class="[^"]*entry-title[^"]*"[^>]*>([\s\S]*?)<\/h1>/)?.[1] ?? '';
   const title = decodeHtmlEntities(titleRaw.replace(/<[^>]+>/g, '').replace(/^Komik\s+/i, '').trim()) ?? '';
+  const canonicalHref = html.match(/<link[^>]*rel="canonical"[^>]*href="([^"]+)"[^>]*\/?>/)?.[1]
+    ?? html.match(/<link[^>]*href="([^"]+)"[^>]*rel="canonical"[^>]*\/?>/)?.[1]
+    ?? '';
+  const canonicalSlug = canonicalHref?.match(/\/komik\/([^/]+)\/?/)?.[1] ?? null;
   const synopsis = (html.match(/<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]
     ?.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, '').trim() ?? null);
   const synopsisDecoded = synopsis != null ? decodeHtmlEntities(synopsis) ?? null : null;
@@ -89,7 +95,7 @@ const parseDetailHtml = (html: string): {
   const type = (['manga', 'manhwa', 'manhua'].includes(typeRaw) ? typeRaw : 'manga') as 'manga' | 'manhwa' | 'manhua';
   const authorRaw = find('author');
   const author = authorRaw != null ? decodeHtmlEntities(authorRaw) ?? null : null;
-  return { title, synopsis: synopsisDecoded, cover_image: cover, author, status, type, genres };
+  return { title, synopsis: synopsisDecoded, cover_image: cover, author, status, type, genres, canonicalSlug };
 };
 
 // Parse chapter list from detail page `#chapter_list li`.
@@ -140,12 +146,19 @@ export const bacakomikAdapter = (env?: BacaFetchEnv) => {
       const url = `${BACA_BASE}/komik/${sourceId}/`;
       const html = await fetchHtml(url, env);
       const data = parseDetailHtml(html);
+      // No title = not a real series page (throw, consistent with komiku —
+      // never fabricate title from the slug itself).
+      if (!data.title) throw new Error(`bacakomik getSeries: no title for ${sourceId}`);
+      // Upstream boleh redirect slug lama → slug kanonik (mis. /komik/2/ →
+      // /komik/321-2/). Simpan slug canonical supaya halaman detail tidak
+      // menyajikan judul palsu di bawah slug yang tidak pernah ada di source.
+      const slug = data.canonicalSlug ?? sourceId;
       return {
-        slug: sourceId,
-        external_id: sourceId,
+        slug,
+        external_id: slug,
         source: 'bacakomik',
-        source_url: url,
-        title: data.title || sourceId,
+        source_url: `${BACA_BASE}/komik/${slug}/`,
+        title: data.title,
         synopsis: data.synopsis,
         cover_image: data.cover_image,
         author: data.author,
@@ -166,12 +179,16 @@ export const bacakomikAdapter = (env?: BacaFetchEnv) => {
       const url = `${BACA_BASE}/komik/${sourceId}/`;
       const html = await fetchHtml(url, env);
       const data = parseDetailHtml(html);
+      if (!data.title) throw new Error(`bacakomik getSeriesDetail: no title for ${sourceId}`);
+      // Canonical slug (lihat getSeries) — chapters ikut memakai slug ini agar
+      // chapter_links yang di-index tidak menggantung pada slug redirect.
+      const slug = data.canonicalSlug ?? sourceId;
       const series: Series = {
-        slug: sourceId,
-        external_id: sourceId,
+        slug,
+        external_id: slug,
         source: 'bacakomik',
-        source_url: url,
-        title: data.title || sourceId,
+        source_url: `${BACA_BASE}/komik/${slug}/`,
+        title: data.title,
         synopsis: data.synopsis,
         cover_image: data.cover_image,
         author: data.author,
@@ -180,7 +197,7 @@ export const bacakomikAdapter = (env?: BacaFetchEnv) => {
         genres: data.genres.length > 0 ? data.genres : undefined,
         language: 'id',
       } as Series;
-      return { series, chapters: parseChapterList(html, sourceId) };
+      return { series, chapters: parseChapterList(html, slug) };
     },
 
     async getChapter(chapterSourceId: string): Promise<Chapter> {

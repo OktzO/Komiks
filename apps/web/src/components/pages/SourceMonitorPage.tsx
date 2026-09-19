@@ -4,7 +4,7 @@ import { getSourceStatus, type SourceStatus } from '@/lib/api';
 import { SourceBadge, sourceLabel, SOURCE_LABELS } from '@/components/SourceBadge';
 
 
-const VALID = ['komiku', 'bacakomik', 'thrive', 'shinigami', 'manhwaindo'] as const;
+const VALID = ['komiku', 'bacakomik', 'thrive', 'shinigami', 'manhwaindo', 'webtoon'] as const;
 const HISTORY_MAX = 40;
 
 type Check = { healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number };

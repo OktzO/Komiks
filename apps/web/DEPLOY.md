@@ -66,7 +66,7 @@ dashboard.
 | `/[type]/[slug]/[chapterId]` | SSR | noindex; 404 asli bila chapter kosong |
 | `/search` | SSR | hasil di-HTML |
 | `/login` `/bookmark` `/history` `/profile` | SSR shell + islands | cookie user |
-| `/admin/*` | SSR shell + islands | noindex, auth-guard client-side |
+| `/admin/*` | shell statis + island `client:only` | noindex; SSR React admin = 22–48ms CPU → 503 intermiten (2026-09-15), makanya client-only |
 | `/status/*` | SSR (client fetch data) | |
 | `sitemap.xml` | endpoint, `s-maxage=3600` | CDN cache 1 jam |
 | `404` | prerendered `404.html` + inline render di route dinamis | status 404 asli |

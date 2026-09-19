@@ -1,0 +1,30 @@
+---
+interface Props {
+  n: string;
+  name: string;
+}
+const { n, name } = Astro.props;
+---
+
+<header class="flex items-center gap-3 border-t border-border-strong pb-3 pt-7">
+  <span class="tos-num" aria-hidden="true">{n}</span>
+  <h2 class="text-lg font-semibold tracking-tight text-primary sm:text-2xl">{name}</h2>
+  <span class="ml-auto hidden shrink-0 font-mono text-[10px] uppercase tracking-[0.2em] text-muted sm:inline">pasal {n}</span>
+</header>
+
+<style>
+  /* Outline numeral — idiom angka "404" di halaman not-found */
+  .tos-num {
+    font-family: var(--font-geist-sans);
+    font-weight: 800;
+    font-size: 2.5rem;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    margin-right: 0.25rem;
+    color: transparent;
+    -webkit-text-stroke: 1.5px var(--border-strong);
+  }
+  @media (min-width: 640px) {
+    .tos-num { font-size: 3rem; }
+  }
+</style>

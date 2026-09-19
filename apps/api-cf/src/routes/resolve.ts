@@ -65,23 +65,34 @@ export const router = new Hono<{ Bindings: Env }>();
 // feed yang belum pernah dikunjungi): coba adapter per source by slug, lalu
 // persist ke D1 di background supaya hit berikutnya = DB hit. Response tetap
 // dibangun dari data live (type/slug valid), bukan menunggu write.
+// Kandidat divalidasi dulu (judul sah ≠ slug + chapter list non-kosong) —
+// tanpa gerbang ini, halaman 404 yang ter-parse jadi Series phantom dan
+// ter-persist permanen ke D1. Sequential: kandidat gagal → source berikutnya.
 export const resolveLiveFallback = async (
   c: Context,
   slug: string,
 ): Promise<{ data: ResolveResult } | null> => {
-  const attempts = FALLBACK_SOURCE_ORDER.map(async (source) => {
-    const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
-    if (!adapter) return null;
-    try {
-      const series = await adapter.getSeries(slug);
-      return series ? { source, series } : null;
-    } catch {
-      return null;
+  const hit = await withBudget((async () => {
+    for (const source of FALLBACK_SOURCE_ORDER) {
+      const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
+      if (!adapter) continue;
+      try {
+        const detail = adapter.getSeriesDetail ? await adapter.getSeriesDetail(slug) : null;
+        const series = detail ? detail.series : await adapter.getSeries(slug);
+        // Judul kosong atau sama dengan slug = halaman 404/invalid yang
+        // ter-fabrikasi parser (mis. "11" dari /manga/11 probe bot).
+        if (!series?.title || series.title.toLowerCase() === slug.toLowerCase()) continue;
+        const chapters = detail ? detail.chapters : await adapter.listChapters(slug);
+        if (chapters.length === 0) continue;
+        return { source, series, chapterCount: chapters.length };
+      } catch {
+        continue;
+      }
     }
-  });
-  const hit = await withBudget(Promise.all(attempts).then((rs) => rs.find(Boolean) ?? null), 6000, null);
+    return null;
+  })(), 6000, null);
   if (!hit) return null;
-  const { source, series } = hit;
+  const { source, series, chapterCount } = hit;
   c.executionCtx.waitUntil((async () => {
     try {
       const db = getDb(c);
@@ -107,8 +118,8 @@ export const resolveLiveFallback = async (
           mangaId: row.id,
           source,
           sourceSlug: slug,
-          hasChapterList: 1,
-          chapterCount: 0,
+          hasChapterList: chapterCount > 0 ? 1 : 0,
+          chapterCount,
           lastScrapedAt: Math.floor(Date.now() / 1000),
         });
         c.executionCtx.waitUntil(
@@ -120,7 +131,7 @@ export const resolveLiveFallback = async (
   return {
     data: buildResolveResponse(
       { slug, type: series.type, source },
-      [{ source, source_slug: slug, has_chapter_list: 1, chapter_count: 0, last_scraped_at: null }],
+      [{ source, source_slug: slug, has_chapter_list: chapterCount > 0 ? 1 : 0, chapter_count: chapterCount, last_scraped_at: null }],
     )!,
   };
 };

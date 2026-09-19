@@ -148,12 +148,15 @@ export const manhwaindoAdapter = (env?: ManhwaFetchEnv) => {
       const url = `${MANHWA_BASE}/series/${sourceId}/`;
       const html = await fetchHtml(url, env);
       const d = parseDetailHtml(html);
+      // No title = not a real series page (throw, consistent with komiku —
+      // never fabricate title from the slug itself).
+      if (!d.title) throw new Error(`manhwaindo getSeries: no title for ${sourceId}`);
       return {
         slug: sourceId,
         external_id: sourceId,
         source: 'manhwaindo',
         source_url: url,
-        title: d.title || sourceId,
+        title: d.title,
         synopsis: d.synopsis,
         cover_image: d.cover_image,
         author: d.author,
@@ -174,12 +177,13 @@ export const manhwaindoAdapter = (env?: ManhwaFetchEnv) => {
       const url = `${MANHWA_BASE}/series/${sourceId}/`;
       const html = await fetchHtml(url, env);
       const d = parseDetailHtml(html);
+      if (!d.title) throw new Error(`manhwaindo getSeriesDetail: no title for ${sourceId}`);
       const series: Series = {
         slug: sourceId,
         external_id: sourceId,
         source: 'manhwaindo',
         source_url: url,
-        title: d.title || sourceId,
+        title: d.title,
         synopsis: d.synopsis,
         cover_image: d.cover_image,
         author: d.author,

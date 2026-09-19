@@ -880,3 +880,22 @@ img[data-broken] { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   #admin-navbar, #admin-navbar .nav-island, #admin-menu { transition: none !important; }
 }
+
+/* Fix: warna `base` di theme (bg-base) membuat Tailwind mengeluarkan utilitas
+   `.text-base{color:var(--bg-base)}` (termasuk varian sm/md/lg/xl) yang
+   membayangi font-size `text-base`, sehingga teks jadi warna alas (hampir
+   hitam di mode gelap = tidak terlihat). Unlayered + !important menang atas
+   util Tailwind apa pun urutannya. font-size tetap dari util Tailwind. */
+.text-base { color: inherit !important; }
+@media (min-width: 40rem) {
+  .sm\:text-base { color: inherit !important; }
+}
+@media (min-width: 48rem) {
+  .md\:text-base { color: inherit !important; }
+}
+@media (min-width: 64rem) {
+  .lg\:text-base { color: inherit !important; }
+}
+@media (min-width: 80rem) {
+  .xl\:text-base { color: inherit !important; }
+}

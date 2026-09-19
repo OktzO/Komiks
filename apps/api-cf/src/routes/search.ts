@@ -78,6 +78,7 @@ router.get('/search', async (c: Context) => {
       { key: 'thrive', start: Date.now() },
       { key: 'shinigami', start: Date.now() },
       { key: 'manhwaindo', start: Date.now() },
+      { key: 'webtoon', start: Date.now() },
     ];
     // Budget total 6.5s: source stall (Komiku DDoS-guard, 15s×attempt) tidak
     // boleh block response — frontend timeout di 8s. Partial results tetap ok.
@@ -113,7 +114,7 @@ router.get('/search', async (c: Context) => {
         for (const s of r.value.results) addResult(s, r.value.key);
       } else {
         const reason = String((r as PromiseRejectedResult).reason ?? '');
-        const errKey = ['bacakomik', 'thrive', 'shinigami', 'manhwaindo'].find((k) => reason.includes(k)) ?? 'komiku';
+        const errKey = ['bacakomik', 'thrive', 'shinigami', 'manhwaindo', 'webtoon'].find((k) => reason.includes(k)) ?? 'komiku';
         recordHealth(c, errKey, Date.now(), false, reason.slice(0, 200));
       }
     }
@@ -138,6 +139,7 @@ router.get('/search', async (c: Context) => {
     { key: 'thrive', start: Date.now() },
     { key: 'shinigami', start: Date.now() },
     { key: 'manhwaindo', start: Date.now() },
+    { key: 'webtoon', start: Date.now() },
   ];
 
   // Budget total 6.5s (sama dengan path empty-q) — partial results tetap dikirim.
@@ -164,7 +166,7 @@ router.get('/search', async (c: Context) => {
       recordHealth(c, r.value.key, r.value.start, true);
     } else {
       const reason = String((r as PromiseRejectedResult).reason ?? '');
-      const errKey = reason.includes('bacakomik') ? 'bacakomik' : reason.includes('thrive') ? 'thrive' : 'komiku';
+      const errKey = ['bacakomik', 'thrive', 'shinigami', 'manhwaindo', 'webtoon'].find((k) => reason.includes(k)) ?? 'komiku';
       recordHealth(c, errKey, Date.now(), false, reason);
       console.error('[search]', errKey, 'failed:', reason.slice(0, 200));
     }
@@ -189,6 +191,7 @@ router.get('/search', async (c: Context) => {
   for (const s of resultsBySource.thrive ?? []) addResult(s, 'thrive');
   for (const s of resultsBySource.shinigami ?? []) addResult(s, 'shinigami');
   for (const s of resultsBySource.manhwaindo ?? []) addResult(s, 'manhwaindo');
+  for (const s of resultsBySource.webtoon ?? []) addResult(s, 'webtoon');
 
   // Flatten FeedItem → row (frontend searchMerged baca m.title/m.slug langsung).
   const merged = Object.values(allResults).map((v) => ({ ...v.data, sources: v.sources })).slice(0, limit);

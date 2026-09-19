@@ -24,7 +24,12 @@ export const fetchHtml = async (url: string, env?: ManhwaFetchEnv, timeoutMs = 1
   const headers = { 'User-Agent': MANHWA_UA, 'Referer': MANHWA_BASE + '/', 'Accept': 'text/html' };
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
   const text = await res.text().catch(() => '');
-  if (!isChallenge(res, text)) return text;
+  if (!isChallenge(res, text)) {
+    // Non-challenge HTTP errors (404 etc.) must throw: parsing a "Page not
+    // found" body produced phantom Series that got persisted to D1.
+    if (res.status >= 400) throw new Error(`manhwaindo fetch ${res.status} ${url}`);
+    return text;
+  }
 
   if (env?.MY_BROWSER) {
     const browser = env.MY_BROWSER as unknown as {

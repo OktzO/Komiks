@@ -6,5 +6,7 @@ export const prerender = false;
 ---
 
 <AdminLayout title="Monitoring">
-  <AdminMonitoring client:load />
+  <AdminMonitoring client:only="react">
+    <div style="max-width:72rem;margin:0 auto;padding:3rem 1rem;font-size:.875rem;opacity:.6">Memuat monitoring…</div>
+  </AdminMonitoring>
 </AdminLayout>

@@ -38,7 +38,7 @@ export const withBudget = async <T>(p: Promise<T>, ms: number, fallback: T): Pro
 // Static priority fallback ketika tidak ada data chapter_count/recency
 // (source yang belum pernah di-index → semua chapterCount 0).
 export const SOURCE_WEIGHT: Record<string, number> = {
-  komiku: 5, bacakomik: 4, thrive: 3, shinigami: 2, manhwaindo: 1,
+  komiku: 5, bacakomik: 4, thrive: 3, shinigami: 2, manhwaindo: 1, webtoon: 1,
 };
 
 export interface SourceLinkRow {
@@ -124,6 +124,8 @@ const ALLOWED_IMAGE_HOSTS = new Set([
   'kuma.thrive.moe',
   // Shinigami image hosts
   'assets.shngm.id',
+  // Webtoon image hosts
+  'webtoon-phinf.pstatic.net',
 ]);
 
 const isPrivateIp = (host: string): boolean => {
@@ -701,7 +703,9 @@ router.get('/:source/series/:sourceId/sources', async (c: Context) => {
       const adapter = getAdapter(source, c.env as unknown as AdapterEnv);
       if (adapter) {
         const series = await adapter.getSeries(sourceId).catch(() => null);
-        if (series?.title) {
+        // Gerbang validasi sama dengan live-fallback resolve: jangan persist
+        // series phantom (judul = slug dari halaman 404 yang ter-fabrikasi).
+        if (series?.title && series.title.toLowerCase() !== sourceId.toLowerCase()) {
           const norm = series.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
           const resolved: Array<{ source: string; sourceSlug: string; hasChapterList: boolean; chapterCount: number }> = [];
           const all = await Promise.all(

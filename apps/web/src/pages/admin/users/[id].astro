@@ -8,5 +8,7 @@ const { id } = Astro.params;
 ---
 
 <AdminLayout title={`User ${id}`}>
-  <AdminUserDetail client:load id={id!} />
+  <AdminUserDetail client:only="react" id={id!}>
+    <div style="max-width:72rem;margin:0 auto;padding:3rem 1rem;font-size:.875rem;opacity:.6">Memuat user…</div>
+  </AdminUserDetail>
 </AdminLayout>

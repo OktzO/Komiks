@@ -1,9 +1,9 @@
 // Source badge: icon-only. No text label — accessibility via title/alt.
 // Icons are local static assets in /sources/ (favicons per source).
 
-export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo' | 'shinigami';
+export type SourceKey = 'komiku' | 'bacakomik' | 'thrive' | 'manhwaindo' | 'shinigami' | 'webtoon';
 
-export const SOURCE_ORDER: SourceKey[] = ['komiku', 'bacakomik', 'thrive', 'manhwaindo', 'shinigami'];
+export const SOURCE_ORDER: SourceKey[] = ['komiku', 'bacakomik', 'thrive', 'manhwaindo', 'shinigami', 'webtoon'];
 
 const SOURCE_ICONS: Record<string, string> = {
   komiku: '/sources/komiku.png',
@@ -11,6 +11,7 @@ const SOURCE_ICONS: Record<string, string> = {
   thrive: '/sources/thrive.png',
   manhwaindo: '/sources/manhwaindo.png',
   shinigami: '/sources/shinigami.png',
+  webtoon: '/sources/webtoon.png',
 };
 
 export const SOURCE_LABELS: Record<string, string> = {
@@ -19,6 +20,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   thrive: 'Thrive',
   manhwaindo: 'ManhwaIndo',
   shinigami: 'Shinigami',
+  webtoon: 'Webtoon',
 };
 
 // `primary` = source yang sedang dipakai halaman ini. Ditampilkan paling kiri
