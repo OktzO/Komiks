@@ -1,0 +1,127 @@
+---
+import { SourceBadge, sourceLabel, SOURCE_ORDER } from '@/components/SourceBadge';
+---
+
+<footer id="site-footer" class="mt-24 border-t-2 border-border-strong bg-elevated">
+  <div class="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 lg:px-8">
+    <div class="grid gap-10 lg:grid-cols-4">
+      <!-- Brand + status -->
+      <div class="lg:pr-4">
+        <div class="flex items-center gap-3">
+          <a
+            href="/"
+            aria-label="Oktz. — beranda"
+            class="brutal-grid h-11 w-11 place-items-center border-2 border-border-strong bg-accent font-display text-xs font-black tracking-tight text-accent-ink"
+          >
+            OKTZ
+          </a>
+          <div>
+            <p class="font-mono text-[10px] font-black uppercase tracking-[0.2em] text-primary">
+              Oktz. Ecosystem
+            </p>
+            <p class="text-xs text-muted">Baca komik, tanpa ribet.</p>
+          </div>
+        </div>
+        <p class="mt-4 max-w-sm text-xs leading-relaxed text-secondary">
+          Platform baca komik (manga, manhwa, manhua) bahasa Indonesia modern, cepat, dan
+          terorganisir dari 5 agregator independen.
+        </p>
+        <a
+          href="/status"
+          class="brutal-badge mt-5 inline-flex items-center gap-2 rounded-md border-2 border-border-strong bg-accent-soft px-3 py-1.5 font-mono text-[10px] font-black uppercase tracking-wider text-primary transition-colors hover:bg-accent hover:text-accent-ink"
+        >
+          <span class="relative flex h-2 w-2" aria-hidden="true">
+            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
+          </span>
+          5 Sumber Terhubung
+        </a>
+      </div>
+
+      <!-- Sumber Terhubung -->
+      <nav aria-label="Sumber terhubung">
+        <h2 class="border-b-2 border-border-strong pb-2 font-mono text-[11px] font-black uppercase tracking-[0.2em] text-primary">
+          Sumber Terhubung
+        </h2>
+        <ul class="mt-4 space-y-1.5 text-xs">
+          {SOURCE_ORDER.map((s) => (
+            <li>
+              <a
+                href="/status"
+                class="flex items-center gap-2 text-secondary transition-colors hover:text-primary"
+              >
+                <SourceBadge sources={[s]} size="sm" />
+                <span>{sourceLabel(s)}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <!-- Navigasi -->
+      <nav aria-label="Navigasi utama">
+        <h2 class="border-b-2 border-border-strong pb-2 font-mono text-[11px] font-black uppercase tracking-[0.2em] text-primary">
+          Navigasi
+        </h2>
+        <ul class="mt-4 space-y-1.5 text-xs">
+          <li>
+            <a href="/search" class="text-secondary transition-colors hover:text-primary">Eksplorasi Judul</a>
+          </li>
+          <li>
+            <a href="/bookmark" class="text-secondary transition-colors hover:text-primary">Daftar Bookmark</a>
+          </li>
+          <li>
+            <a href="/history" class="text-secondary transition-colors hover:text-primary">Riwayat Membaca</a>
+          </li>
+          <li>
+            <a href="/status" class="text-secondary transition-colors hover:text-primary">Status & Kesehatan Sumber</a>
+          </li>
+        </ul>
+      </nav>
+
+      <!-- Sumber & Legal -->
+      <nav aria-label="Sumber dan legal">
+        <h2 class="border-b-2 border-border-strong pb-2 font-mono text-[11px] font-black uppercase tracking-[0.2em] text-primary">
+          Sumber &amp; Legal
+        </h2>
+        <ul class="mt-4 space-y-1.5 text-xs">
+          <li>
+            <a href="/tos" class="text-secondary transition-colors hover:text-primary">Syarat &amp; Ketentuan</a>
+          </li>
+          <li>
+            <a href="/status" class="text-secondary transition-colors hover:text-primary">Sumber &amp; Status</a>
+          </li>
+          <li>
+            <a href="/bookmark" class="text-secondary transition-colors hover:text-primary">Daftar Bookmark</a>
+          </li>
+          <li>
+            <a href="/history" class="text-secondary transition-colors hover:text-primary">Riwayat Membaca</a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+
+    <div class="mt-12 flex flex-col items-center justify-between gap-3 border-t border-border-strong/60 pt-6 sm:flex-row">
+      <p class="text-[11px] text-muted">
+        © 2026 Oktz. Hak cipta gambar &amp; komik milik masing-masing kreator/penerbit.
+      </p>
+      <div class="flex items-center gap-5">
+        <p class="font-mono text-[11px] text-muted">
+          Ditenagai Cloudflare Workers &amp; Astro
+        </p>
+        <a href="#top" class="font-mono text-primary transition-colors hover:underline">
+          Kembali ke Atas &uarr;
+        </a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .brutal-grid {
+    box-shadow: 4px 4px 0 color-mix(in oklab, var(--accent) 45%, transparent);
+  }
+  .brutal-badge {
+    box-shadow: 2px 2px 0 color-mix(in oklab, var(--accent) 45%, transparent);
+  }
+</style>
