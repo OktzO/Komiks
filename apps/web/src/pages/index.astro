@@ -3,7 +3,7 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 import { MangaCard } from '@/components/MangaCard';
 import { CoverImage } from '@/components/CoverImage';
 import { TypeBadge } from '@/components/TypeBadge';
-import { SourceBadge, sourceLabel, SOURCE_ORDER } from '@/components/SourceBadge';
+import { SourceBadge } from '@/components/SourceBadge';
 import { HeroSpotlight } from '@/components/HeroSpotlight';
 import { BentoGrid } from '@/components/BentoGrid';
 import ContinueReadingRail from '@/components/ContinueReadingRail';
@@ -168,51 +168,5 @@ const updates = manga.slice(10, 26);
         </div>
       </section>
     )}
-
-    {/* Modern Aesthetic Footer */}
-    <footer class="cv-footer border-t border-border-subtle mt-20 pt-10 text-sm text-muted">
-      <div class="grid gap-8 sm:grid-cols-3">
-        <div>
-          <div class="flex items-center gap-2 mb-2">
-            <span class="inline-block h-5 w-5 rounded-full bg-accent"></span>
-            <p class="font-display text-lg text-primary tracking-tight font-semibold">Oktz.</p>
-          </div>
-          <p class="text-xs leading-relaxed max-w-sm text-secondary">
-            Platform baca komik (manga, manhwa, manhua) bahasa Indonesia modern, cepat, dan terorganisir dari 5 agregator independen.
-          </p>
-        </div>
-        <div>
-          <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-primary mb-3">Sumber Terkoneksi</p>
-          <div class="grid grid-cols-1 gap-1.5">
-            {SOURCE_ORDER.map((s) => (
-              <a
-                href="/status"
-                class="flex items-center gap-2 py-1 text-xs text-secondary hover:text-primary transition-colors"
-              >
-                <SourceBadge sources={[s]} size="sm" />
-                <span>{sourceLabel(s)}</span>
-              </a>
-            ))}
-          </div>
-        </div>
-        <div>
-          <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-primary mb-3">Navigasi Utama</p>
-          <div class="space-y-1.5 text-xs">
-            {[
-              { href: '/search', label: 'Eksplorasi Judul' },
-              { href: '/bookmark', label: 'Daftar Bookmark' },
-              { href: '/history', label: 'Riwayat Membaca' },
-              { href: '/status', label: 'Status & Kesehatan Sumber' },
-            ].map((l) => (
-              <a href={l.href} class="block text-secondary hover:text-primary transition-colors">{l.label}</a>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div class="mt-12 pt-6 border-t border-border-subtle/50 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted">
-        <p>© 2026 Oktz. Hak cipta gambar & komik milik masing-masing kreator/penerbit.</p>
-        <p class="font-mono text-[11px]">Ditenagai Cloudflare Pages & Astro</p>
-      </div>
-    </footer>
-  </main>
+    </main>
 </BaseLayout>

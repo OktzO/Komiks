@@ -2,6 +2,7 @@
 import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
 import Navbar from '@/components/Navbar';
+import Footer from '@/components/Footer.astro';
 
 export interface Props {
   title?: string;
@@ -69,9 +70,10 @@ const jsonLd = JSON.stringify({
     <ClientRouter fallback="swap" />
     <script src="@/scripts/nav-skeleton.ts"></script>
   </head>
-  <body class="min-h-screen bg-base text-primary antialiased">
+  <body id="top" class="min-h-screen bg-base text-primary antialiased">
     {!bare && <Navbar client:idle />}
     {!bare && <div class="pt-24"><slot /></div>}
     {bare && <slot />}
+    {!bare && <Footer />}
   </body>
 </html>
