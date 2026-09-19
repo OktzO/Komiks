@@ -142,18 +142,32 @@ router.get('/search', async (c: Context) => {
     { key: 'webtoon', start: Date.now() },
   ];
 
-  // Budget total 6.5s (sama dengan path empty-q) — partial results tetap dikirim.
+  // Budget total 7.5s (< frontend timeout 8s). Per-source 6.5s — tanpa ini,
+  // satu source yang lambat (mis. webtoon render browser 3–20s) menggagalkan
+  // denganBudget → PROMISE.allSettled tak settle → seluruh search jadi kosong.
   const settled = await withBudget(
     Promise.allSettled(
-      sourceDefs.map(({ key, start }) =>
-        retryUpstream(async () => {
+      sourceDefs.map(({ key, start }) => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const p = retryUpstream(async () => {
           const a = getAdapter(key, c.env as unknown as AdapterEnv);
           if (!a) throw new Error(`${key} adapter unavailable`);
-          return { key, start, results: await a.search({ q, limit }) };
-        })
-      )
+          const results = await a.search({ q, limit });
+          return results;
+        });
+        // Webtoon search butuh browser fallback (challenge) — window lebih
+        // lebar dari source lain agar hasilnya keluar, tapi tetap < frontend 8s.
+        const budget = key === 'webtoon' ? 7200 : 6500;
+        const withLimit = Promise.race([
+          p.then((results) => ({ key, start, results })),
+          new Promise<{ key: string; start: number; results: Series[] }>((_, rej) => {
+            timer = setTimeout(() => rej(new Error(`${key} search timeout after ${budget}ms`)), budget);
+          }),
+        ]);
+        return withLimit.finally(() => timer && clearTimeout(timer));
+      })
     ),
-    6500,
+    8000,
     [] as PromiseSettledResult<{ key: string; start: number; results: Series[] }>[]
   );
 

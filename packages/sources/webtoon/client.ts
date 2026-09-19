@@ -48,7 +48,7 @@ const looksLikeSearchResults = (body: string): boolean => {
          body.includes('<strong class="title">');
 };
 
-export const fetchHtml = async (url: string, env?: WebtoonFetchEnv, timeoutMs = 15000): Promise<string> => {
+export const fetchHtml = async (url: string, env?: WebtoonFetchEnv, timeoutMs = 15000, waitUntil: 'load' | 'networkidle2' = 'networkidle2'): Promise<string> => {
   const headers = { 
     'User-Agent': WEBTOON_UA, 
     'Referer': WEBTOON_BASE + '/', 
@@ -72,7 +72,7 @@ export const fetchHtml = async (url: string, env?: WebtoonFetchEnv, timeoutMs = 
     };
     const page = await browser.newPage();
     try {
-      const resp = await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
+      const resp = await page.goto(url, { waitUntil, timeout: 20000 });
       const html = await page.content();
       const status = resp?.status() ?? 0;
       if (status < 400 && html && !isChallenge(resp as unknown as Response, html) && looksLikeSearchResults(html)) {

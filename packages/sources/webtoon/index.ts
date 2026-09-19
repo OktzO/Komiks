@@ -214,7 +214,10 @@ export const webtoonAdapter = (env?: WebtoonFetchEnv) => {
         return (data?.result?.episodeList || []).slice(0, limit).map(toSeries);
       }
       const url = buildSearchUrl(q.trim(), 1);
-      const html = await fetchHtml(url, env);
+      // waitUntil 'load' (bukan networkidle2): page search punya infinite scroll,
+      // browser loop tak akan idle → networkidle2 gampang timeout 20s → hasil
+      // hilang. 'load' cukup utk markup _card_item yang di-SSR.
+      const html = await fetchHtml(url, env, 15000, 'load');
       // Parse HTML search results (desktop site)
       const items: Series[] = [];
       // Pattern: <a href=".../list?title_no=123" class="link _card_item">...<img src="..."><strong class="title">Title</strong>...
