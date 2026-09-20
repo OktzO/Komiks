@@ -1,0 +1,12 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import AdminSaved from '@/components/pages/AdminSaved';
+
+export const prerender = false;
+---
+
+<AdminLayout title="Konten Tersimpan">
+  <AdminSaved client:only="react">
+    <div style="max-width:72rem;margin:0 auto;padding:3rem 1rem;font-size:.875rem;opacity:.6">Memuat konten tersimpan…</div>
+  </AdminSaved>
+</AdminLayout>
