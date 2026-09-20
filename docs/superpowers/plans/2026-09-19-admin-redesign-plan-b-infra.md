@@ -27,7 +27,7 @@
 ---
 ---
 
-### Task B1: CSS helpers + shell sticky (topbar masuk flow)
+### Task 1: CSS helpers + shell sticky (topbar masuk flow)
 
 **Files:**
 - Modify: `apps/web/src/styles/global.css:590-613` (hapus 3 token + `.admin-card`, tambah block helpers)
@@ -164,7 +164,7 @@ git add apps/web/src/styles/global.css apps/web/src/layouts/AdminLayout.astro
 git commit -m "fix(web): sticky admin shell + admin css helpers (.admin-page/.admin-panel)"
 ```
 
-### Task B2: Topbar nav — Konten + Log, hapus Merge Queue
+### Task 2: Topbar nav — Konten + Log, hapus Merge Queue
 
 **Files:**
 - Modify: `apps/web/src/components/pages/AdminTopbar.tsx:4-10` (NAV array), `:50` (header fixed→sticky)
@@ -238,7 +238,7 @@ git add apps/web/src/components/pages/AdminTopbar.tsx
 git commit -m "feat(web): admin nav Konten/Log, hapus Merge Queue, topbar sticky"
 ```
 
-### Task B3: Modul primitif bersama `admin/charts.tsx` + migrasikan AdminSettings
+### Task 3: Modul primitif bersama `admin/charts.tsx` + migrasikan AdminSettings
 
 **Files:**
 - Create: `apps/web/src/components/admin/charts.tsx`
