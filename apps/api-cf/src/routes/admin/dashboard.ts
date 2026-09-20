@@ -77,26 +77,6 @@ router.get('/dashboard/requests', async (c: Context) => {
   return json(c, { data: { dates, series } });
 });
 
-// ---- security events feed ----------------------------------------------------
-router.get('/security-events', async (c: Context) => {
-  const d = getDb(c);
-  const resolved = c.req.query('resolved');
-  const data = await d.listSecurityEvents({
-    resolved: resolved === undefined ? undefined : resolved === '1' || resolved === 'true',
-    page: c.req.query('page') ? Number(c.req.query('page')) : 1,
-    limit: c.req.query('limit') ? Number(c.req.query('limit')) : 20,
-  });
-  return json(c, data);
-});
-
-router.patch('/security-events/:id', async (c: Context) => {
-  const d = getDb(c);
-  const id = Number(c.req.param('id'));
-  if (!Number.isFinite(id)) return json(c, { error: 'invalid id' }, 400);
-  await d.resolveSecurityEvent(id);
-  return json(c, { ok: true });
-});
-
 // ---- user moderation (status/role) -------------------------------------------
 router.patch('/users/:id', async (c: Context) => {
   const d = getDb(c);

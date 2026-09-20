@@ -98,12 +98,9 @@ export interface Db {
   listStalePages: (accountIdx: number, staleBeforeTs: number, limit: number) => Promise<Array<{ chapter_id: string; page_number: number; r2_key: string; r2_account_idx: number; last_access: number | null }>>;
   clearPageStorage: (chapterId: string, pageNo: number) => Promise<{ success: boolean }>;
 
-  // ── Admin dashboard (0013) — moderation + security feed ──
+  // ── Admin dashboard (0013) — moderation ──
   getUserStatusAdmin: (id: number) => Promise<Result<{ id: number; role: string; status: string }>>;
   updateUserAdmin: (id: number, params: { status?: string; role?: string }) => Promise<{ success: boolean }>;
-  addSecurityEvent: (params: { type: string; severity?: string; message?: string | null; ip?: string | null; path?: string | null }) => Promise<{ id: number }>;
-  listSecurityEvents: (params: { resolved?: boolean; page?: number; limit?: number }) => Promise<{ data: Array<{ id: number; type: string; severity: string; message: string | null; ip: string | null; path: string | null; resolved: number; created_at: number; resolved_at: number | null }>; total: number; page: number }>;
-  resolveSecurityEvent: (id: number) => Promise<{ success: boolean }>;
   getSourceHealthSummary: () => Promise<Array<{ source: string; total: number; healthy: number; uptime_pct: number | null; last_checked_at: number | null; last_healthy: number | null; last_error: string | null }>>;
   countScrapedChaptersBySource: (since: number) => Promise<Array<{ source: string; chapters: number; last_scraped_at: number | null }>>;
   listLbUsageRange: (fromDate: string, toDate: string) => Promise<Array<{ origin_url: string; date_key: string; req_count: number }>>;
@@ -869,43 +866,6 @@ export const db = (client: D1Database): Db => {
       if (sets.length === 0) return { success: true };
       const res = await prep(`UPDATE users SET ${sets.join(', ')} WHERE id = ?${args.length + 1}`)
         .bind(...args, id).run();
-      return { success: res.success };
-    },
-
-    addSecurityEvent: async (p) => {
-      try {
-        const row = await prep(
-          'INSERT INTO security_events (type, severity, message, ip, path) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id'
-        ).bind(p.type, p.severity ?? 'low', p.message ?? null, p.ip ?? null, p.path ?? null).first<Row>();
-        return row ? { id: Number(row.id) } : { id: 0 };
-      } catch (e) {
-        console.error('[addSecurityEvent] failed:', String(e));
-        return { id: 0 };
-      }
-    },
-
-    listSecurityEvents: async (p) => {
-      const page = p.page ?? 1;
-      const limit = p.limit ?? 20;
-      const offset = (page - 1) * limit;
-      const where = p.resolved === undefined ? '' : `WHERE resolved = ?1`;
-      const args = p.resolved === undefined ? [] : [p.resolved ? 1 : 0];
-      const countRow = await prep(`SELECT COUNT(*) AS c FROM security_events ${where}`).bind(...args).first<Row>();
-      const total = countRow ? Number(countRow.c) : 0;
-      const { results } = await prep(
-        `SELECT id, type, severity, message, ip, path, resolved, created_at, resolved_at
-         FROM security_events ${where} ORDER BY created_at DESC LIMIT ?${args.length + 1} OFFSET ?${args.length + 2}`
-      ).bind(...args, limit, offset).all<Row>();
-      return {
-        data: (results ?? []) as unknown as Array<{ id: number; type: string; severity: string; message: string | null; ip: string | null; path: string | null; resolved: number; created_at: number; resolved_at: number | null }>,
-        total,
-        page,
-      };
-    },
-
-    resolveSecurityEvent: async (id) => {
-      const res = await prep('UPDATE security_events SET resolved = 1, resolved_at = ?1 WHERE id = ?2 AND resolved = 0')
-        .bind(Math.floor(Date.now() / 1000), id).run();
       return { success: res.success };
     },
 
