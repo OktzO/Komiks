@@ -13,6 +13,7 @@ import { router as identifyRouter } from './routes/identify';
 import { router as lbAdminRouter } from './routes/admin/lb';
 import { router as monitoringAdminRouter } from './routes/admin/monitoring';
 import { router as dashboardAdminRouter } from './routes/admin/dashboard';
+import { router as savedAdminRouter } from './routes/admin/saved';
 import { router as scrapeRouter } from './routes/admin/scrape';
 import { router as mergeAdminRouter } from './routes/admin/merge';
 import { router as readerRouter, imgRouter } from './routes/reader';
@@ -107,6 +108,7 @@ app.route('/api/admin/merge', mergeAdminRouter);
 // requireAdminSession (session.role===admin) enforced inside router. rateLimitAdmin applies to all /api/admin/*.
 app.route('/api/admin', monitoringAdminRouter);
 app.route('/api/admin', dashboardAdminRouter);
+app.route('/api/admin', savedAdminRouter);
 app.route('/api/reader', readerRouter);
 app.route('/api', resolveRouter);
 app.route('/api/auth', authRouter);
