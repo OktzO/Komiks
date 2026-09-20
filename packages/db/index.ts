@@ -62,6 +62,21 @@ export interface Db {
   updateScrapeJob: (id: string, params: { status: string; seriesSlug?: string | null; error?: string | null; completedAt?: number | null }) => Promise<{ success: boolean }>;
   getScrapeJob: (id: string) => Promise<Result<ScrapeJob>>;
   listScrapeJobs: (limit?: number) => Promise<ListResult<ScrapeJob>>;
+  // ── Konten tersimpan (Plan C) ──
+  getSavedContentSummary: () => Promise<{
+    series_total: number;
+    chapters_total: number;
+    pages_stored: number;
+    per_source: Array<{ source: string; series: number; chapters: number; last_scraped_at: number | null }>;
+  }>;
+  listSavedSeries: (params: { page?: number; limit?: number }) => Promise<{
+    total: number;
+    rows: Array<{ slug: string; title: string; source: string; chapter_count: number; last_scraped_at: number | null }>;
+  }>;
+  listSavedChapters: (params: { page?: number; limit?: number }) => Promise<{
+    total: number;
+    rows: Array<{ series_slug: string; series_title: string; chapter_id: string; chapter_number: number; pages_count: number; created_at: number }>;
+  }>;
   recordSourceHealth: (params: { source: string; healthy: boolean; latencyMs?: number | null; error?: string | null }) => Promise<{ id: number }>;
   getLatestSourceHealth: (source: string) => Promise<Result<{ source: string; healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>>;
   getSourceHistory: (source: string, limit?: number) => Promise<Array<{ healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>>;
@@ -463,6 +478,86 @@ export const db = (client: D1Database): Db => {
     listScrapeJobs: async (limit = 50) => {
       const { results } = await prep('SELECT * FROM scrape_jobs ORDER BY created_at DESC LIMIT ?1').bind(limit).all<Row>();
       return (results ?? []) as unknown as ListResult<ScrapeJob>;
+    },
+
+    getSavedContentSummary: async () => {
+      const sRow = await prep(
+        'SELECT COUNT(DISTINCT s.slug) AS c FROM series s JOIN chapters ch ON ch.series_slug = s.slug'
+      ).first<Row>();
+      const cRow = await prep('SELECT COUNT(*) AS c FROM chapters').first<Row>();
+      const pRow = await prep('SELECT COUNT(*) AS c FROM chapter_pages').first<Row>();
+      const per = (await prep(
+        `SELECT m.source,
+                COUNT(DISTINCT s.slug) AS series,
+                COUNT(c.id) AS chapters,
+                MAX(m.last_scraped_at) AS last_scraped_at
+         FROM manga_source_link m
+         JOIN series s ON s.id = m.manga_id
+         LEFT JOIN chapters c ON c.series_slug = s.slug
+         GROUP BY m.source
+         ORDER BY chapters DESC`
+      ).all<Row>()).results ?? [];
+      return {
+        series_total: Number(sRow?.c ?? 0),
+        chapters_total: Number(cRow?.c ?? 0),
+        pages_stored: Number(pRow?.c ?? 0),
+        per_source: (per as Row[]).map((r) => ({
+          source: r.source as string,
+          series: Number(r.series),
+          chapters: Number(r.chapters),
+          last_scraped_at: r.last_scraped_at == null ? null : (r.last_scraped_at as number),
+        })),
+      };
+    },
+
+    listSavedSeries: async ({ page = 1, limit = 20 }) => {
+      const rows = (await prep(
+        `SELECT s.slug, s.title, s.source, COUNT(c.id) AS chapter_count,
+                (SELECT MAX(m.last_scraped_at) FROM manga_source_link m WHERE m.manga_id = s.id) AS last_scraped_at
+         FROM series s
+         JOIN chapters c ON c.series_slug = s.slug
+         GROUP BY s.id
+         ORDER BY chapter_count DESC, s.title ASC
+         LIMIT ?1 OFFSET ?2`
+      ).bind(limit, (page - 1) * limit).all<Row>()).results ?? [];
+      const totalRow = await prep(
+        'SELECT COUNT(DISTINCT s.slug) AS c FROM series s JOIN chapters ch ON ch.series_slug = s.slug'
+      ).first<Row>();
+      return {
+        total: Number(totalRow?.c ?? 0),
+        rows: (rows as Row[]).map((r) => ({
+          slug: r.slug as string,
+          title: r.title as string,
+          source: r.source as string,
+          chapter_count: Number(r.chapter_count),
+          last_scraped_at: r.last_scraped_at == null ? null : (r.last_scraped_at as number),
+        })),
+      };
+    },
+
+    listSavedChapters: async ({ page = 1, limit = 20 }) => {
+      const rows = (await prep(
+        `SELECT c.id AS chapter_id, c.series_slug, c.chapter_number, s.title AS series_title,
+                COUNT(p.id) AS pages_count, c.created_at
+         FROM chapters c
+         JOIN series s ON s.slug = c.series_slug
+         LEFT JOIN chapter_pages p ON p.chapter_id = c.id
+         GROUP BY c.id
+         ORDER BY c.created_at DESC, c.id ASC
+         LIMIT ?1 OFFSET ?2`
+      ).bind(limit, (page - 1) * limit).all<Row>()).results ?? [];
+      const totalRow = await prep('SELECT COUNT(*) AS c FROM chapters').first<Row>();
+      return {
+        total: Number(totalRow?.c ?? 0),
+        rows: (rows as Row[]).map((r) => ({
+          series_slug: r.series_slug as string,
+          series_title: r.series_title as string,
+          chapter_id: r.chapter_id as string,
+          chapter_number: Number(r.chapter_number),
+          pages_count: Number(r.pages_count),
+          created_at: r.created_at as number,
+        })),
+      };
     },
 
     recordSourceHealth: async (p) => {
