@@ -19,6 +19,7 @@ for cfg in $CFGS; do
   eval "tok=\${CF_TOKEN_AKUN${i}:-}"
   if [ -z "${tok:-}" ]; then echo "skip $cfg: token AKUN$i unset"; continue; fi
   for f in packages/db/migrations/0018_*.sql; do apply "$cfg" "$f"; done
+  for f in packages/db/migrations/0019_*.sql; do apply "$cfg" "$f"; done
   for n in 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017; do
     for f in packages/db/migrations/${n}_*.sql; do
       [ -f "$f" ] || { echo "skip missing $n"; break; }

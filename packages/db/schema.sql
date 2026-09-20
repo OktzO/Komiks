@@ -293,23 +293,6 @@ CREATE INDEX idx_audit_account ON lb_audit_log(account_id);
 CREATE INDEX idx_audit_origin  ON lb_audit_log(origin_id);
 
 ---------------------------------------------------------------------
--- security events (admin dashboard abuse feed)
----------------------------------------------------------------------
-CREATE TABLE security_events (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  type        TEXT    NOT NULL,
-  severity    TEXT    NOT NULL DEFAULT 'low' CHECK (severity IN ('low','medium','high','critical')),
-  message     TEXT,
-  ip          TEXT,
-  path        TEXT,
-  resolved    INTEGER NOT NULL DEFAULT 0,
-  created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-  resolved_at INTEGER
-);
-CREATE INDEX idx_security_events_created ON security_events(created_at DESC);
-CREATE INDEX idx_security_events_resolved ON security_events(resolved, created_at DESC);
-
----------------------------------------------------------------------
 -- full-text search (0011: title + description + alt_titles)
 ---------------------------------------------------------------------
 CREATE VIRTUAL TABLE series_search USING fts5 (
