@@ -5,7 +5,8 @@ const NAV = [
   { href: '/admin', label: 'Dashboard' },
   { href: '/admin/monitoring', label: 'Monitoring' },
   { href: '/admin/users', label: 'Users' },
-  { href: '/admin/merge', label: 'Merge Queue' },
+  { href: '/admin/saved', label: 'Konten' },
+  { href: '/admin/log', label: 'Log' },
   { href: '/admin/settings', label: 'Settings' },
 ] as const;
 
@@ -47,7 +48,7 @@ export default function AdminTopbar() {
   };
 
   return (
-    <header id="admin-navbar" className="fixed inset-x-0 top-0 z-50">
+    <header id="admin-navbar" className="sticky top-0 z-50">
       <div className="nav-island relative mx-auto flex items-center justify-between px-5 py-3">
         <a href="/admin" className="flex items-center gap-2 text-xl tracking-tight font-medium text-primary hover:text-accent">
           <span className="inline-block h-7 w-7 rounded-full bg-gradient-to-br from-accent to-muted" />
