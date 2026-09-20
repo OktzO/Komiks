@@ -63,10 +63,17 @@ export function Navbar() {
   return (
     <header id="navbar" className="fixed inset-x-0 top-0 z-50">
       <div className="nav-island relative mx-auto flex items-center justify-between px-5 py-3">
-        <a href="/" className="flex items-center gap-2 text-xl tracking-tight font-medium text-primary hover:text-accent">
-          <span className="inline-block h-7 w-7 rounded-full bg-gradient-to-br from-accent to-muted" />
-          Oktz.
-        </a>
+        <div className="flex items-center gap-3">
+          <img
+            src="/logo.webp"
+            alt="Mascot Oktz."
+            className="hidden h-9 w-9 rounded-full bg-elevated border border-border-default p-0.5 object-contain sm:block"
+          />
+          <a href="/" className="flex items-center gap-2 text-xl tracking-tight font-medium text-primary hover:text-accent">
+            <span className="inline-block h-7 w-7 rounded-full bg-gradient-to-br from-accent to-muted" />
+            Oktz.
+          </a>
+        </div>
         <button
           className="hamburger"
           aria-label="Menu"
