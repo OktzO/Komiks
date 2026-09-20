@@ -7,7 +7,7 @@ import { fetchMe, apiGet, apiPost, getAuthApiUrl, roleLabel, type AuthUser } fro
  *
  * NOTE ON ENVELOPES: several admin endpoints return a BARE payload
  * (no `{ data }` wrapper): lb/settings, lb/accounts, lb/origins,
- * scrape-jobs, security-events, users. Others ARE wrapped.
+ * scrape-jobs, users. Others ARE wrapped.
  * See apps/api-cf/src/routes/admin/*.ts. Do not "unify" these blindly.
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -40,18 +40,6 @@ type SourceHealth = {
 };
 
 type ReqData = { dates: string[]; series: Array<{ origin: string; points: number[] }> };
-
-type SecEvent = {
-  id: number;
-  type: string;
-  severity: string;
-  message: string | null;
-  ip: string | null;
-  path: string | null;
-  resolved: number;
-  created_at: number;
-  resolved_at: number | null;
-};
 
 type LbSettings = {
   id?: number;
@@ -201,15 +189,6 @@ function IconSearch({ className }: IconProps) {
   );
 }
 
-function IconBell({ className }: IconProps) {
-  return (
-    <svg {...iconBase} className={className} aria-hidden="true">
-      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-    </svg>
-  );
-}
-
 function IconChevronDown({ className }: IconProps) {
   return (
     <svg {...iconBase} className={className} aria-hidden="true">
@@ -223,14 +202,6 @@ function IconRefresh({ className }: IconProps) {
     <svg {...iconBase} className={className} aria-hidden="true">
       <path d="M21 12a9 9 0 1 1-3.2-6.9" />
       <path d="M21 3v6h-6" />
-    </svg>
-  );
-}
-
-function IconShield({ className }: IconProps) {
-  return (
-    <svg {...iconBase} className={className} aria-hidden="true">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
   );
 }
@@ -727,51 +698,6 @@ function OriginsCard({
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * Security events — real feed from security_events table.
- * Replaces the static decorative notification badge.
- * ═══════════════════════════════════════════════════════════════════════ */
-
-function SecurityCard({ events, total }: { events: SecEvent[]; total: number }) {
-  const sevColor: Record<string, string> = {
-    critical: 'var(--error)',
-    high: 'oklch(70% 0.14 50)',
-    medium: 'oklch(75% 0.14 75)',
-    low: 'var(--text-muted)',
-  };
-
-  return (
-    <Card delay={320}>
-      <CardHead
-        icon={<IconShield className="w-4 h-4" />}
-        title="Keamanan"
-        hint={`${fmtNum(total)} belum diselesaikan`}
-      />
-      {events.length === 0 ? (
-        <EmptyState>Tidak ada event keamanan terbuka. Feed terisi otomatis dari rate limiter dan guard CSRF.</EmptyState>
-      ) : (
-        <ul className="space-y-2.5">
-          {events.slice(0, 5).map((e) => (
-            <li key={e.id} className="flex items-start gap-2">
-              <span
-                className="w-1.5 h-1.5 rounded-full shrink-0 mt-1.5"
-                style={{ background: sevColor[e.severity] ?? 'var(--text-muted)' }}
-                aria-hidden="true"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-primary truncate">{e.message ?? e.type}</div>
-                <div className="text-[10px] text-muted mt-0.5">
-                  {e.severity} · {e.path ?? '—'} · {fmtRel(e.created_at)}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
  * Main page
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -798,8 +724,6 @@ export default function AdminSettingsPage() {
   const [storage, setStorage] = useState<StorageData | null>(null);
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [requests, setRequests] = useState<ReqData | null>(null);
-  const [secEvents, setSecEvents] = useState<SecEvent[]>([]);
-  const [secTotal, setSecTotal] = useState(0);
 
   // LB config
   const [settings, setSettings] = useState<LbSettings | null>(null);
@@ -823,12 +747,11 @@ export default function AdminSettingsPage() {
    * ─────────────────────────────────────────────────────────────────── */
   const loadAll = useCallback(async () => {
     try {
-      const [ov, st, sh, rq, se, s, a, o, lbStatus, us] = await Promise.all([
+      const [ov, st, sh, rq, s, a, o, lbStatus, us] = await Promise.all([
         apiGet<{ data: Overview }>('/api/admin/overview').catch(() => null),
         apiGet<{ data: StorageData }>('/api/admin/dashboard/storage').catch(() => null),
         apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health').catch(() => null),
         apiGet<{ data: ReqData }>('/api/admin/dashboard/requests?days=14').catch(() => null),
-        apiGet<{ data: SecEvent[]; total: number }>('/api/admin/security-events?limit=5&resolved=0').catch(() => null),
         apiGet<LbSettings>('/api/admin/lb/settings').catch(() => null),
         apiGet<LbAccount[]>('/api/admin/lb/accounts').catch(() => null),
         apiGet<LbOrigin[]>('/api/admin/lb/origins').catch(() => null),
@@ -840,8 +763,6 @@ export default function AdminSettingsPage() {
       setStorage(st?.data ?? null);
       setSources(sh?.data ?? []);
       setRequests(rq?.data ?? null);
-      setSecEvents(se?.data ?? []);
-      setSecTotal(se?.total ?? 0);
       setSettings(s ?? null);
       setAccounts(a ?? []);
       setOrigins(o ?? []);
@@ -1124,21 +1045,6 @@ export default function AdminSettingsPage() {
             <IconRefresh className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
 
-          <div
-            className="relative w-9 h-9 flex items-center justify-center rounded-full bg-elevated border border-border-subtle text-secondary"
-            title={secTotal > 0 ? `${secTotal} event keamanan belum diselesaikan` : 'Tidak ada event terbuka'}
-          >
-            <IconBell className="w-4 h-4" />
-            {secTotal > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-error text-[9px] font-semibold text-base tabular">
-                {secTotal > 99 ? '99+' : secTotal}
-              </span>
-            )}
-            <span className="sr-only">
-              {secTotal > 0 ? `${secTotal} event keamanan belum diselesaikan` : 'Tidak ada event keamanan terbuka'}
-            </span>
-          </div>
-
           <div className="flex items-center gap-2.5 pl-1">
             <span className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-sm font-semibold text-base">
               {(user.email || '?').charAt(0).toUpperCase()}
@@ -1239,7 +1145,6 @@ export default function AdminSettingsPage() {
           query={query}
           onViewAll={() => setTab('origins')}
         />
-        <SecurityCard events={secEvents} total={secTotal} />
       </div>
 
       {/* ── Management tabs ── */}
