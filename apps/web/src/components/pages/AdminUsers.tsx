@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { fetchMe, apiGet, apiPatch, roleLabel, type AuthUser } from '@/lib/api';
+import { Card, CardHead, fmtNum, EmptyState } from '@/components/admin/charts';
 
 type UserSummary = {
   id: number;
@@ -113,13 +114,11 @@ export default function AdminUsersPage() {
 
   if (loading) {
     return (
-      <main className="max-w-4xl mx-auto px-4 py-12">
-        <div className="animate-pulse space-y-4">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-12 w-full rounded-lg bg-card" />
-          ))}
-        </div>
-      </main>
+      <div className="admin-page space-y-4">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="h-12 w-full rounded-2xl bg-elevated animate-pulse" />
+        ))}
+      </div>
     );
   }
 
@@ -138,14 +137,11 @@ export default function AdminUsersPage() {
   };
 
   return (
-    <main className="max-w-4xl mx-auto px-4 py-8 sm:py-12">
-      <div className="flex items-center justify-between mb-6">
+    <div className="admin-page space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <a href="/admin" className="text-sm text-secondary hover:text-primary transition-colors mb-2 inline-block">
-            ← Dashboard
-          </a>
-          <h1 className="text-2xl font-semibold text-primary">Users</h1>
-          <p className="text-sm text-muted mt-1">{total} registered</p>
+          <h1 className="text-xl font-semibold tracking-tight text-primary">Users</h1>
+          <p className="text-[13px] text-muted mt-1">{fmtNum(total)} terdaftar</p>
         </div>
         <span className="flex items-center gap-2 text-xs text-muted">
           <span className={`status-dot ${refreshing ? 'live' : 'unknown'}`} />
@@ -154,30 +150,32 @@ export default function AdminUsersPage() {
       </div>
 
       {error && (
-        <div className="mb-4 text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">{error}</div>
+        <div className="text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">{error}</div>
       )}
 
       <input
         type="text"
         value={q}
         onChange={(e) => { setQ(e.target.value); setPage(1); }}
-        placeholder="Search by email or name..."
-        className="w-full bg-base border border-border-default rounded-lg px-3 py-2 mb-4 text-primary placeholder:text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+        placeholder="Cari email atau nama..."
+        className="w-full bg-base border border-border-default rounded-xl px-3 py-2 mb-4 text-primary placeholder:text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
-      <div className="border border-subtle rounded-lg overflow-hidden bg-card">
-        <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs text-muted border-b border-subtle">
-          <div className="col-span-4">User</div>
-          <div className="col-span-1">Role</div>
-          <div className="col-span-2">Status</div>
-          <div className="col-span-1 text-right">Bm</div>
-          <div className="col-span-2 text-right">Last login</div>
-          <div className="col-span-2 text-right">Aksi</div>
-        </div>
-        {users.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-muted text-center">No users found.</div>
-        ) : (
-          users.map((u) => (
+      <Card>
+        <CardHead title="Daftar user" hint={`${fmtNum(total)} total`} />
+        <div className="admin-inner overflow-hidden">
+          <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs text-muted border-b border-subtle">
+            <div className="col-span-4">User</div>
+            <div className="col-span-1">Role</div>
+            <div className="col-span-2">Status</div>
+            <div className="col-span-1 text-right">Bm</div>
+            <div className="col-span-2 text-right">Last login</div>
+            <div className="col-span-2 text-right">Aksi</div>
+          </div>
+          {users.length === 0 ? (
+            <EmptyState>Tidak ada user ditemukan.</EmptyState>
+          ) : (
+            users.map((u) => (
             <div key={u.id} className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm border-b border-subtle last:border-0 hover:bg-bg-secondary/30 transition-colors">
               <div className="col-span-4 min-w-0">
                 <a href={`/admin/users/${u.id}`} className="text-primary truncate block hover:text-accent transition-colors">{u.email}</a>
@@ -224,7 +222,8 @@ export default function AdminUsersPage() {
             </div>
           ))
         )}
-      </div>
+        </div>
+      </Card>
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4">
@@ -233,7 +232,7 @@ export default function AdminUsersPage() {
             disabled={page <= 1}
             className="px-3 py-1.5 text-sm text-secondary border border-border-default rounded-lg hover:bg-bg-secondary transition-colors disabled:opacity-40"
           >
-            ← Prev
+            ← Sebelumnya
           </button>
           <span className="text-xs text-muted font-mono tabular">{page} / {totalPages}</span>
           <button
@@ -241,7 +240,7 @@ export default function AdminUsersPage() {
             disabled={page >= totalPages}
             className="px-3 py-1.5 text-sm text-secondary border border-border-default rounded-lg hover:bg-bg-secondary transition-colors disabled:opacity-40"
           >
-            Next →
+            Berikutnya →
           </button>
         </div>
       )}
@@ -279,6 +278,6 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }
