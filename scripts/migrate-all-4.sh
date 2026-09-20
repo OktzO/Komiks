@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Usage: CF_TOKEN_AKUN{1..4} set in env; run: ./scripts/migrate-all-4.sh
 # Applies 0001..0019 + backfill_entity_decode to all 4 D1; records _migrations ledger.
+# 0019 (drop security_events) DIJALANKAN PALING AKHIR: backfill 0001..0017 menghidupkan
+# lagi tabel via 0013_admin_dashboard.sql, jadi drop terakhir memastikan tak ada yang tersisa.
 set -u
 CFGS="apps/api-cf/wrangler.toml apps/api-cf/wrangler.origin.toml apps/api-cf/wrangler.origin3.toml apps/api-cf/wrangler.origin4.toml"
 apply() {
@@ -19,7 +21,6 @@ for cfg in $CFGS; do
   eval "tok=\${CF_TOKEN_AKUN${i}:-}"
   if [ -z "${tok:-}" ]; then echo "skip $cfg: token AKUN$i unset"; continue; fi
   for f in packages/db/migrations/0018_*.sql; do apply "$cfg" "$f"; done
-  for f in packages/db/migrations/0019_*.sql; do apply "$cfg" "$f"; done
   for n in 0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017; do
     for f in packages/db/migrations/${n}_*.sql; do
       [ -f "$f" ] || { echo "skip missing $n"; break; }
@@ -27,4 +28,5 @@ for cfg in $CFGS; do
     done
   done
   apply "$cfg" "packages/db/migrations/backfill_entity_decode.sql"
+  for f in packages/db/migrations/0019_*.sql; do apply "$cfg" "$f"; done
 done
