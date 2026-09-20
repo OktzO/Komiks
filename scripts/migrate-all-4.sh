@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: CF_TOKEN_AKUN{1..4} set in env; run: ./scripts/migrate-all-4.sh
-# Applies 0001..0018 + backfill_entity_decode to all 4 D1; records _migrations ledger.
+# Applies 0001..0019 + backfill_entity_decode to all 4 D1; records _migrations ledger.
 set -u
 CFGS="apps/api-cf/wrangler.toml apps/api-cf/wrangler.origin.toml apps/api-cf/wrangler.origin3.toml apps/api-cf/wrangler.origin4.toml"
 apply() {
