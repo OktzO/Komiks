@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { fetchMe, apiGet, apiPatch, roleLabel, type AuthUser } from '@/lib/api';
+import { fetchMe, apiGet, roleLabel, type AuthUser } from '@/lib/api';
 
 /* ─────────────────────────────────────────────────────────────────────
  * Types (mirror API response shapes)
@@ -36,18 +36,6 @@ type SourceHealth = {
 };
 
 type ReqData = { dates: string[]; series: Array<{ origin: string; points: number[] }> };
-
-type SecEvent = {
-  id: number;
-  type: string;
-  severity: string;
-  message: string | null;
-  ip: string | null;
-  path: string | null;
-  resolved: number;
-  created_at: number;
-  resolved_at: number | null;
-};
 
 type LbAccount = { id: string; provider: string; label: string; account_ref: string | null; token_last4: string; status: string; created_at: number };
 type LbOrigin = { id: string; account_id: string | null; origin_url: string; priority: number; weight: number; enabled: number; last_health_status: string | null; last_checked_at: number | null };
@@ -331,14 +319,11 @@ export default function AdminDashboardPage() {
   const [storage, setStorage] = useState<StorageData | null>(null);
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [requests, setRequests] = useState<ReqData | null>(null);
-  const [secEvents, setSecEvents] = useState<SecEvent[]>([]);
-  const [secTotal, setSecTotal] = useState(0);
   const [lbAccounts, setLbAccounts] = useState<LbAccount[]>([]);
   const [lbOrigins, setLbOrigins] = useState<LbOrigin[]>([]);
   const [lbUsage, setLbUsage] = useState<Array<{ origin_url: string; req_count: number }>>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
-  const [resolving, setResolving] = useState<number | null>(null);
   
   useEffect(() => {
     let alive = true;
@@ -355,12 +340,11 @@ export default function AdminDashboardPage() {
     if (document.hidden) return;
     setRefreshing(true);
     try {
-      const [ov, st, sh, rq, se, a, o, us] = await Promise.all([
+      const [ov, st, sh, rq, a, o, us] = await Promise.all([
         apiGet<{ data: Overview }>('/api/admin/overview'),
         apiGet<{ data: StorageData }>('/api/admin/dashboard/storage'),
         apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health'),
         apiGet<{ data: ReqData }>('/api/admin/dashboard/requests?days=14'),
-        apiGet<{ data: SecEvent[]; total: number }>('/api/admin/security-events?limit=10'),
         apiGet<LbAccount[]>('/api/admin/lb/accounts'),
         apiGet<{ data: LbOrigin[] }>('/api/admin/lb/origins'),
         apiGet<{ data: UserRow[]; total: number }>('/api/admin/users?limit=2000'),
@@ -369,8 +353,6 @@ export default function AdminDashboardPage() {
       setStorage(st.data);
       setSources(sh.data || []);
       setRequests(rq.data);
-      setSecEvents(se.data || []);
-      setSecTotal(se.total);
       setLbAccounts(a || []);
       setLbOrigins(o.data || []);
       setUsers(us.data || []);
@@ -391,17 +373,6 @@ export default function AdminDashboardPage() {
       return () => clearInterval(iv);
     }
   }, [user, loadAll]);
-
-  const resolveEvent = useCallback(async (id: number) => {
-    setResolving(id);
-    try {
-      await apiPatch(`/api/admin/security-events/${id}`);
-      setSecEvents((ev) => ev.map((e) => (e.id === id ? { ...e, resolved: 1, resolved_at: Math.floor(Date.now() / 1000) } : e)));
-      setSecTotal((t) => Math.max(0, t - 1));
-    } finally {
-      setResolving(null);
-    }
-  }, []);
 
   // Derived numbers
   const storageTotal = storage?.total_bytes ?? 0;
@@ -462,13 +433,6 @@ export default function AdminDashboardPage() {
   }
   if (!user || user.role !== 'admin') return null;
 
-  const severityColor: Record<string, string> = {
-    low: 'text-secondary border-border-default',
-    medium: 'text-[oklch(70%_0.12_75)] border-[oklch(70%_0.12_75)]/30 bg-[oklch(70%_0.12_75)]/10',
-    high: 'text-error border-error/30 bg-error/10',
-    critical: 'text-error border-error/40 bg-error/15',
-  };
-
   return (
     <main className="max-w-6xl mx-auto px-4 py-8 sm:py-10">
       <div className="flex items-center justify-between mb-6">
@@ -499,20 +463,6 @@ export default function AdminDashboardPage() {
           sub={scrapeTotal > 0 ? `${overview!.scrape24h.success}/${scrapeTotal} sukses` : 'belum ada aktivitas'} refreshing={refreshing} />
         <StatCard label="Users" value={fmtNum(usersTotal)}
           sub={`+${users7d} minggu ini`} delta={usersGrowth} deltaUp refreshing={refreshing} />
-        <div className="admin-card p-4 flex flex-col gap-1 min-h-[104px]">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-muted">Security alerts</p>
-            {secTotal > 0 && (
-              <span className={`text-[10px] font-mono tabular px-1.5 py-0.5 rounded-full border ${secTotal >= 3 ? 'text-error border-error/30 bg-error/10' : 'text-[oklch(70%_0.12_75)] border-[oklch(70%_0.12_75)]/30 bg-[oklch(70%_0.12_75)]/10'}`}>
-                {secTotal} open
-              </span>
-            )}
-          </div>
-          <div className={`font-mono tabular text-2xl num-refresh ${refreshing ? 'refreshing' : ''} ${secTotal > 0 ? 'text-error' : 'text-primary'}`}>
-            {secTotal > 0 ? fmtNum(secTotal) : '0'}
-          </div>
-          <div className="text-[11px] text-muted">{secTotal > 0 ? 'perlu perhatian' : 'bersih'}</div>
-        </div>
       </div>
 
       {/* ── B + C row ────────────────────────────────────────────────────── */}
@@ -650,42 +600,6 @@ export default function AdminDashboardPage() {
               {users.length === 0 && <tr><td className="px-5 py-6 text-sm text-muted text-center">Belum ada user.</td></tr>}
             </tbody>
           </table>
-        </section>
-
-        <section className="admin-card overflow-hidden">
-          <div className="p-5 pb-3">
-            <SectionHead title="Security feed" hint={`${secTotal} insiden terbuka`}
-              action={<button onClick={() => loadAll()} className="text-xs text-secondary hover:text-accent transition-colors">refresh</button>} />
-          </div>
-          {secEvents.length === 0 ? (
-            <div className="px-5 pb-6 text-sm text-muted text-center">Belum ada insiden tercatat.</div>
-          ) : (
-            <div className="max-h-[300px] overflow-y-auto">
-              {secEvents.map((e) => (
-                <div key={e.id} className={`flex items-start gap-3 px-5 py-2.5 border-b border-[var(--border-subtle)] last:border-0 ${e.resolved ? 'opacity-50' : ''}`}>
-                  <span className={`mt-1 shrink-0 px-2 py-0.5 rounded-full text-[9px] uppercase tracking-wider border ${severityColor[e.severity] ?? 'text-secondary border-border-default'}`}>
-                    {e.severity}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs text-primary truncate">{e.type.replace(/_/g, ' ')}</div>
-                    {e.message && <div className="text-[11px] text-muted truncate mt-0.5">{e.message}</div>}
-                    <div className="text-[10px] text-muted font-mono tabular mt-0.5">
-                      {fmtRel(e.created_at)} · {e.ip ?? '—'}
-                    </div>
-                  </div>
-                  {!e.resolved && (
-                    <button
-                      onClick={() => resolveEvent(e.id)}
-                      disabled={resolving === e.id}
-                      className="shrink-0 text-[10px] px-2 py-1 rounded border border-border-default text-secondary hover:text-primary hover:border-border-default transition-colors disabled:opacity-40"
-                    >
-                      {resolving === e.id ? '…' : 'resolve'}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </section>
       </div>
 
