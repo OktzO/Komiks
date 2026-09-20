@@ -95,6 +95,18 @@ export interface Db {
   // ── Admin monitoring (0006) ──
   listProviderAccounts: () => Promise<ListResult<{ id: string; provider: string; label: string; status: string; last_success_at: number | null; last_failure_at: number | null; last_error: string | null; requests_24h: number; failures_24h: number; quota_used_bytes: number | null; quota_limit_bytes: number | null; updated_at: number }>>;
   listScrapeJobsLog: (params: { source?: string; status?: string; from?: number; to?: number; page?: number; limit?: number }) => Promise<{ data: Array<{ id: string; source: string; provider_account_id: string | null; status: string; items_scraped: number; duration_ms: number | null; error_message: string | null; started_at: number; finished_at: number | null }>; total: number; page: number }>;
+  // ── Log admin (Plan D) ──
+  listAuditLog: (params: { page?: number; limit?: number }) => Promise<{
+    total: number;
+    rows: Array<{
+      id: number;
+      account_id: string | null;
+      origin_id: string | null;
+      action: string;
+      user_id: number | null;
+      created_at: number;
+    }>;
+  }>;
   getDbUsageTrend: (days?: number) => Promise<Array<{ db_name: string; points: Array<{ ts: number; size_bytes: number | null; rows_or_objects: number | null }> }>>;
   getAdminOverview: () => Promise<{ usersTotal: number; bookmarksTotal: number; scrape24h: { success: number; failed: number }; providers: { healthy: number; degraded: number; down: number } }>;
   listUsersAdmin: (params: { q?: string; page?: number; limit?: number }) => Promise<{ data: Array<{ id: number; email: string; name: string | null; role: string; status: string; created_at: number; last_login_at: number | null; bookmark_count: number }>; total: number; page: number }>;
@@ -783,6 +795,27 @@ export const db = (client: D1Database): Db => {
         data: (results ?? []) as unknown as Array<{ id: string; source: string; provider_account_id: string | null; status: string; items_scraped: number; duration_ms: number | null; error_message: string | null; started_at: number; finished_at: number | null }>,
         total,
         page,
+      };
+    },
+
+    listAuditLog: async ({ page = 1, limit = 100 }) => {
+      const rows = (await prep(
+        `SELECT id, account_id, origin_id, action, user_id, created_at
+         FROM lb_audit_log
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?1 OFFSET ?2`
+      ).bind(limit, (page - 1) * limit).all<Row>()).results ?? [];
+      const totalRow = await prep('SELECT COUNT(*) AS c FROM lb_audit_log').first<Row>();
+      return {
+        total: Number(totalRow?.c ?? 0),
+        rows: (rows as Row[]).map((r) => ({
+          id: Number(r.id),
+          account_id: (r.account_id ?? null) as string | null,
+          origin_id: (r.origin_id ?? null) as string | null,
+          action: r.action as string,
+          user_id: r.user_id == null ? null : Number(r.user_id),
+          created_at: r.created_at as number,
+        })),
       };
     },
 
