@@ -23,7 +23,6 @@ import { router as internalRouter } from './routes/internal';
 import { evictStaleStorage, cleanupTempObjects } from './lib/storageEviction';
 import { getB2Usage } from './lib/b2Usage';
 import { writeWithFallback, flushOutbox } from './lib/dbWrite';
-import { recordSecurityEvent } from './lib/securityEvents';
 import { fetchHomepageFromSources } from './routes/homepage';
 import { peerKvSet } from './lib/peers';
 import { resolveB2Accounts } from './lib/b2Config';
@@ -43,11 +42,6 @@ const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const origin = c.req.header('origin');
 
   if (origin && !SAFE_METHODS.has(c.req.method) && !allowedOriginFor(c.env, origin)) {
-    recordSecurityEvent(c, {
-      type: 'blocked_origin',
-      severity: 'high',
-      message: `forbidden origin on ${c.req.method} ${c.req.path}`,
-    });
     return c.json({ error: 'forbidden origin' }, 403);
   }
 

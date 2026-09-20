@@ -39,7 +39,6 @@ const ALLOWED_TABLES = new Set([
   'source_health',
   'image_hashes',
   'sessions',
-  'security_events',
   'db_usage_snapshot',
   'b2_usage',
   'b2_temp_objects',
