@@ -1,37 +1,31 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import { fetchMe, apiGet, type AuthUser } from '@/lib/api';
-
-type Provider = {
-  id: string;
-  provider: string;
-  label: string;
-  status: string;
-  last_success_at: number | null;
-  last_failure_at: number | null;
-  last_error: string | null;
-  requests_24h: number;
-  failures_24h: number;
-  quota_used_bytes: number | null;
-  quota_limit_bytes: number | null;
-  updated_at: number;
-};
+import { Card, CardHead, EmptyState, fmtNum, fmtBytes } from '@/components/admin/charts';
 
 type DbUsageCurrent = { db_name: string; rows_or_objects: number | null; size_bytes: number | null };
 type DbUsagePoint = { ts: number; size_bytes: number | null; rows_or_objects: number | null };
 type DbUsageTrend = { db_name: string; points: DbUsagePoint[] };
 type DbUsage = { current: DbUsageCurrent[]; trend: DbUsageTrend[] };
 
-type ScrapeLog = {
-  id: string;
+type SourceHealth = {
   source: string;
-  provider_account_id: string | null;
-  status: string;
-  items_scraped: number;
-  duration_ms: number | null;
-  error_message: string | null;
-  started_at: number;
-  finished_at: number | null;
+  total: number;
+  healthy: number;
+  uptime_pct: number | null;
+  last_checked_at: number | null;
+  last_healthy: number | null;
+  last_down: number | null;
+  chapters_7d: number;
+  last_scrape_7d: number | null;
+};
+
+type ScrapeLogRow = {
+  ts: number;
+  type: 'scrape';
+  actor: string | null;
+  message: string;
+  meta: { id: string; source: string; status: string; series_slug: string | null; error: string | null };
 };
 
 function formatRelative(ts: number | null): string {
@@ -43,25 +37,40 @@ function formatRelative(ts: number | null): string {
   return `${Math.floor(diffSec / 86400)} hari lalu`;
 }
 
-function formatBytes(b: number | null): string {
-  if (b == null) return '—';
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`;
-  return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`;
+const SOURCE_NAMES: Record<string, string> = {
+  komiku: 'Komiku',
+  bacakomik: 'BacaKomik',
+  thrive: 'Thrive',
+  manhwaindo: 'ManhwaIndo',
+  shinigami: 'Shinigami',
+};
+
+function IconActivity({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+    </svg>
+  );
+}
+function IconDatabase({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+      <path d="M3 12a9 3 0 0 0 18 0" />
+    </svg>
+  );
 }
 
 export default function AdminMonitoringPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [sources, setSources] = useState<SourceHealth[]>([]);
   const [dbUsage, setDbUsage] = useState<DbUsage | null>(null);
-  const [scrapeLogs, setScrapeLogs] = useState<ScrapeLog[]>([]);
+  const [logRows, setLogRows] = useState<ScrapeLogRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedError, setExpandedError] = useState<string | null>(null);
-  const [expandedLog, setExpandedLog] = useState<string | null>(null);
-  
+
   useEffect(() => {
     let alive = true;
     fetchMe().then((u) => {
@@ -77,14 +86,14 @@ export default function AdminMonitoringPage() {
     if (document.hidden) return; // tab background — jangan boros API/KV
     setRefreshing(true);
     try {
-      const [pRes, dRes, sRes] = await Promise.all([
-        apiGet<{ data: Provider[] }>('/api/admin/providers'),
+      const [hRes, dRes, lRes] = await Promise.all([
+        apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health'),
         apiGet<{ data: DbUsage }>('/api/admin/db-usage?days=7'),
-        apiGet<{ data: ScrapeLog[] }>('/api/admin/scrape-jobs?limit=30'),
+        apiGet<{ data: { rows: ScrapeLogRow[] } }>('/api/admin/log?type=scrape&limit=30'),
       ]);
-      setProviders(pRes.data || []);
+      setSources(hRes.data || []);
       setDbUsage(dRes.data);
-      setScrapeLogs(sRes.data || []);
+      setLogRows(lRes.data.rows || []);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -104,27 +113,22 @@ export default function AdminMonitoringPage() {
 
   if (loading) {
     return (
-      <main className="max-w-5xl mx-auto px-4 py-12">
-        <div className="animate-pulse space-y-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-20 w-full rounded-lg bg-card" />
-          ))}
-        </div>
-      </main>
+      <div className="admin-page space-y-4">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-16 w-full rounded-2xl bg-elevated animate-pulse" />
+        ))}
+      </div>
     );
   }
 
   if (!user || user.role !== 'admin') return null;
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-8 sm:py-12">
-      <div className="flex items-center justify-between mb-8">
+    <div className="admin-page space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <a href="/admin" className="text-sm text-secondary hover:text-primary transition-colors mb-2 inline-block">
-            ← Overview
-          </a>
-          <h1 className="text-2xl font-semibold text-primary">Monitoring</h1>
-          <p className="text-sm text-muted mt-1">Load balancer health · DB usage · scrape log</p>
+          <h1 className="text-xl font-semibold tracking-tight text-primary">Monitoring</h1>
+          <p className="text-[13px] text-muted mt-1">Source health · storage · scrape jobs live</p>
         </div>
         <span className="flex items-center gap-2 text-xs text-muted">
           <span className={`status-dot ${refreshing ? 'live' : 'unknown'}`} />
@@ -133,160 +137,92 @@ export default function AdminMonitoringPage() {
       </div>
 
       {error && (
-        <div className="mb-6 text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">
+        <div className="text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">
           {error}
         </div>
       )}
 
-      {/* Provider grid */}
-      <section className="mb-10">
-        <h2 className="text-sm font-medium text-secondary mb-3">Provider Accounts</h2>
-        <div className="border border-subtle rounded-lg overflow-hidden bg-card">
-          <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs text-muted border-b border-subtle">
-            <div className="col-span-4">Account</div>
-            <div className="col-span-2 text-right">Requests · 24h</div>
-            <div className="col-span-2 text-right">Fail rate</div>
-            <div className="col-span-2 text-right">Last success</div>
-            <div className="col-span-2 text-right">Quota</div>
+      <Card>
+        <CardHead icon={<IconActivity className="w-4 h-4" />} title="Source health" hint="Uptime dari riwayat pengecekan" />
+        {sources.length === 0 ? (
+          <EmptyState>Belum ada data health. Tercatat pasif saat aktivitas baca.</EmptyState>
+        ) : (
+          <div className="space-y-3">
+            {sources.map((s) => {
+              const pct = s.uptime_pct ?? 0;
+              const tone = pct >= 95 ? 'var(--success)' : pct >= 70 ? 'oklch(70% 0.12 75)' : 'var(--error)';
+              return (
+                <div key={s.source}>
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-primary font-medium">{SOURCE_NAMES[s.source] ?? s.source}</span>
+                    <span className="font-mono tabular text-secondary">{pct.toFixed(1)}%</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-[var(--border-subtle)] overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: tone }} />
+                  </div>
+                  <div className="flex justify-between mt-1 text-[10px] text-muted">
+                    <span>↑ {s.last_healthy ? formatRelative(s.last_healthy) : '—'}</span>
+                    <span>{fmtNum(s.chapters_7d)} chapter · 7d</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          {providers.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-muted text-center">
-              No provider data yet. Run scraper with hooks to populate.
-            </div>
-          ) : (
-            providers.map((p) => {
-              const failRate = p.requests_24h > 0 ? ((p.failures_24h / p.requests_24h) * 100).toFixed(1) : '0.0';
-              const quotaPct = p.quota_limit_bytes && p.quota_used_bytes != null
-                ? Math.min(100, (p.quota_used_bytes / p.quota_limit_bytes) * 100)
-                : null;
-              return (
-                <div key={p.id} className="border-b border-subtle last:border-0">
-                  <div className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm">
-                    <div className="col-span-4 flex items-center gap-2">
-                      <span className={`status-dot ${p.status} ${p.status === 'healthy' ? 'live' : ''}`} />
-                      <div className="min-w-0">
-                        <div className="text-primary truncate">{p.label}</div>
-                        <div className="text-xs text-muted">{p.provider}</div>
-                      </div>
-                    </div>
-                    <div className="col-span-2 text-right font-mono tabular text-primary">{p.requests_24h}</div>
-                    <div className="col-span-2 text-right font-mono tabular text-primary">{failRate}%</div>
-                    <div className="col-span-2 text-right text-xs text-muted">{formatRelative(p.last_success_at)}</div>
-                    <div className="col-span-2 text-right">
-                      {quotaPct != null ? (
-                        <div className="quota-bar ml-auto" style={{ width: '80px' }}>
-                          <span style={{ transform: `scaleX(${quotaPct / 100})` }} />
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted">—</span>
-                      )}
-                    </div>
-                  </div>
-                  {p.last_error && (
-                    <div className="px-4 pb-2">
-                      <button
-                        onClick={() => setExpandedError(expandedError === p.id ? null : p.id)}
-                        className="text-xs text-muted hover:text-secondary transition-colors"
-                      >
-                        {expandedError === p.id ? '▼' : '▶'} last error
-                      </button>
-                      {expandedError === p.id && (
-                        <div className="mt-1 text-xs text-error/80 font-mono bg-bg-base/40 rounded p-2">
-                          {p.last_error}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-      </section>
+        )}
+      </Card>
 
-      {/* DB usage */}
-      <section className="mb-10">
-        <h2 className="text-sm font-medium text-secondary mb-3">DB / Storage Usage</h2>
+      <Card>
+        <CardHead icon={<IconDatabase className="w-4 h-4" />} title="Storage / DB usage" hint="Snapshot db_usage · tiap jam" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {dbUsage?.current.length ? (
-            dbUsage.current.map((d) => {
-              const trend = dbUsage.trend.find((t) => t.db_name === d.db_name);
-              const prev = trend && trend.points.length > 1 ? trend.points[trend.points.length - 2] : null;
-              const curr = trend && trend.points.length > 0 ? trend.points[trend.points.length - 1] : null;
-              const sizeDelta = prev && curr && prev.size_bytes != null && curr.size_bytes != null
-                ? curr.size_bytes - prev.size_bytes
-                : null;
-              return (
-                <div key={d.db_name} className="admin-card p-4">
-                  <div className="text-xs text-muted mb-1">{d.db_name}</div>
-                  <div className="font-mono tabular text-lg text-primary">{formatBytes(d.size_bytes)}</div>
-                  <div className="flex items-center gap-2 mt-1 text-xs text-muted">
-                    <span className="font-mono tabular">{d.rows_or_objects ?? '—'} rows/objs</span>
-                    {sizeDelta != null && (
-                      <span className={sizeDelta > 0 ? 'text-success' : sizeDelta < 0 ? 'text-error' : 'text-muted'}>
-                        {sizeDelta > 0 ? '↑' : sizeDelta < 0 ? '↓' : '→'} {formatBytes(Math.abs(sizeDelta))}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          ) : (
-            <div className="admin-card p-4 text-sm text-muted col-span-full text-center">
-              No DB usage snapshots. Insert via helper to populate.
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Scrape log */}
-      <section>
-        <h2 className="text-sm font-medium text-secondary mb-3">Scrape Log · latest 30</h2>
-        <div className="border border-subtle rounded-lg bg-card max-h-[60vh] overflow-y-auto">
-          {scrapeLogs.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-muted text-center">
-              No scrape jobs logged. Run scraper with hooks to populate.
-            </div>
-          ) : (
-            scrapeLogs.map((log) => {
-              const isFailed = log.status === 'failed' || log.status === 'partial';
-              return (
-                <div key={log.id} className="border-b border-subtle last:border-0">
-                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 items-center text-sm hover:bg-bg-secondary/30 transition-colors">
-                    <div className="col-span-3 flex items-center gap-2">
-                      <span className={`status-dot ${isFailed ? 'down' : 'healthy'}`} />
-                      <span className="text-primary font-medium">{log.source}</span>
-                    </div>
-                    <div className="col-span-2 text-xs text-muted">{log.status}</div>
-                    <div className="col-span-2 text-right font-mono tabular text-xs text-secondary">
-                      {log.duration_ms != null ? `${log.duration_ms}ms` : '—'}
-                    </div>
-                    <div className="col-span-2 text-right font-mono tabular text-xs text-secondary">
-                      {log.items_scraped} items
-                    </div>
-                    <div className="col-span-3 text-right text-xs text-muted">{formatRelative(log.started_at)}</div>
-                  </div>
-                  {isFailed && log.error_message && (
-                    <div className="px-4 pb-2">
-                      <button
-                        onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}
-                        className="text-xs text-muted hover:text-secondary transition-colors"
-                      >
-                        {expandedLog === log.id ? '▼' : '▶'} error
-                      </button>
-                      {expandedLog === log.id && (
-                        <div className="mt-1 text-xs text-error/80 font-mono bg-bg-base/40 rounded p-2">
-                          {log.error_message}
-                        </div>
-                      )}
-                    </div>
+          {dbUsage?.current.length ? dbUsage.current.map((d) => {
+            const trend = dbUsage.trend.find((t) => t.db_name === d.db_name);
+            const prev = trend && trend.points.length > 1 ? trend.points[trend.points.length - 2] : null;
+            const curr = trend && trend.points.length > 0 ? trend.points[trend.points.length - 1] : null;
+            const sizeDelta = prev && curr && prev.size_bytes != null && curr.size_bytes != null
+              ? curr.size_bytes - prev.size_bytes : null;
+            return (
+              <div key={d.db_name} className="admin-inner p-4">
+                <div className="text-[11px] text-muted mb-1 truncate">{d.db_name}</div>
+                <div className="font-mono tabular text-lg text-primary">{fmtBytes(d.size_bytes)}</div>
+                <div className="flex items-center justify-between gap-2 mt-1 text-[11px] text-muted">
+                  <span className="font-mono tabular">{d.rows_or_objects ?? '—'} rows/obj</span>
+                  {sizeDelta != null && (
+                    <span className={sizeDelta > 0 ? 'text-success' : sizeDelta < 0 ? 'text-error' : 'text-muted'}>
+                      {sizeDelta > 0 ? '↑' : sizeDelta < 0 ? '↓' : '→'} {fmtBytes(Math.abs(sizeDelta))}
+                    </span>
                   )}
                 </div>
-              );
-            })
-          )}
+              </div>
+            );
+          }) : <EmptyState>Belum ada snapshot penyimpanan. Terisi tiap jam oleh cron.</EmptyState>}
         </div>
-      </section>
-    </main>
+      </Card>
+
+      <Card>
+        <CardHead icon={<IconActivity className="w-4 h-4" />} title="Scrape jobs live" hint="scrape_jobs · refresh 30 detik" />
+        {logRows.length === 0 ? (
+          <EmptyState>Belum ada job scrape aktif. Jalankan scraper dulu.</EmptyState>
+        ) : (
+          <div className="admin-inner divide-y divide-border-subtle overflow-hidden">
+            {logRows.map((r) => {
+              const failed = r.meta.status === 'failed' || r.meta.status === 'skipped_robots';
+              return (
+                <div key={r.meta.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className={`status-dot shrink-0 ${failed ? 'down' : r.meta.status === 'running' ? 'live' : 'healthy'}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] text-primary truncate">{r.message}</p>
+                    {r.meta.series_slug && <p className="text-[11px] text-muted truncate">{r.meta.series_slug}</p>}
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border capitalize shrink-0 ${failed ? 'text-error border-error/30 bg-error/10' : r.meta.status === 'running' ? 'text-accent border-accent/30 bg-accent/10' : 'text-secondary border-border-default'}`}>
+                    {r.meta.status}
+                  </span>
+                  <span className="text-[11px] text-muted font-mono tabular shrink-0">{formatRelative(r.ts)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    </div>
   );
 }
