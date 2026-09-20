@@ -589,10 +589,7 @@ a:hover { color: var(--accent); }
 
 /* ── Admin dashboard tokens (0006 monitoring) ── */
 :root {
-  --radius-admin: 6px;
-  --radius-admin-sm: 4px;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-  --bg-admin-panel: oklch(14% 0 0);
 }
 
 .font-mono { font-family: var(--font-mono); }
@@ -606,10 +603,27 @@ a:hover { color: var(--accent); }
 .num-refresh { transition: opacity 0.18s ease; }
 .num-refresh.refreshing { opacity: 0.5; }
 
-.admin-card {
+/* ══ Admin shell + panel primitives (Plan B) ═══════════════════════════ */
+
+/* Lebar konten admin konsisten: max-w-7xl (80rem), tengah. */
+.admin-page {
+  width: 100%;
+  max-width: 80rem;
+  margin-inline: auto;
+}
+
+/* Panel kartu admin: border kuat ±1.5px, radius 16px. */
+.admin-panel {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-strong);
+  border-radius: 1rem;
+}
+
+/* Warna daerah dalam panel yang terpisah (inner card) — radius 12px. */
+.admin-inner {
+  background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-admin);
-  background: var(--bg-admin-panel);
+  border-radius: 0.75rem;
 }
 
 .status-dot {
@@ -809,14 +823,12 @@ img[data-broken] { visibility: hidden; }
 
 /* ── Admin topbar: visual language landing, ID scoped admin ── */
 #admin-navbar {
-  position: fixed;
+  position: sticky;
   top: 0;
   left: 0;
   right: 0;
   z-index: 50;
-  padding-top: 0;
   contain: layout style;
-  transition: padding-top 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 #admin-navbar .nav-island {
   width: var(--nav-width-rest);
