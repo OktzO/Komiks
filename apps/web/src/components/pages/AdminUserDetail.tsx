@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { fetchMe, apiGet, roleLabel, isValidType, typedUrl, type AuthUser, type ComicType } from '@/lib/api';
+import { Card, CardHead, fmtNum, EmptyState } from '@/components/admin/charts';
 
 // Admin bookmarks API belum kirim `type` — safeType(undefined) → '/manga'
 // (route kanonik redirect ke type benar). Field opsional siap saat API nambah.
@@ -99,13 +100,11 @@ export default function AdminUserDetailPage({ id }: { id: string }) {
 
   if (loading) {
     return (
-      <main className="max-w-3xl mx-auto px-4 py-12">
-        <div className="animate-pulse space-y-4">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-12 w-full rounded-lg bg-card" />
-          ))}
-        </div>
-      </main>
+      <div className="admin-page space-y-4">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="h-12 w-full rounded-2xl bg-elevated animate-pulse" />
+        ))}
+      </div>
     );
   }
 
@@ -114,7 +113,7 @@ export default function AdminUserDetailPage({ id }: { id: string }) {
   const bmTotalPages = Math.max(1, Math.ceil(bmTotal / bmLimit));
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-8 sm:py-12">
+    <div className="admin-page space-y-6">
       <a href="/admin/users" className="text-sm text-secondary hover:text-primary transition-colors mb-4 inline-block">
         ← Users
       </a>
@@ -127,69 +126,69 @@ export default function AdminUserDetailPage({ id }: { id: string }) {
 
       {detail ? (
         <>
-          <div className="admin-card p-6 mb-6">
+          <Card>
             <div className="flex items-center gap-3 mb-3">
-              <h1 className="text-xl font-semibold text-primary truncate">{detail.email}</h1>
+              <h1 className="text-lg font-semibold tracking-tight text-primary truncate">{detail.email}</h1>
               <span className={`text-xs px-2 py-0.5 rounded-full border ${detail.role === 'admin' ? 'border-accent/40 text-accent' : 'border-border-default text-secondary'}`}>
                 {roleLabel(detail.role)}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <div className="text-xs text-muted mb-0.5">Name</div>
+                <div className="text-[11px] text-muted mb-0.5">Nama</div>
                 <div className="text-primary">{detail.name || '—'}</div>
               </div>
               <div>
-                <div className="text-xs text-muted mb-0.5">Bookmarks</div>
+                <div className="text-[11px] text-muted mb-0.5">Bookmark</div>
                 <div className="text-primary font-mono tabular">{detail.bookmark_count}</div>
               </div>
               <div>
-                <div className="text-xs text-muted mb-0.5">Joined</div>
+                <div className="text-[11px] text-muted mb-0.5">Terdaftar</div>
                 <div className="text-primary">{formatDate(detail.created_at)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted mb-0.5">Last login</div>
+                <div className="text-[11px] text-muted mb-0.5">Login terakhir</div>
                 <div className="text-primary">
                   {formatDate(detail.last_login_at)}
                   {detail.last_login_at && <span className="text-xs text-muted ml-2">({formatRelative(detail.last_login_at)})</span>}
                 </div>
               </div>
             </div>
-          </div>
+          </Card>
 
           {/* Disabled action placeholders — read-only scope per spec */}
-          <div className="flex gap-2 mb-8">
+          <div className="flex flex-wrap gap-2">
             <button
               disabled
               title="Coming soon — admin write actions out of scope"
-              className="px-3 py-1.5 text-xs text-muted border border-border-default rounded-lg opacity-50 cursor-not-allowed"
+              className="px-3 py-1.5 text-xs text-muted border border-border-default rounded-xl opacity-50 cursor-not-allowed"
             >
               Edit
             </button>
             <button
               disabled
               title="Coming soon — admin write actions out of scope"
-              className="px-3 py-1.5 text-xs text-muted border border-border-default rounded-lg opacity-50 cursor-not-allowed"
+              className="px-3 py-1.5 text-xs text-muted border border-border-default rounded-xl opacity-50 cursor-not-allowed"
             >
               Ban
             </button>
             <button
               disabled
               title="Coming soon — admin write actions out of scope"
-              className="px-3 py-1.5 text-xs text-muted border border-border-default rounded-lg opacity-50 cursor-not-allowed"
+              className="px-3 py-1.5 text-xs text-muted border border-border-default rounded-xl opacity-50 cursor-not-allowed"
             >
               Delete
             </button>
           </div>
 
-          <section>
-            <h2 className="text-sm font-medium text-secondary mb-3">Bookmarks · {bmTotal}</h2>
-            <div className="border border-subtle rounded-lg overflow-hidden bg-card">
+          <Card>
+            <CardHead title="Bookmark" hint={`${fmtNum(bmTotal)} total`} />
+            <div className="admin-inner divide-y divide-border-subtle overflow-hidden">
               {bookmarks.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-muted text-center">No bookmarks.</div>
+                <EmptyState>Tidak ada bookmark.</EmptyState>
               ) : (
                 bookmarks.map((b) => (
-                  <div key={b.series_slug} className="flex items-center gap-3 px-4 py-3 border-b border-subtle last:border-0">
+                  <div key={b.series_slug} className="flex items-center gap-3 px-4 py-3">
                     {b.cover_image ? (
                       <img src={b.cover_image} alt="" className="w-10 h-14 object-cover rounded shrink-0 bg-bg-secondary" loading="lazy" />
                     ) : (
@@ -201,7 +200,7 @@ export default function AdminUserDetailPage({ id }: { id: string }) {
                       >
                         {b.title || b.series_slug}
                       </a>
-                      <div className="text-xs text-muted">added {formatDate(b.added_at)}</div>
+                      <div className="text-xs text-muted">ditambahkan {formatDate(b.added_at)}</div>
                     </div>
                   </div>
                 ))
@@ -227,11 +226,11 @@ export default function AdminUserDetailPage({ id }: { id: string }) {
                 </button>
               </div>
             )}
-          </section>
+          </Card>
         </>
       ) : (
         !error && <div className="text-sm text-muted">Loading...</div>
       )}
-    </main>
+    </div>
   );
 }
