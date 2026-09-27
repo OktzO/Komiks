@@ -64,18 +64,24 @@ point of the ring and the whole reason the cutover must be a deliberate, staged 
 **Sequencing.** Do not attempt alongside anything else. This is its own release, with its own rollback plan, and
 it should land only after §1.4 (sharding) is understood well enough to reason about partial failure.
 
-### 1.3 Token signing (brief calls this "AES-GCM token encryption" — it is not)
+### 1.3 Session token signing — ECDSA P-256 with a `kid` keyring
 
-**Discrepancy, stated plainly because it changes the risk analysis.** There is no AES-GCM and no symmetric token
-encryption anywhere in this codebase. `apps/api-cf/src/lib/auth.ts:88-93` signs with
-**ECDSA, SHA-256**, producing `b64url(payload).b64url(sig)`. `verifyToken` (line 96) parses the payload, reads its
-`kid`, and looks the public key up in a keyring. `context.ts:92` exposes `sha256Hex` (a plain SHA-256 digest,
-used for hashing, not encryption). The token is **signed, not encrypted** — the session payload is readable by
-anyone holding the cookie.
+> **Correction (fix round 1).** This entry previously opened with "There is no AES-GCM and no symmetric token
+> encryption anywhere in this codebase." **That was false and is withdrawn.** AES-GCM *is* present, in
+> `packages/lb/crypto.ts`, encrypting Cloudflare API tokens at rest — see §1.5. The claim was a codebase-wide
+> negative drawn from a grep that only covered `apps/api-cf/src` and `packages/sources`. The two mechanisms are
+> unrelated and are documented separately. Original wording preserved in git history at `3711164`.
 
-**What it is, then.** An ECDSA P-256 signing keypair loaded from `AUTH_SIGNING_KEY`, with a `kid`-addressed
-public keyring enabling rotation, used for both the session cookie (`auth.ts:275, 285-287`) and the OAuth state
-cookie (`auth.ts:342-349`).
+**What it is.** `apps/api-cf/src/lib/auth.ts:88-93` signs with **ECDSA, SHA-256**, producing
+`b64url(payload).b64url(sig)`. `verifyToken` (line 96) parses the payload, reads its `kid`, and looks the public
+key up in a keyring. `context.ts:92` exposes `sha256Hex` (a plain SHA-256 digest, used for hashing, not
+encryption). The token is **signed, not encrypted** — the session payload is readable by anyone holding the
+cookie. This is deliberate: the payload is cross-account, and `docs/DEPLOY.md` records the choice as
+"cross-account, nol shared secret".
+
+**Scope.** An ECDSA P-256 signing keypair loaded from `AUTH_SIGNING_KEY`, with a `kid`-addressed public keyring
+enabling rotation, used for both the session cookie (`auth.ts:275, 285-287`) and the OAuth state cookie
+(`auth.ts:342-349`).
 
 **Why it is risky.** A key rotation invalidates every outstanding session and every in-flight OAuth flow. The
 payload carries `exp` (`auth.ts:83`) but the `kid` is resolved *before* the signature is checked, so the keyring
@@ -90,9 +96,9 @@ failure and no graceful degradation. Sessions are also the root of trust for the
 - A test that verifies a token signed under `kid=A` still validates while `kid=B` is the active signer, and that
   an unknown `kid` is rejected.
 
-**Sequencing.** If the *intent* behind "AES-GCM" was that tokens should be opaque, that is a **new feature, not
-a fix** — encrypting the payload is additive (encrypt-then-sign) and can be done without invalidating existing
-sessions. File it as such rather than folding it into a rotation.
+**Sequencing.** Independent of §1.5 — different mechanism, different key, different blast radius (users vs
+Cloudflare accounts). Either can move without the other. Note that `LB_ENCRYPTION_KEY` is scoped to Cloudflare
+tokens only and is deliberately no longer used for the session cookie, so rotating one does not disturb the other.
 
 ### 1.4 Sharding logic (`ownerFor` / `backupOwnerFor`)
 
@@ -116,6 +122,48 @@ traffic), which means a broken config degrades into "everything is owned by self
 **Sequencing.** If §1.2 is ever attempted, this must not move at the same time. Both touch key→owner placement,
 and a regression in either is a data-availability incident, not a parse bug.
 
+### 1.5 Cloudflare API token encryption at rest — AES-GCM (`packages/lb/crypto.ts`)
+
+> **Added in fix round 1.** The original version of this document asserted that no AES-GCM existed anywhere in
+> the codebase. That was wrong — this mechanism exists, is deployed, and is production data. It is listed here
+> because a "never modify this" list that tells a reader a mechanism is *absent* is worse than a thin list: the
+> reader concludes the area is safe to change. See §1.3 for the correction note.
+
+**What it is.** `packages/lb/crypto.ts` implements authenticated symmetric encryption of Cloudflare API tokens
+using Web Crypto:
+
+- `deriveKey` (line 9) — `SHA-256(LB_ENCRYPTION_KEY)` imported raw as a 256-bit **AES-GCM** key.
+- `encryptToken` (line 19) — fresh 12-byte random IV per call, returns `[12-byte iv | ciphertext+tag]`.
+- `decryptToken` (line 36) — splits the IV back off, rejects blobs shorter than `IV_LEN + 1`.
+
+The plaintext token is never persisted. Callers: `accounts.ts:204` (store), `accounts.ts:257` (load),
+`provision.ts:219`. The ciphertext lands in D1 `lb_accounts.encrypted_token`. Covered by
+`packages/lb/test/crypto.test.mjs` (random-IV, tamper-rejects, wrong-key-rejects) and `accounts.test.mjs`.
+`docs/DEPLOY.md:106` records it as deployed, keyed from the `LB_ENCRYPTION_KEY` Worker secret.
+
+**Why it is risky.** The key is a bare **SHA-256 digest of the secret** — no salt, no stretching KDF, and no key
+id stored in the blob. Three consequences:
+
+- **Rotation is unrecoverable, not merely expensive.** The stored layout carries no version or key id, so
+  changing `LB_ENCRYPTION_KEY` makes every previously stored token permanently undecryptable. `decryptToken`
+  throws `OperationError` on the GCM tag check. Recovery means re-provisioning every LB account by hand.
+- **A wrong key is indistinguishable from tampering.** Both surface as the same `OperationError`. There is no
+  diagnostic that separates "rotated the secret" from "someone edited the row".
+- **These are live Cloudflare credentials.** The B2 image pipeline writes to storage under them. Losing or
+  corrupting them is an outage with an external cause, not just a failed fetch.
+
+**What would have to be true to change it safely.**
+- A version/key-id byte prepended to the stored layout, plus a decrypt path that tries the current key and
+  falls back — so rotation stops being a hard cutover.
+- A re-encryption pass (decrypt with old key, encrypt with new) run *before* the old key is retired, with a
+  row-count reconciliation proving no row was left behind.
+- A salt or a real KDF if the secret is ever reused or low-entropy; the current construction is only defensible
+  because the input is a high-entropy generated secret.
+
+**Sequencing.** Independent of §1.3 and §1.4 — different key, different blast radius (Cloudflare accounts vs
+users vs row placement). Because rotation is currently unrecoverable, the versioned-layout change must land and
+be exercised *before* any key rotation, never together with one.
+
 ---
 
 ## 2. Adapter findings that are NOT low risk
@@ -137,18 +185,31 @@ every fixture in `komiku/fixtures/` and require byte-identical `Series[]` before
 **Sequencing.** After a characterization test exists that pins current output on the full fixture corpus. Without
 that harness this change should not start.
 
-### 2.2 `komiku.scrapeUrl` duplicates `parseChapterList` and has already diverged
+### 2.2 `komiku.scrapeUrl` duplicates `parseChapterList` — duplication is real, divergence is not
 
-`parseChapterList` normalises the chapter id by stripping a trailing slash (`komiku/index.ts:71`:
-`.replace(/\/$/, '')`). The near-identical inline block in `scrapeUrl` (`komiku/index.ts:326`) omits that strip.
+> **Corrected in fix round 1.** This entry previously claimed the two code paths had *silently diverged* and that
+> consolidating them would change persisted chapter ids, requiring a data migration. **That was wrong.** The
+> divergence does not exist.
 
-**Why it is not low risk.** Consolidating the duplicate onto `parseChapterList` is the obviously correct
-refactor and would be invisible in review — but it changes `id` for every chapter whose href ends in `/`. Those
-ids are persisted. The difference is small, real, and currently load-bearing in the wrong direction.
+The chapter-id extraction in `parseChapterList` was `href.split('/').filter(Boolean).pop() ?? ''` followed by
+`.replace(/\/$/, '')`, while `scrapeUrl` used the first part only. That looked like an asymmetry in output. It is
+not one: `filter(Boolean)` already discards the empty trailing segment produced by a href like
+`/foo-chapter-12/`, so `pop()` can never return a string ending in `/`, and the `.replace` was **unreachable dead
+code**. `/x-chapter-12/`, `/x-chapter-12` and `/x-chapter-12.5/` all yielded byte-identical ids through both
+paths. Confirmed by brute force over the trailing-slash shapes, not by inspection.
 
-**Sequencing.** Write a test that feeds a trailing-slash href through both paths and asserts the current
-divergence, then make the decision explicit: either scrapeUrl adopts the normalisation (a data fix, needing a
-migration for existing rows) or it does not (and the duplication is commented as intentional).
+**Resolution — the dead strip is now removed** (commit `eae035b`), which is the genuinely low-risk part of this
+finding. With it gone, `parseChapterList` and `scrapeUrl` compute the id with the *same* expression.
+
+**What remains, and why it is still not urgent.** The duplication itself is real: the regex, the title-cleanup
+chain (`/^Baca\s+/`, `/\s+Bahasa Indonesia$/`, `/\s+Terbaru$/`) and the id extraction are written out twice. Now
+that both copies are provably equivalent, consolidating them is a **behaviour-preserving** change needing no
+migration — but it is a dedup, not one of the three sanctioned low-risk categories (inline-URL move, explicit
+timeout, log-shape unification), so it is left alone rather than bundled into a fix round.
+
+**Sequencing.** If deduped, do it as its own commit with the fixture suite as the safety net. A test asserting
+id equality across both paths for trailing-slash hrefs is still worth adding, because the reason the two copies
+*looked* divergent is that nobody could tell they were not — the test makes that verifiable instead of argued.
 
 ### 2.3 `this`-dependent methods in shinigami and webtoon
 
@@ -210,6 +271,16 @@ just relocates the dead code into a shared module where it looks more deliberate
   "move an inline rule into the per-source module" change — the rule is already in the right file.
 - **`komiku/index.ts:196`** has anomalous 11-space indentation inside the cover-fallback block, inconsistent with
   the parallel block at line 246. Cosmetic; left alone to keep the fix diffs minimal.
+- **Orphaned test files — suites that exist but never run.** `packages/sources/test/` holds 9 `.mjs` files while
+  the `test` script invokes 6, so **`shinigami.test.mjs`, `single-fetch.test.mjs` and `status.test.mjs` are never
+  executed**. `packages/db/test/` holds 7 while its script invokes 2, orphaning five. This matters more than a
+  stray count usually would: `shinigami` is one of the six audited adapters and it carries the §2.3 `this`-
+  dependency finding, so the one adapter with a known latent hazard is the one with **zero** executed coverage.
+  `single-fetch` and `status` plausibly guard the `getSeriesDetail` single-fetch contract and `mapStatusText`
+  respectively, both production parsing behaviour.
+  **Not fixed here** — the fix means editing `package.json` test scripts, which is reviewed territory and outside
+  this task's scope. Flagged for whoever owns the test scripts. Until then, treat the "51/51 sources passing"
+  baseline as **6 files, not 9**.
 
 ---
 
