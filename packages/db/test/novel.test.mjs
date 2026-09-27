@@ -405,11 +405,15 @@ test('listStaleSeries derives its cutoff from a relative age', async () => {
   const rows = await novelDb(client).listStaleSeries(86400, 50);
   const after = Math.floor(Date.now() / 1000);
   assert.equal(rows.length, 1);
-  assert.match(trace[0].sql, /FROM novel_series WHERE updated_at < \?1/);
+  assert.match(trace[0].sql, /FROM novel_series\s+WHERE updated_at < \?1/);
   const cutoff = trace[0].args[0];
   assert.ok(
     cutoff >= before - 86400 && cutoff <= after - 86400,
     'the bound cutoff is a timestamp derived from the age, not the age itself',
   );
   assert.equal(trace[0].args[1], 50);
+  // The chapterless branch reuses the same cutoff rather than binding a second
+  // value, so a caller cannot widen the bootstrap window past the age window.
+  assert.equal(trace[0].args.length, 2);
+  assert.match(trace[0].sql, /NOT EXISTS \(SELECT 1 FROM novel_chapters WHERE series_id = novel_series\.id\)/);
 });

@@ -14,6 +14,6 @@
     "tsx": "^4.23.12"
   },
   "scripts": {
-    "test": "tsx test/matching.test.mjs && tsx test/novel.test.mjs"
+    "test": "tsx test/matching.test.mjs && tsx test/novel.test.mjs && bun test test/novel-stale.test.mjs"
   }
 }

@@ -1301,10 +1301,28 @@ export class NovelDb {
     return Number(row?.c ?? 0);
   }
 
+  // A row is stale when it has aged out of the window, or when it has never been
+  // filled. The second clause is what stops a newly inserted series from waiting
+  // a full window for its first chapter fetch: it is inserted with updated_at =
+  // now, so the age test alone leaves a new deployment with a reader and nothing
+  // to read until the window expires.
+  //
+  // `updated_at >= cutoff` is what keeps the clause from becoming a re-fetch
+  // loop. A series the fill failed on is never bumped by refreshSeries, so it
+  // ages out of this exemption and falls back to the age test — retried once per
+  // window rather than once per cron tick — and the exemption cannot promote a
+  // permanently chapterless series into the head of the queue, because
+  // ORDER BY updated_at puts an un-bumped row behind every genuinely stale one.
   async listStaleSeries(olderThanSec: number, limit: number): Promise<NovelSeriesRow[]> {
     const cutoff = nowSec() - Math.max(0, Math.floor(Number(olderThanSec) || 0));
     const { results } = await this.d1
-      .prepare(`SELECT ${NOVEL_SERIES_COLUMNS} FROM novel_series WHERE updated_at < ?1 ORDER BY updated_at ASC LIMIT ?2`)
+      .prepare(
+        `SELECT ${NOVEL_SERIES_COLUMNS} FROM novel_series
+         WHERE updated_at < ?1
+            OR (updated_at >= ?1
+                AND NOT EXISTS (SELECT 1 FROM novel_chapters WHERE series_id = novel_series.id))
+         ORDER BY updated_at ASC LIMIT ?2`
+      )
       .bind(cutoff, clampLimit(limit))
       .all<Row>();
     return (results ?? []) as unknown as NovelSeriesRow[];
