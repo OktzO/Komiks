@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Hono } from 'hono';
+import { PeerInventorySchema } from '@manga-platform/shared/types';
 import { router } from '../src/routes/internal.ts';
+import { getTopology } from '../src/lib/peers.ts';
+import { peerInventoryFixture } from './helpers/inventory-fixture.mjs';
 
 function stubEnv(over = {}) {
   const stmt = {
@@ -13,7 +16,9 @@ function stubEnv(over = {}) {
   };
   const kv = {
     store: { 'series:detail:komiku:naruto:id': JSON.stringify({ data: 1 }) },
+    puts: [],
     async get(k, fmt) { const v = this.store[k] ?? null; return v == null ? null : (fmt === 'json' ? JSON.parse(v) : v); },
+    async put(k, v, options) { this.store[k] = v; this.puts.push({ key: k, value: v, options }); },
   };
   return {
     DB: {
@@ -96,4 +101,203 @@ test('kv/get returns cached value for f:resolve: prefix', async () => {
   assert.equal(res.status, 200);
   const j = await res.json();
   assert.deepEqual(j.value, { data: { slug: 'test-slug' } });
+});
+
+test('admin inventory rejects missing/wrong internal key', async () => {
+  const missing = await app.request('/api/_internal/admin/inventory', { method: 'POST' }, stubEnv());
+  assert.equal(missing.status, 403);
+  const wrong = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST', headers: { 'x-db-forward-key': 'wrong' },
+  }, stubEnv());
+  assert.equal(wrong.status, 403);
+});
+
+test('admin inventory accepts constant-time mirror auth', async () => {
+  const res = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST', headers: { 'x-db-mirror-key': 'mirror-secret', 'x-db-mirror': '1' },
+  }, stubEnv({ DB_MIRROR_KEY: 'mirror-secret' }));
+  assert.equal(res.status, 200);
+});
+
+test('admin inventory rejects invalid mirror auth', async () => {
+  const env = stubEnv({ DB_MIRROR_KEY: 'mirror-secret' });
+  const wrong = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST', headers: { 'x-db-mirror-key': 'wrong', 'x-db-mirror': '1' },
+  }, env);
+  assert.equal(wrong.status, 403);
+  const missingMarker = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST', headers: { 'x-db-mirror-key': 'mirror-secret' },
+  }, env);
+  assert.equal(missingMarker.status, 403);
+});
+
+test('admin inventory rejects query input except refresh=1', async () => {
+  for (const query of [
+    '?resource=other-account',
+    '?refresh=0',
+    '?refresh=1&resource=other-account',
+    '?refresh=1&refresh=1',
+  ]) {
+    const res = await app.request(`/api/_internal/admin/inventory${query}`, {
+      method: 'POST', headers: { 'x-db-forward-key': 'sekret' },
+    }, stubEnv());
+    assert.equal(res.status, 400, query);
+  }
+});
+
+test('admin inventory returns fixed safe peer shape', async () => {
+  const env = stubEnv({
+    PEER_URLS: 'https://manga-api.oktz.workers.dev', PEER_INDEX: '0',
+    CF_WORKER_NAME: 'manga-api', CF_ACCOUNT_ID: 'acct-1', CF_D1_ID: 'd1-1', CF_KV_ID: 'kv-1',
+    DB_FORWARD_KEY: 'known-forward-secret',
+    LB_ENCRYPTION_KEY: 'known-lb-secret',
+    B2_CONFIG: JSON.stringify({ keyId: 'known-b2-key', appKey: 'known-b2-app', encrypted_token: 'known-encrypted-token' }),
+  });
+  const res = await app.request('/api/_internal/admin/inventory?refresh=1', {
+    method: 'POST', headers: { 'x-db-forward-key': 'known-forward-secret' },
+  }, env);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.equal(res.headers.get('vary'), 'Authorization, Cookie');
+  const text = await res.text();
+  assert.doesNotMatch(text, /CF_INVENTORY_TOKEN|known-forward-secret|known-lb-secret|known-b2-key|known-b2-app|known-encrypted-token/);
+  const payload = JSON.parse(text);
+  assert.deepEqual(Object.keys(payload), ['data']);
+  const { data } = payload;
+  assert.equal(PeerInventorySchema.safeParse(data).success, true);
+  assert.equal(data.account.id, 'acct-1');
+  assert.equal(data.account.name, 'oktz');
+});
+
+test('admin inventory rejects oversized declared body', async () => {
+  const res = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST',
+    headers: { 'x-db-forward-key': 'sekret', 'content-length': '1025' },
+    body: 'x',
+  }, stubEnv());
+  assert.equal(res.status, 413);
+});
+
+test('admin inventory rejects unknown-length non-empty body without full buffering', async () => {
+  let pulls = 0;
+  let canceled = false;
+  const body = new ReadableStream({
+    pull(controller) {
+      pulls += 1;
+      if (pulls < 3) controller.enqueue(new TextEncoder().encode('x'));
+      else controller.close();
+    },
+    cancel() {
+      canceled = true;
+    },
+  });
+  const res = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST', headers: { 'x-db-forward-key': 'sekret' }, body, duplex: 'half',
+  }, stubEnv());
+  assert.equal(res.status, 400);
+  assert.ok(pulls <= 2);
+  assert.equal(canceled, true);
+});
+
+test('admin inventory rejects non-empty body', async () => {
+  const res = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST',
+    headers: { 'x-db-forward-key': 'sekret', 'content-type': 'application/json' },
+    body: JSON.stringify({ resource: 'other-account' }),
+  }, stubEnv());
+  assert.equal(res.status, 400);
+});
+
+test('admin inventory caches fresh peer snapshot unless refresh=1', async () => {
+  const env = stubEnv({
+    PEER_URLS: 'https://manga-api.oktz.workers.dev', PEER_INDEX: '0',
+    CF_WORKER_NAME: 'manga-api', CF_ACCOUNT_ID: 'acct-1', CF_D1_ID: 'd1-1', CF_KV_ID: 'kv-1',
+  });
+  const hash = getTopology(env).hash;
+  const cacheKey = `peer:inventory:v2:${hash}`;
+  env.CACHE_KV.store[cacheKey] = JSON.stringify({ data: peerInventoryFixture({ topologyHash: hash, self: true }) });
+  const cached = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST', headers: { 'x-db-forward-key': 'sekret' },
+  }, env);
+  assert.equal((await cached.json()).data.account.name, 'Oktz');
+  assert.equal(env.CACHE_KV.puts.length, 0);
+  const refreshed = await app.request('/api/_internal/admin/inventory?refresh=1', {
+    method: 'POST', headers: { 'x-db-forward-key': 'sekret' },
+  }, env);
+  assert.equal(refreshed.status, 200);
+  assert.equal((await refreshed.json()).data.account.name, 'oktz');
+  assert.equal(env.CACHE_KV.puts.length, 1);
+  assert.equal(env.CACHE_KV.puts[0].key, cacheKey);
+  assert.equal(env.CACHE_KV.puts[0].options.expirationTtl, 300);
+});
+
+test('admin inventory recollects malformed or wrong-hash cache', async () => {
+  for (const cachedData of [
+    { malformed: true },
+    peerInventoryFixture({ topologyHash: 'wrong-hash', self: true }),
+  ]) {
+    const env = stubEnv({
+      PEER_URLS: 'https://manga-api.oktz.workers.dev', PEER_INDEX: '0',
+      CF_WORKER_NAME: 'manga-api', CF_ACCOUNT_ID: 'acct-1', CF_D1_ID: 'd1-1', CF_KV_ID: 'kv-1',
+    });
+    const cacheKey = `peer:inventory:v2:${getTopology(env).hash}`;
+    env.CACHE_KV.store[cacheKey] = JSON.stringify({ data: cachedData });
+    const res = await app.request('/api/_internal/admin/inventory', {
+      method: 'POST', headers: { 'x-db-forward-key': 'sekret' },
+    }, env);
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).data.account.name, 'oktz');
+    assert.equal(env.CACHE_KV.puts.length, 1);
+    assert.equal(env.CACHE_KV.puts[0].key, cacheKey);
+  }
+});
+
+test('admin inventory recollects a same-hash cache whose self flag no longer matches the topology', async () => {
+  for (const [label, peerIndex, cachedSelf, expectedSelf] of [
+    ['peer gained a valid self', '0', false, true],
+    ['peer lost its self', '9', true, false],
+  ]) {
+    const env = stubEnv({
+      PEER_URLS: 'https://manga-api.oktz.workers.dev', PEER_INDEX: peerIndex,
+      CF_WORKER_NAME: 'manga-api', CF_ACCOUNT_ID: 'acct-1', CF_D1_ID: 'd1-1', CF_KV_ID: 'kv-1',
+    });
+    const cacheKey = `peer:inventory:v2:${getTopology(env).hash}`;
+    env.CACHE_KV.store[cacheKey] = JSON.stringify({ data: peerInventoryFixture({ topologyHash: getTopology(env).hash, self: cachedSelf }) });
+    const res = await app.request('/api/_internal/admin/inventory', {
+      method: 'POST', headers: { 'x-db-forward-key': 'sekret' },
+    }, env);
+    assert.equal(res.status, 200, label);
+    const { data } = await res.json();
+    assert.equal(data.self, expectedSelf, label);
+    assert.equal(data.account.id, 'acct-1', label);
+    assert.equal(env.CACHE_KV.puts.length, 1, label);
+    assert.equal(env.CACHE_KV.puts[0].key, cacheKey, label);
+  }
+});
+
+test('admin inventory serves a same-hash cache whose self flag already matches the topology', async () => {
+  const env = stubEnv({
+    PEER_URLS: 'https://manga-api.oktz.workers.dev', PEER_INDEX: '0',
+    CF_WORKER_NAME: 'manga-api', CF_ACCOUNT_ID: 'acct-1', CF_D1_ID: 'd1-1', CF_KV_ID: 'kv-1',
+  });
+  const cacheKey = `peer:inventory:v2:${getTopology(env).hash}`;
+  env.CACHE_KV.store[cacheKey] = JSON.stringify({ data: peerInventoryFixture({ topologyHash: getTopology(env).hash, self: true }) });
+  const res = await app.request('/api/_internal/admin/inventory', {
+    method: 'POST', headers: { 'x-db-forward-key': 'sekret' },
+  }, env);
+  assert.equal((await res.json()).data.account.name, 'Oktz');
+  assert.equal(env.CACHE_KV.puts.length, 0);
+});
+
+test('admin inventory returns collection when cache write fails', async () => {
+  const env = stubEnv({
+    PEER_URLS: 'https://manga-api.oktz.workers.dev', PEER_INDEX: '0',
+    CF_WORKER_NAME: 'manga-api', CF_ACCOUNT_ID: 'acct-1', CF_D1_ID: 'd1-1', CF_KV_ID: 'kv-1',
+  });
+  env.CACHE_KV.put = async () => { throw new Error('kv unavailable'); };
+  const res = await app.request('/api/_internal/admin/inventory?refresh=1', {
+    method: 'POST', headers: { 'x-db-forward-key': 'sekret' },
+  }, env);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).data.account.id, 'acct-1');
 });

@@ -25,6 +25,7 @@ const config: Config = {
         "accent-border": "var(--accent-border)",
         "accent-ink": "var(--accent-ink)",
         success: "var(--success)",
+        warning: "var(--warning)",
         error: "var(--error)",
       },
       borderRadius: {

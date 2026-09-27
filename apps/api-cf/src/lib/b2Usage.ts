@@ -32,6 +32,45 @@ export const getB2Usage = async (kv: UsageKv, idx: number): Promise<number> => {
   return typeof row?.bytes === 'number' ? row.bytes : 0;
 };
 
+const usageNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+
+const usageRow = (value: unknown, timestampMultiplier = 1): { bytes: number; updatedAt: number | null } | null => {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value !== 'object' || value === null) return null;
+  const row = value as { bytes?: unknown; updatedAt?: unknown; updated_at?: unknown };
+  const bytes = usageNumber(row.bytes);
+  const updatedAt = usageNumber(row.updatedAt ?? row.updated_at);
+  return bytes === null ? null : { bytes, updatedAt: updatedAt === null ? null : updatedAt * timestampMultiplier };
+};
+
+export const getB2UsageSnapshot = async (
+  env: Env,
+  accountName: string,
+  index: number
+): Promise<{ bytes: number | null; updatedAt: number | null }> => {
+  if (accountName) {
+    try {
+      const row = await env.DB.prepare('SELECT bytes, updated_at FROM b2_usage WHERE account_name = ?1')
+        .bind(accountName)
+        .first<{ bytes?: unknown; updated_at?: unknown }>();
+      const usage = usageRow(row, 1000);
+      if (usage) return usage;
+    } catch {}
+  }
+  try {
+    const usage = usageRow(await env.CACHE_KV.get(key(index), 'json'));
+    if (usage) return usage;
+  } catch {}
+  return { bytes: null, updatedAt: null };
+};
+
 export const setB2Usage = async (kv: UsageKv, idx: number, bytes: number): Promise<void> => {
   await kv.put(key(idx), JSON.stringify({ bytes, updatedAt: Date.now() }));
 };

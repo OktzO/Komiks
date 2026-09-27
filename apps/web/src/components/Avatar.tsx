@@ -17,7 +17,7 @@ export function Avatar({ user, size = 'md', className }: AvatarProps) {
     return (
       <span className={`${dim} inline-block shrink-0 overflow-hidden rounded-full ring-1 ring-border-default bg-bg-secondary`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={user.avatar_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+        <img src={user.avatar_url} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
       </span>
     );
   }

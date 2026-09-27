@@ -8,6 +8,7 @@ import SourceBadge, { SOURCE_LABELS } from '@/components/SourceBadge';
 import { TYPE_META, TypeBadge } from '@/components/TypeBadge';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import { loadCanonicalQuick } from '@/lib/loadCanonical';
+import { sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { API_URL, statusLabel, statusKnown } from '@/lib/api';
 
 export const prerender = false;
@@ -89,7 +90,7 @@ if (notFound) Astro.response.status = 404;
       {series.cover_image && (
         <div class="flex justify-center md:shrink-0 mb-4 md:mb-0">
           <img
-            src={series.cover_image}
+            src={sanitizeCoverUrl(series.cover_image)}
             alt={series.title}
             loading="lazy" referrerpolicy="no-referrer"
             decoding="async"

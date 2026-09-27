@@ -259,6 +259,7 @@ CREATE TABLE lb_accounts (
   encrypted_token BLOB    NOT NULL,
   token_last4     TEXT    NOT NULL,
   status          TEXT    NOT NULL CHECK (status IN ('verified','unverified','failed')) DEFAULT 'unverified',
+  last_tested_at  INTEGER,
   created_by      INTEGER REFERENCES users (id),
   created_at      INTEGER NOT NULL DEFAULT (unixepoch())
 );

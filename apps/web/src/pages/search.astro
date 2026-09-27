@@ -2,6 +2,7 @@
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import { SourceBadge } from '@/components/SourceBadge';
 import { searchMerged, safeType, typedUrl, statusKnown, statusLabel, type MergedManga } from '@/lib/api';
+import { sanitizeCoverUrl } from '@manga-platform/shared/http';
 
 export const prerender = false;
 
@@ -103,7 +104,7 @@ if (q) {
               <span class="text-primary font-medium"> “{q}”</span>
             </p>
           </div>
-          <div class="flex flex-col gap-2.5 anim-slide-up">
+          <div class="flex flex-col gap-2.5 anim-slide-up cv-feed">
             {results.map((m) => (
               <a
                 href={typedUrl(safeType(m.type), m.slug)}
@@ -112,9 +113,9 @@ if (q) {
                 <div class="relative h-[104px] w-[72px] shrink-0 overflow-hidden rounded-inner border border-border-subtle bg-sunken">
                   {m.cover_image ? (
                     <img
-                      src={m.cover_image}
+                      src={sanitizeCoverUrl(m.cover_image)}
                       alt={m.title}
-                      loading="lazy" referrerpolicy="no-referrer"
+                      loading="lazy" referrerpolicy="no-referrer" decoding="async"
                       class="h-full w-full object-cover transition-transform duration-300 ease-out-expo group-hover:scale-[1.06]"
                     />
                   ) : (

@@ -3,6 +3,7 @@ import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer.astro';
+import ThemeInit from '@/components/ThemeInit.astro';
 
 export interface Props {
   title?: string;
@@ -43,9 +44,10 @@ const jsonLd = JSON.stringify({
 ---
 
 <!doctype html>
-<html lang="id" class="dark">
+<html lang="id">
   <head>
     <meta charset="utf-8" />
+    <ThemeInit />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{pageTitle}</title>
     <meta name="description" content={description} />

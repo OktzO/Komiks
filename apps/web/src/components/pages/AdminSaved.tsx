@@ -21,8 +21,8 @@ type SavedResp = {
 };
 type StorageResp = {
   data: {
-    accounts: Array<{ idx: number; name: string; bucket: string; bytes: number; quota: number }>;
-    total_bytes: number;
+    accounts: Array<{ idx: number; name: string; bucket: string; bytes: number | null; quota: number }>;
+    total_bytes: number | null;
     d1_bytes: number | null;
     quota: number;
     /* trend: Array<{ db_name: string; points: Array<{ ts: number; size_bytes: number | null; rows_or_objects: number | null }> }> */
@@ -183,6 +183,7 @@ export default function AdminSavedPage() {
             totalBytes={storage.total_bytes}
             quota={storage.quota}
             d1Bytes={storage.d1_bytes}
+            tracked
             icon={<IconChart className="w-4 h-4" />}
           />
         )}

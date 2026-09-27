@@ -190,7 +190,7 @@ export default function AdminUserDetailPage({ id }: { id: string }) {
                 bookmarks.map((b) => (
                   <div key={b.series_slug} className="flex items-center gap-3 px-4 py-3">
                     {b.cover_image ? (
-                      <img src={b.cover_image} alt="" className="w-10 h-14 object-cover rounded shrink-0 bg-bg-secondary" loading="lazy" />
+                      <img src={b.cover_image} alt="" className="w-10 h-14 object-cover rounded shrink-0 bg-bg-secondary" loading="lazy" decoding="async" />
                     ) : (
                       <div className="w-10 h-14 rounded bg-bg-secondary shrink-0" />
                     )}

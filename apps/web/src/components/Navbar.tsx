@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchMe, logout, type AuthUser } from '@/lib/api';
+import { ThemeSwitcher } from '@/components/ThemeSwitcher';
 
 const LINKS = [
   { href: '/search', label: 'Cari' },
@@ -85,6 +86,7 @@ export function Navbar() {
               {l.label}
             </a>
           ))}
+          <ThemeSwitcher />
           {user ? (
             <>
               {isAdmin && (

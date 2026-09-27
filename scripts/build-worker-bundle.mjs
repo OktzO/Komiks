@@ -12,7 +12,7 @@ await build({
   platform: 'browser',
   target: 'es2022',
   outfile: 'apps/api-cf/dist/worker.js',
-  external: [],
+  external: ['node:crypto'], // disediakan runtime Worker via nodejs_compat (signedImage.ts)
   legalComments: 'none',
   sourcemap: false,
   minify: true,
@@ -24,12 +24,11 @@ await build({
 });
 console.log('Worker bundle built → apps/api-cf/dist/worker.js');
 
-// Print KV seed instructions for schema + migration so they can be seeded
-// alongside the worker bundle. provision.ts reads these from KV instead of
-// fetching from raw.githubusercontent.com (SSRF/integrity risk).
+// Print KV seed instructions for the schema. provision.ts reads it from KV
+// instead of fetching from raw.githubusercontent.com (SSRF/integrity risk).
+// No numbered migration is seeded: schema.sql is already the complete current
+// baseline, and upgrading an older database is scripts/migrate-all-4.sh's job.
 const schemaSql = readFileSync('packages/db/schema.sql', 'utf8');
-const migrationSql = readFileSync('packages/db/migrations/0001_manga_data.sql', 'utf8');
-console.log('\nSeed KV with schema + migration (run after bundle seed):');
+console.log('\nSeed KV with schema (run after bundle seed):');
 console.log(`  npx wrangler kv key put --namespace-id=<KV_ID> "provision:schema:latest" --path=- < packages/db/schema.sql`);
-console.log(`  npx wrangler kv key put --namespace-id=<KV_ID> "provision:migration:latest" --path=- < packages/db/migrations/0001_manga_data.sql`);
-console.log(`\nSchema size: ${schemaSql.length} bytes, migration size: ${migrationSql.length} bytes`);
+console.log(`\nSchema size: ${schemaSql.length} bytes`);

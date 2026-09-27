@@ -13,6 +13,7 @@ import {
   clearStateCookie,
 } from '../lib/auth';
 import { allowedOriginFor } from '../lib/context';
+import { verifyTurnstile } from '../lib/turnstile';
 import { writeWithFallback } from '../lib/dbWrite';
 
 export const router = new Hono<{ Bindings: Env }>();
@@ -73,28 +74,7 @@ function resolveFrontendOrigin(c: Context): string {
 }
 
 // --- Cloudflare Turnstile ---
-
-// Verify Turnstile token server-side (siteverify). Tanpa secret (local dev /
-// belum diset) verifikasi dilewati — set TURNSTILE_SECRET_KEY di production.
-async function verifyTurnstile(c: Context, token: string | undefined, ip?: string): Promise<boolean> {
-  const secret = c.env.TURNSTILE_SECRET_KEY;
-  if (!secret) return true;
-  if (!token) return false;
-  try {
-    const body = new URLSearchParams({ secret, response: token });
-    if (ip) body.set('remoteip', ip);
-    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      body,
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return false;
-    const j = (await res.json()) as { success?: boolean };
-    return j.success === true;
-  } catch {
-    return false;
-  }
-}
+// verifyTurnstile dipindah ke lib/turnstile.ts (dipakai juga serviceGate tier SENSITIVE).
 
 // --- Google OAuth ---
 

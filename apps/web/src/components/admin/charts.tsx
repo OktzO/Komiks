@@ -1,7 +1,7 @@
 /* ══ Primitif admin bersama (Plan B) — Card/StatCard/chart. ═══════ */
 import { useState, useId, useMemo } from 'react';
 
-export type StorageAccount = { idx: number; name: string; bucket: string; bytes: number; quota: number };
+export type StorageAccount = { name: string; bucket: string; bytes: number | null; quota: number };
 
 export const fmtNum = (n: number): string => n.toLocaleString('id-ID');
 
@@ -24,7 +24,7 @@ export function Card({
 }) {
   return (
     <section
-      className={`relative rounded-2xl border-[1.5px] border-strong bg-card p-5 anim-slide-up ${className}`}
+      className={`relative min-w-0 rounded-2xl border-[1.5px] border-strong bg-card p-5 anim-slide-up ${className}`}
       style={{ animationDelay: `${delay}ms` }}
     >
       {children}
@@ -230,37 +230,111 @@ export function AreaChart({
   );
 }
 
+const PALETTE = ['var(--accent)', 'var(--text-secondary)', 'var(--text-muted)', 'var(--success)'];
+
+const knownBytes = (value: number | null | undefined): number | null =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+
+const text = (value: string | null | undefined): string | null =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+
+export type StorageSegment = {
+  idx: number;
+  label: string;
+  value: number | null;
+  color: string;
+};
+
+export type StorageSummary = {
+  measuredBytes: number;
+  aggregateBytes: number | null;
+  known: number;
+  total: number;
+  share: number | null;
+  state: 'measured' | 'partial' | 'aggregate-only' | 'unknown' | 'no-quota';
+};
+
+export const buildStorageSegments = (accounts: StorageAccount[]): StorageSegment[] =>
+  accounts.map((account, idx) => ({
+    idx,
+    label: text(account.name) ?? text(account.bucket) ?? `akun ${idx + 1}`,
+    value: knownBytes(account.bytes),
+    color: PALETTE[idx % PALETTE.length],
+  }));
+
+export const storageArcs = (segments: StorageSegment[]): StorageSegment[] =>
+  segments.filter((segment) => segment.value !== null && segment.value > 0);
+
+export const storageSummary = (
+  segments: StorageSegment[],
+  totalBytes: number | null,
+  quota: number
+): StorageSummary => {
+  const total = segments.length;
+  const known = segments.filter((segment) => segment.value !== null).length;
+  const measuredBytes = segments.reduce((acc, segment) => acc + (segment.value ?? 0), 0);
+  const aggregateBytes = known > 0 ? measuredBytes : knownBytes(totalBytes);
+  const base = { measuredBytes, aggregateBytes, known, total, share: null };
+  if (aggregateBytes === null) return { ...base, state: 'unknown' };
+  if (!(typeof quota === 'number') || !Number.isFinite(quota) || quota <= 0) return { ...base, state: 'no-quota' };
+  if (known === 0) return { ...base, state: 'aggregate-only' };
+  const share = Math.min(100, (aggregateBytes / quota) * 100);
+  return { ...base, share, state: known < total ? 'partial' : 'measured' };
+};
+
 export function StorageDonut({
   accounts,
   totalBytes,
   quota,
   d1Bytes,
+  tracked = false,
   icon,
 }: {
   accounts: StorageAccount[];
-  totalBytes: number;
+  totalBytes: number | null;
   quota: number;
   d1Bytes: number | null;
+  tracked?: boolean;
   icon?: React.ReactNode;
 }) {
   const [active, setActive] = useState(-1);
   const R = 40;
   const C = 2 * Math.PI * R;
+  const byteLabel = tracked ? 'Terlacak' : 'Terpakai';
 
-  const segs = useMemo(() => {
-    const palette = ['var(--accent)', 'var(--text-secondary)', 'var(--text-muted)', 'var(--success)'];
-    const list = accounts
-      .map((a, i) => ({
-        label: a.name || a.bucket,
-        value: a.bytes,
-        color: palette[i % palette.length],
-      }))
-      .filter((s) => s.value > 0);
-    return list;
-  }, [accounts]);
-
-  const used = segs.reduce((a, b) => a + b.value, 0) || totalBytes;
-  const pct = quota > 0 ? Math.min(100, (used / quota) * 100) : 0;
+  const segments = useMemo(() => buildStorageSegments(accounts), [accounts]);
+  const summary = useMemo(() => storageSummary(segments, totalBytes, quota), [segments, totalBytes, quota]);
+  const arcs = storageArcs(segments);
+  const share = summary.share;
+  const aggregate = summary.aggregateBytes;
+  const centreLabel =
+    summary.state === 'unknown'
+      ? 'belum terukur'
+      : summary.state === 'no-quota'
+        ? 'kuota belum diatur'
+        : summary.state === 'aggregate-only'
+          ? 'total terlacak'
+          : summary.state === 'partial'
+            ? 'terukur sebagian'
+            : byteLabel.toLowerCase();
+  const centreAria =
+    summary.state === 'unknown'
+      ? 'Proporsi pemakaian penyimpanan belum terukur'
+      : summary.state === 'no-quota'
+        ? 'Kuota penyimpanan belum diatur'
+        : summary.state === 'aggregate-only'
+          ? fmtBytes(aggregate) + ' dilaporkan sebagai total, rincian per akun tidak tersedia'
+          : 'Penyimpanan ' +
+            (summary.state === 'partial' ? 'terukur sebagian' : byteLabel.toLowerCase()) +
+            ' ' +
+            (share === null ? '0.0' : share.toFixed(1)) +
+            ' persen dari kuota';
+  const byteRowLabel =
+    summary.state === 'aggregate-only'
+      ? 'Total terlacak'
+      : summary.state === 'partial'
+        ? byteLabel + ' (terukur)'
+        : byteLabel;
 
   let acc = 0;
 
@@ -269,52 +343,65 @@ export function StorageDonut({
       <CardHead
         icon={icon}
         title="Penyimpanan"
-        hint="B2 object storage · kuota terkonfigurasi"
+        hint={
+          tracked
+            ? 'B2 object storage · angka terlacak, bukan pembacaan langsung'
+            : 'B2 object storage · kuota terkonfigurasi'
+        }
       />
 
       <div className="relative w-[136px] h-[136px] mx-auto">
-        <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+        <svg
+          viewBox="0 0 100 100"
+          className="w-full h-full -rotate-90"
+          role="img"
+          aria-label={centreAria}
+        >
           <circle cx="50" cy="50" r={R} fill="none" stroke="var(--border-subtle)" strokeWidth="11" />
-          {segs.map((s, i) => {
-            const len = (s.value / Math.max(used, 1)) * C * (pct / 100);
-            const off = acc;
-            acc += len;
-            const isActive = active === i;
-            return (
-              <circle
-                key={i}
-                cx="50"
-                cy="50"
-                r={R}
-                fill="none"
-                stroke={s.color}
-                strokeWidth={isActive ? 14 : 11}
-                strokeDasharray={`${Math.max(len - 1.5, 0.5)} ${C - Math.max(len - 1.5, 0.5)}`}
-                strokeDashoffset={-off}
-                strokeLinecap="round"
-                className="transition-all duration-200 cursor-pointer"
-                onMouseEnter={() => setActive(i)}
-                onMouseLeave={() => setActive(-1)}
-              />
-            );
-          })}
+          {share !== null &&
+            arcs.map((segment) => {
+              const value = segment.value ?? 0;
+              const len = (value / Math.max(aggregate ?? 1, 1)) * C * (share / 100);
+              const off = acc;
+              acc += len;
+              const isActive = active === segment.idx;
+              return (
+                <circle
+                  key={segment.idx}
+                  cx="50"
+                  cy="50"
+                  r={R}
+                  fill="none"
+                  stroke={segment.color}
+                  strokeWidth={isActive ? 14 : 11}
+                  strokeDasharray={`${Math.max(len - 1.5, 0.5)} ${C - Math.max(len - 1.5, 0.5)}`}
+                  strokeDashoffset={-off}
+                  strokeLinecap="round"
+                  className="transition-all duration-200 cursor-pointer"
+                  onMouseEnter={() => setActive(segment.idx)}
+                  onMouseLeave={() => setActive(-1)}
+                />
+              );
+            })}
         </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-2 text-center">
           <span className="text-lg font-semibold tabular tracking-tight text-primary">
-            {pct.toFixed(1)}%
+            {share === null ? '—' : `${share.toFixed(1)}%`}
           </span>
-          <span className="text-[10px] text-muted">terpakai</span>
+          <span className="text-[10px] text-muted leading-tight">{centreLabel}</span>
         </div>
       </div>
 
       <div className="mt-4 space-y-2">
         <div className="flex items-baseline justify-between text-[11px]">
-          <span className="text-muted">Terpakai</span>
-          <span className="tabular text-primary font-medium">{fmtBytes(used)}</span>
+          <span className="text-muted">{byteRowLabel}</span>
+          <span className="tabular text-primary font-medium">{fmtBytes(aggregate)}</span>
         </div>
         <div className="flex items-baseline justify-between text-[11px]">
           <span className="text-muted">Kuota</span>
-          <span className="tabular text-secondary">{fmtBytes(quota)}</span>
+          <span className="tabular text-secondary">
+            {quota > 0 ? fmtBytes(quota) : 'belum diatur'}
+          </span>
         </div>
         {d1Bytes != null && (
           <div className="flex items-baseline justify-between text-[11px]">
@@ -324,29 +411,50 @@ export function StorageDonut({
         )}
       </div>
 
-      {segs.length > 0 ? (
-        <div className="mt-3 pt-3 border-t border-border-subtle space-y-1.5">
-          {segs.map((s, i) => (
+      <div className="mt-3 pt-3 border-t border-border-subtle space-y-1">
+        <p className="text-[10px] text-muted tabular">
+          terukur {fmtNum(summary.known)} dari {fmtNum(summary.total)} akun
+        </p>
+        {summary.state === 'aggregate-only' && (
+          <p className="text-[10px] text-muted leading-relaxed">
+            Rincian per akun tidak tersedia; angka di atas hanya total terlacak.
+          </p>
+        )}
+        {summary.state === 'partial' && (
+          <p className="text-[10px] text-muted leading-relaxed">
+            Persentase di atas hanya mencakup {fmtNum(summary.known)} akun terukur; sisanya belum terukur.
+          </p>
+        )}
+        {summary.state === 'no-quota' && (
+          <p className="text-[10px] text-muted leading-relaxed">
+            Persentase tidak dihitung karena kuota belum diatur.
+          </p>
+        )}
+      </div>
+
+      {segments.length > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          {segments.map((segment) => (
             <div
-              key={i}
+              key={segment.idx}
               className="flex items-center justify-between text-[11px] cursor-default"
-              onMouseEnter={() => setActive(i)}
+              onMouseEnter={() => setActive(segment.idx)}
               onMouseLeave={() => setActive(-1)}
             >
               <span className="flex items-center gap-2 text-secondary min-w-0">
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }} />
-                <span className="truncate">{s.label}</span>
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: segment.color }} />
+                <span className="truncate" title={segment.label}>
+                  {segment.label}
+                </span>
               </span>
-              <span className="tabular text-muted shrink-0 ml-2">{fmtBytes(s.value)}</span>
+              <span className="tabular text-muted shrink-0 ml-2">{fmtBytes(segment.value)}</span>
             </div>
           ))}
         </div>
       ) : (
-        <div className="mt-3 pt-3 border-t border-border-subtle">
-          <p className="text-[11px] text-muted leading-relaxed">
-            Belum ada objek tercatat di KV. Angka akan terisi setelah halaman gambar diunggah.
-          </p>
-        </div>
+        <p className="text-[11px] text-muted leading-relaxed">
+          Belum ada akun penyimpanan terkonfigurasi, jadi belum ada byte yang bisa diukur.
+        </p>
       )}
     </Card>
   );

@@ -32,6 +32,7 @@ export function Reader({
   const [retries, setRetries] = useState<Record<number, number>>({});
   const [visibleCount, setVisibleCount] = useState(Math.min(pages.length, WINDOW + BEHIND + 1));
   const [loaded, setLoaded] = useState<Record<number, boolean>>({});
+  const [pageRatio, setPageRatio] = useState<string | null>(null);
   const retryTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
   const activeMode = modeProp ?? 'scroll';
@@ -41,13 +42,20 @@ export function Reader({
   // retry>=2 → pindah RUTE: proxyUrl legacy (/api/reader/*/page/*) — beda cache
   // path + beda jalur fetch (source-CDN langsung) → bisa lolos saat /img (B2
   // first) kena 502/403 source. retry>=3 → API utama (akun-1, paling stabil).
+  // imgUrl bersignature sudah membawa query (?exp=..&sig=..) → append retry
+  // harus query-aware (pakai '&' kalau sudah ada '?'), bukan '?' kedua yang
+  // merusak signature parse di worker.
   const pageImageUrl = (p: { proxyUrl: string; imgUrl?: string | null; b2Url?: string | null }, retry = 0): string => {
+    const withRetry = (url: string): string => {
+      if (retry <= 0) return url;
+      return `${url}${url.includes('?') ? '&' : '?'}retry=${retry}`;
+    };
     if (retry >= 2) {
       const base = retry >= 3 ? apiUrl : imgOriginFor(p.imgUrl ?? p.proxyUrl, retry);
-      return `${base}${p.proxyUrl}?retry=${retry}`;
+      return withRetry(`${base}${p.proxyUrl}`);
     }
     const base = p.imgUrl ? imgOriginFor(p.imgUrl, retry) : apiUrl;
-    return `${base}${p.imgUrl ?? p.proxyUrl}${retry > 0 ? `?retry=${retry}` : ''}`;
+    return withRetry(`${base}${p.imgUrl ?? p.proxyUrl}`);
   };
   const urls = pages.map((p) => pageImageUrl(p, 0));
 
@@ -156,8 +164,15 @@ export function Reader({
   }, [visibleCount, pages.length, nextChapterId, source]);
 
   // Track loaded state → show skeleton slot until image resolves.
-  const markLoaded = useCallback((i: number) => {
-    setLoaded((prev) => (prev[i] ? prev : { ...prev, [i]: true }));
+  // `pageRatio` = rasio halaman pertama yang benar-benar ter-decode, dipakai
+  // untuk memesan tinggi slot SEBELUM gambar arrive — tanpa ini tiap halaman
+  // yang load mendorong dokumen dan posisi scroll meloncat.
+  const markLoaded = useCallback((i: number, el?: HTMLImageElement | null) => {
+    if (el?.naturalWidth && el?.naturalHeight) {
+      const ratio = `${el.naturalWidth} / ${el.naturalHeight}`;
+      setPageRatio(prev => prev ?? ratio);
+    }
+    setLoaded(prev => (prev[i] ? prev : { ...prev, [i]: true }));
   }, []);
 
   const pageSlot = (i: number, u: string, r: number) => (
@@ -166,12 +181,13 @@ export function Reader({
       <img
         src={r > 0 ? pageImageUrl(pages[i], r) : u}
         alt={`Halaman ${i + 1}`}
-        loading="lazy" {...NO_REF}
+        loading="lazy" decoding="async" {...NO_REF}
         data-idx={i}
         ref={(el) => setImgRef(i, el)}
         className="max-w-full h-auto"
+        style={loaded[i] ? undefined : { width: '100%', aspectRatio: pageRatio ?? '3 / 4' }}
         onError={() => handleImageError(i)}
-        onLoad={() => markLoaded(i)}
+        onLoad={(e) => markLoaded(i, e.currentTarget)}
       />
     </div>
   );

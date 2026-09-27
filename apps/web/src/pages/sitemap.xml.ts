@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { API_URL } from '@/lib/api';
+import { API_URL, serviceHeaders } from '@/lib/api';
 
 export const prerender = false;
 
@@ -17,6 +17,7 @@ export const GET: APIRoute = async () => {
   let seriesEntries: Array<{ url: string; lastModified?: string; changeFrequency: string; priority: number }> = [];
   try {
     const res = await fetch(`${API_URL}/api/series?limit=200`, {
+      ...serviceHeaders(),
       signal: AbortSignal.timeout(12000),
     });
     if (res.ok) {

@@ -15,6 +15,7 @@ import { ownerFor, internalExec, internalQuery, peerKvGet } from '../lib/peers';
 import { b2PutObject, b2GetObject } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
+import { signImgPath, verifyImgSig } from '../lib/signedImage';
 
 export const router = new Hono<{ Bindings: Env }>();
 // Router untuk /img/* (image proxy). Terpisah dari router utama supaya
@@ -407,17 +408,18 @@ const mirrorChaptersToCacheKey = (c: Context, chaptersKey: string, chapters: Cha
   })());
 };
 
-// Persist hasil source-check ke D1 (kanonik: series + manga_source_link).
-// Dipanggil HANYA dari loader readThroughCache (sudah ≤1×/24h + ter-lock via
-// `l:{cacheKey}`) — nol request source tambahan, tanpa gate sendiri. Semua
-// write idempoten (UPDATE nilai absolut) → cold-start multi-isolate yang
-// race tetap aman. 'unknown' tidak pernah menimpa status known di DB.
+// Persist hasil source-check ke D1 (kanonik: series + manga_source_link +
+// chapters). Dipanggil HANYA dari loader readThroughCache (sudah ≤1×/24h +
+// ter-lock via `l:{cacheKey}`) — nol request source tambahan, tanpa gate
+// sendiri. Semua write idempoten (UPDATE nilai absolut / upsert) → cold-start
+// multi-isolate yang race tetap aman. 'unknown' tidak pernah menimpa status
+// known di DB.
 const persistSeriesSnapshot = async (
   c: Context,
   source: string,
   sourceSlug: string,
   series: Series,
-  chapterCount: number
+  chapters: Chapter[]
 ): Promise<void> => {
   try {
     const now = Math.floor(Date.now() / 1000);
@@ -425,7 +427,7 @@ const persistSeriesSnapshot = async (
       c.env.DB.prepare(
         `UPDATE manga_source_link SET chapter_count = ?1, has_chapter_list = 1, last_scraped_at = ?2
          WHERE source = ?3 AND source_slug = ?4`
-      ).bind(chapterCount, now, source, sourceSlug),
+      ).bind(chapters.length, now, source, sourceSlug),
     ];
     if (series.status && series.status !== 'unknown') {
       stmts.push(
@@ -437,6 +439,10 @@ const persistSeriesSnapshot = async (
       );
     }
     await c.env.DB.batch(stmts).catch(() => []);
+    const manga = await getDb(c).getMangaBySource(source, sourceSlug).catch(() => null);
+    if (manga?.slug && Array.isArray(chapters) && chapters.length > 0) {
+      await getDb(c).upsertChapters({ seriesSlug: manga.slug, chapters }).catch(() => {});
+    }
     // Invalidate cache /sources (chapter count + rekomendasi source bisa berubah).
     await c.env.CACHE_KV.delete(`sources:${source}:${sourceSlug}`).catch(() => {});
     await c.env.CACHE_KV.delete(`f:sources:${source}:${sourceSlug}`).catch(() => {});
@@ -488,7 +494,7 @@ router.get('/:source/series/:sourceId/detail', async (c: Context) => {
         const { series, chapters } = r;
         // 24h update system: persist snapshot ke D1 + mirror daftar chapter ke
         // cache chapters:list (satu-satunya sumber = fetch yang lagi jalan ini).
-        c.executionCtx.waitUntil(persistSeriesSnapshot(c, source, sourceId, series, chapters.length));
+        c.executionCtx.waitUntil(persistSeriesSnapshot(c, source, sourceId, series, chapters));
         mirrorChaptersToCacheKey(c, `chapters:list:${source}:${sourceId}:${lang}`, chapters);
         // Index chapterId → slug (KV 1 jam) supaya B2 cache-aside bisa resolve
         // slug dari chapterId (thrive pakai uuid yang tidak bisa di-parse).
@@ -599,15 +605,18 @@ export const enrichChapterCounts = async (
   const rows = await db.getSourceLinksByManga(mangaId).catch(() => []);
   const targets = rows.map((r) => ({ source: r.source, sourceSlug: r.source_slug }));
   if (targets.length === 0) return;
+  // Slug kanonik utk FK chapters.series_slug → series.slug (bukan source slug).
+  const canon = await db.getSeriesById(mangaId).catch(() => null);
+  const canonSlug = canon?.slug ?? null;
   const counted = await Promise.allSettled(
-    targets.map(async (t): Promise<{ source: string; sourceSlug: string; count: number; lastScrapedAt: number }> => {
+    targets.map(async (t): Promise<{ source: string; sourceSlug: string; count: number; chapters: Chapter[]; lastScrapedAt: number }> => {
       const a = getAdapter(t.source, c.env as unknown as AdapterEnv);
       if (!a) throw new Error('no adapter');
       const chapters = await Promise.race([
         retryUpstream(() => a.listChapters(t.sourceSlug, { lang: 'id' }), 2),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('listChapters timeout')), 10000)),
       ]);
-      return { source: t.source, sourceSlug: t.sourceSlug, count: chapters.length, lastScrapedAt: Math.floor(Date.now() / 1000) };
+      return { source: t.source, sourceSlug: t.sourceSlug, count: chapters.length, chapters, lastScrapedAt: Math.floor(Date.now() / 1000) };
     })
   );
   // Batch upsert: env.DB.batch = 1 subrequest D1 (vs N upsert terpisah).
@@ -629,6 +638,7 @@ export const enrichChapterCounts = async (
              last_scraped_at = excluded.last_scraped_at`
         ).bind(mangaId, t.source, t.sourceSlug, 1, hit.value.count, hit.value.lastScrapedAt)
       );
+      c.executionCtx.waitUntil(db.upsertChapters({ seriesSlug: t.sourceSlug, chapters: hit.value.chapters }).catch(() => {}));
     }
   }
   if (upsertStmts.length > 0) {
@@ -856,15 +866,28 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     const pages = await fetchPageUrlsWithCache(c, source, chapterId);
     const proxyBase = `/api/reader/${source}/page/${encodeURIComponent(chapterId)}`;
     const imgBase = `/img/${source}/${encodeURIComponent(chapterId)}`;
+    // SIGNED_IMG_SECRET ter-set → imgUrl di-mint dengan signature HMAC
+    // short-lived (?exp=&sig=, TTL 25 menit) utk anti-scraping /img. UNSET →
+    // imgUrl unsigned (perilaku hari ini, fail-open dev). Sig melindungi RAW
+    // pathname `/img/...` aja (bagian sebelum `?`) — query retry/exp/sig
+    // tidak ikut di-sign.
+    const signedSecret = signedImgSecretOf(c.env);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const signedPages = await Promise.all(pages.map(async (_, i) => {
+      const pageNo = i + 1;
+      let imgUrl = `${imgBase}/${pageNo}`;
+      if (signedSecret) {
+        const { exp, sig } = await signImgPath(signedSecret, imgUrl, 1500, nowSec);
+        imgUrl = `${imgUrl}?exp=${exp}&sig=${sig}`;
+      }
+      return { proxyUrl: `${proxyBase}/${pageNo}`, imgUrl, b2Url: null };
+    }));
     const data = {
       ...chapter,
       // imgUrl → proxy /img/* (B2-first, server-side). b2Url dihapus: presigned
       // URL ke browser membocorkan bucket/keyId B2 + nol cache di zone. Klien
       // lama yang masih kirim b2Url:null → fallback ke proxyUrl (proxy CDN).
-      pages: pages.map((_, i) => {
-        const pageNo = i + 1;
-        return { proxyUrl: `${proxyBase}/${pageNo}`, imgUrl: `${imgBase}/${pageNo}`, b2Url: null };
-      }),
+      pages: signedPages,
     };
     // LRU touch: 1 write batch untuk seluruh chapter (bukan loop per halaman —
     // N writes/view menguras kuota D1 write 100rb/hari di free tier).
@@ -896,6 +919,33 @@ const refererAllowed = (env: Env, referer: string | undefined): boolean => {
   if (!referer) return true;
   try { return allowedOriginFor(env, new URL(referer).origin) !== null; }
   catch { return true; }
+};
+
+// Fail-open saat SIGNED_IMG_SECRET belum di-set di worker ini: /img menerima
+// request tanpa signature (perilaku lama) + warning sekali per isolate.
+let warnedSignedImgUnset = false;
+
+// Anti-scraping /img: SIGNED_IMG_SECRET ter-set → request wajib membawa
+// signature valid (?exp=&sig=). Sig di-verify terhadap RAW pathname dari
+// browser — persis string yang di-sign saat mint (encoded chapterId, tanpa
+// query). Query `retry`/`exp`/`sig` tidak pernah ikut di-sign.
+const signedImgSecretOf = (env: Env): string => (env.SIGNED_IMG_SECRET as string | undefined)?.trim() || '';
+
+const hasValidImgSignature = async (c: Context): Promise<boolean> => {
+  const secret = signedImgSecretOf(c.env);
+  if (!secret) {
+    if (!warnedSignedImgUnset) {
+      warnedSignedImgUnset = true;
+      console.warn(
+        '[img] SIGNED_IMG_SECRET belum di-set di worker ini — /img tanpa signature (fail-open, dev-friendly). ' +
+          'PRODUKSI: set secret (nilai sama di semua worker API) sebelum anti-scraping gambar aktif.'
+      );
+    }
+    return true; // dev: terima apa adanya (perilaku hari ini)
+  }
+  const exp = Number(c.req.query('exp') ?? NaN);
+  const sig = c.req.query('sig') ?? '';
+  return verifyImgSig(secret, c.req.path, exp, sig, Math.floor(Date.now() / 1000), 60);
 };
 
 // Core source-CDN image proxy (shared by /api/reader/*/page/* and /img/*).
@@ -1058,6 +1108,15 @@ imgRouter.get('/:source/:chapterId/:pageNo', async (c: Context) => {
   const n = Number(pageNo);
   if (!Number.isInteger(n) || n < 1 || n > 10000) return c.json({ error: 'bad page number' }, 400);
   const retry = Math.min(Math.max(Number(c.req.query('retry')) || 0, 0), 2);
+
+  // Anti-scraping (HMAC short-lived signature): SIGNED_IMG_SECRET ter-set →
+  // wajib signature valid selain referer guard. Verify thd RAW pathname
+  // (c.req.path = encoded, idem dgn yang di-sign saat mint) — query retry
+  // tidak mengubah hasil karena tidak ikut di-sign. Fail-open dev di dalam
+  // hasValidImgSignature (warning sekali per isolate).
+  if (!(await hasValidImgSignature(c))) {
+    return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } });
+  }
 
   if (!refererAllowed(c.env, c.req.header('referer'))) {
     return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } });

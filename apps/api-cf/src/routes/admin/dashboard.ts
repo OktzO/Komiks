@@ -3,7 +3,7 @@ import type { Env, Context } from '../../lib/context';
 import { getDb, json } from '../../lib/context';
 import { requireAdminSession, requireAuth, revokeAllSessionsForUser } from '../../lib/auth';
 import { resolveB2Accounts } from '../../lib/b2Config';
-import { getB2Usage, getB2UsageGlobal, quotaBytes } from '../../lib/b2Usage';
+import { quotaBytes, getB2UsageSnapshot } from '../../lib/b2Usage';
 
 export const router = new Hono<{ Bindings: Env }>();
 
@@ -13,18 +13,24 @@ router.use('*', async (_c, next) => {
   _c.res.headers.set('Cache-Control', 'no-store');
 });
 
-// GET /api/admin/dashboard/storage — current B2 usage per account (KV) +
-// D1 estimate (KV) + historical trend (db_usage_snapshot, 30d).
+// GET /api/admin/dashboard/storage — tracked B2 usage per account (D1 b2_usage,
+// KV fallback) + D1 estimate (KV) + historical trend (db_usage_snapshot, 30d).
+// Unknown bytes stay null. A fabricated 0 reads as "measured, empty bucket"
+// and hides a broken counter, so totals are null unless at least one account
+// is actually measured.
 router.get('/dashboard/storage', async (c: Context) => {
   const d = getDb(c);
   const accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
   const quota = quotaBytes(c.env);
-  const current: Array<{ idx: number; name: string; bucket: string; bytes: number; quota: number }> = [];
-  let totalBytes = 0;
+  const current: Array<{ idx: number; name: string; bucket: string; bytes: number | null; quota: number }> = [];
+  let measuredBytes = 0;
+  let known = 0;
   for (let i = 0; i < accounts.length; i++) {
-    const global = await getB2UsageGlobal(c, accounts[i].name).catch(() => null);
-    const bytes = global ?? (await getB2Usage(c.env.CACHE_KV, i).catch(() => 0));
-    totalBytes += bytes;
+    const { bytes } = await getB2UsageSnapshot(c.env, accounts[i].name, i);
+    if (bytes !== null) {
+      known++;
+      measuredBytes += bytes;
+    }
     current.push({ idx: i, name: accounts[i].name, bucket: accounts[i].bucket, bytes, quota });
   }
   const d1 = await c.env.CACHE_KV.get('d1:usage', { type: 'json' }).catch(() => null) as { bytes?: number } | null;
@@ -32,7 +38,7 @@ router.get('/dashboard/storage', async (c: Context) => {
   return json(c, {
     data: {
       accounts: current,
-      total_bytes: totalBytes,
+      total_bytes: known > 0 ? measuredBytes : null,
       d1_bytes: d1?.bytes ?? null,
       quota,
       trend,

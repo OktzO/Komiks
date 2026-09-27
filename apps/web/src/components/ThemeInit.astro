@@ -1,0 +1,16 @@
+---
+/** Wajib `is:inline`: script module di-defer Astro → FOCT dark → kilat. */
+---
+
+<script is:inline>
+  (function () {
+    try {
+      var t = localStorage.getItem('oktz-theme');
+      if (t === 'light' || t === 'orange' || t === 'dark') {
+        document.documentElement.dataset.theme = t;
+      }
+    } catch (e) {
+      /* localStorage diblokir (private mode) → tetap dark, bukan error. */
+    }
+  })();
+</script>

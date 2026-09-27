@@ -2,6 +2,7 @@
 import { API_URL, getResolve, getChapter, getSeries } from '@/lib/api';
 import { ClientRouter } from 'astro:transitions';
 import ReaderShell from '@/components/ReaderShell';
+import ThemeInit from '@/components/ThemeInit.astro';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import NotFoundShell from '@/components/NotFoundShell.astro';
 
@@ -72,9 +73,10 @@ if (notFound) Astro.response.status = 404;
     <NotFoundPage client:load />
   </NotFoundShell>
 ) : (
-  <html lang="id" class="dark">
+  <html lang="id">
     <head>
       <meta charset="utf-8" />
+      <ThemeInit />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>{`${series?.title || slug} — Ch. ${chapterNum} - Oktz.`}</title>
       <meta name="robots" content="noindex, nofollow" />

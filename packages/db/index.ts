@@ -20,12 +20,21 @@ type Row = Record<string, unknown>;
 type Result<T> = T | null;
 type ListResult<T> = T[];
 
+export type InventoryCounts = {
+  series: number | null;
+  chapters: number | null;
+  chapterPages: number | null;
+  users: number | null;
+  bookmarks: number | null;
+};
+
 export interface Db {
   getSeriesBySlug: (slug: string) => Promise<Result<Series>>;
   getSeriesById: (id: number) => Promise<Result<Series>>;
   listSeries: (params: { genre?: string; page?: number; limit?: number }) => Promise<ListResult<Series>>;
   getChapter: (chapterId: string) => Promise<Result<Chapter>>;
   listChapterPages: (chapterId: string) => Promise<ListResult<ChapterPage>>;
+  upsertChapters: (params: { seriesSlug: string; chapters: Chapter[] }) => Promise<{ inserted: number }>;
   markPageB2Uploaded: (params: { chapterId: string; pageNumber: number; imageUrl: string; b2Key: string; b2AccountIdx: number }) => Promise<{ success: boolean }>;
   incrementLbUsage: (params: { originUrl: string; dateKey: string }) => Promise<{ success: boolean }>;
   listLbUsage: (dateKey: string) => Promise<Array<{ origin_url: string; req_count: number }>>;
@@ -47,11 +56,19 @@ export interface Db {
   getLbSettings: () => Promise<Result<LbSettings>>;
   setLbSettings: (updates: Partial<Omit<LbSettings, 'id'>>, id?: number) => Promise<{ success: boolean }>;
   listAccounts: () => Promise<ListResult<LbAccountSafe>>;
+  getLbAccount: (id: string) => Promise<Result<LbAccountSafe>>;
+  updateAccountCredentialStatus: (
+    id: string,
+    status: 'verified' | 'unverified' | 'failed',
+    testedAt: number
+  ) => Promise<{ success: boolean }>;
   addAccount: (params: Pick<LbAccount, 'label' | 'provider' | 'account_ref' | 'encrypted_token' | 'token_last4' | 'status' | 'created_by'>) => Promise<Result<{ id: string }>>;
   deleteAccount: (id: string) => Promise<{ success: boolean }>;
   createOrigin: (params: Pick<LbOrigin, 'account_id' | 'origin_url' | 'priority' | 'weight' | 'enabled'>) => Promise<Result<{ id: string }>>;
   listOrigins: () => Promise<ListResult<LbOrigin>>;
+  getLbOriginByUrl: (url: string) => Promise<Result<LbOrigin>>;
   updateOrigin: (id: string, params: Partial<Omit<LbOrigin, 'id' | 'created_at'>>) => Promise<{ success: boolean }>;
+  getInventoryCounts: () => Promise<InventoryCounts>;
   recordOriginHealth: (originId: string, healthy: boolean, checkedAt?: number) => Promise<{ success: boolean }>;
   getOriginStatus: (originId: string) => Promise<Result<{ healthy: boolean; last_checked_at: number | null }>>;
   addAuditLog: (params: { accountId?: string | null; originId?: string | null; action: string; userId?: number | null }) => Promise<{ success: boolean }>;
@@ -62,21 +79,6 @@ export interface Db {
   updateScrapeJob: (id: string, params: { status: string; seriesSlug?: string | null; error?: string | null; completedAt?: number | null }) => Promise<{ success: boolean }>;
   getScrapeJob: (id: string) => Promise<Result<ScrapeJob>>;
   listScrapeJobs: (limit?: number) => Promise<ListResult<ScrapeJob>>;
-  // ── Konten tersimpan (Plan C) ──
-  getSavedContentSummary: () => Promise<{
-    series_total: number;
-    chapters_total: number;
-    pages_stored: number;
-    per_source: Array<{ source: string; series: number; chapters: number; last_scraped_at: number | null }>;
-  }>;
-  listSavedSeries: (params: { page?: number; limit?: number }) => Promise<{
-    total: number;
-    rows: Array<{ slug: string; title: string; source: string; chapter_count: number; last_scraped_at: number | null }>;
-  }>;
-  listSavedChapters: (params: { page?: number; limit?: number }) => Promise<{
-    total: number;
-    rows: Array<{ series_slug: string; series_title: string; chapter_id: string; chapter_number: number; pages_count: number; created_at: number }>;
-  }>;
   recordSourceHealth: (params: { source: string; healthy: boolean; latencyMs?: number | null; error?: string | null }) => Promise<{ id: number }>;
   getLatestSourceHealth: (source: string) => Promise<Result<{ source: string; healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>>;
   getSourceHistory: (source: string, limit?: number) => Promise<Array<{ healthy: boolean; latency_ms: number | null; error: string | null; checked_at: number }>>;
@@ -134,6 +136,8 @@ export interface Db {
   insertUsageSnapshot: (params: { dbName: string; rowsOrObjects?: number | null; sizeBytes?: number | null; capturedAt?: number }) => Promise<{ success: boolean }>;
 }
 
+const normalizeOriginUrl = (url: string): string => url.trim().replace(/\/+$/, '');
+
 export const db = (client: D1Database): Db => {
   const prep = (sql: string): D1PreparedStatement => client.prepare(sql);
   const fromRow = <T>(r: Row | null): Result<T> => (r ? (r as unknown as T) : null);
@@ -172,6 +176,37 @@ export const db = (client: D1Database): Db => {
 
     getChapter: async (chapterId) =>
       fromRow<Chapter>(await prep('SELECT * FROM chapters WHERE id = ?1 LIMIT 1').bind(chapterId).first<Row>()),
+
+    upsertChapters: async ({ seriesSlug, chapters }) => {
+      if (!Array.isArray(chapters) || chapters.length === 0) return { inserted: 0 };
+      let inserted = 0;
+      for (let i = 0; i < chapters.length; i += 100) {
+        const stmts = chapters
+          .slice(i, i + 100)
+          .filter((c) => c && typeof c.id === 'string' && c.id.length > 0)
+          .map((c) =>
+            prep(
+              `INSERT INTO chapters (id, series_slug, chapter_number, volume, title, language, pages_count, published_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+               ON CONFLICT(id) DO UPDATE SET
+                 chapter_number = excluded.chapter_number,
+                 volume = excluded.volume,
+                 title = excluded.title,
+                 language = excluded.language,
+                 pages_count = excluded.pages_count,
+                 published_at = excluded.published_at`
+            ).bind(c.id, seriesSlug, c.chapter_number ?? 0, c.volume ?? null, c.title ?? null, c.language ?? 'id', c.pages_count ?? 0, c.published_at ?? null)
+          );
+        if (stmts.length === 0) continue;
+        try {
+          await client.batch(stmts);
+          inserted += stmts.length;
+        } catch {
+          // FK: series_slug belum ada di series → skip
+        }
+      }
+      return { inserted };
+    },
 
     listChapterPages: async (chapterId) => {
       const { results } = await prep(
@@ -373,9 +408,23 @@ export const db = (client: D1Database): Db => {
 
     listAccounts: async () => {
       const { results } = await prep(
-        'SELECT id, provider, label, account_ref, token_last4, status, created_by, created_at FROM lb_accounts ORDER BY id'
+        'SELECT id, provider, label, account_ref, token_last4, status, last_tested_at, created_by, created_at FROM lb_accounts ORDER BY id'
       ).all<Row>();
       return (results ?? []) as unknown as ListResult<LbAccountSafe>;
+    },
+
+    getLbAccount: async (id) =>
+      fromRow<LbAccountSafe>(
+        await prep(
+          'SELECT id, provider, label, account_ref, token_last4, status, last_tested_at, created_by, created_at FROM lb_accounts WHERE id = ?1 LIMIT 1'
+        ).bind(id).first<Row>()
+      ),
+
+    updateAccountCredentialStatus: async (id, status, testedAt) => {
+      const res = await prep(
+        'UPDATE lb_accounts SET status = ?1, last_tested_at = ?2 WHERE id = ?3'
+      ).bind(status, testedAt, id).run();
+      return { success: res.success };
     },
 
     addAccount: async ({ label, provider, account_ref, encrypted_token, token_last4, status = 'unverified', created_by }) =>
@@ -403,6 +452,16 @@ export const db = (client: D1Database): Db => {
       ).all<Row>();
       return (results ?? []) as unknown as ListResult<LbOrigin>;
     },
+
+    // ORDER BY mirrors listOrigins so a duplicate URL resolves to the same
+    // highest-priority row the origin pool picks. rtrim on the stored side
+    // matches both slash forms without rewriting stored data.
+    getLbOriginByUrl: async (url) =>
+      fromRow<LbOrigin>(
+        await prep(
+          "SELECT * FROM lb_origins WHERE rtrim(origin_url, '/') = ?1 ORDER BY priority DESC, id LIMIT 1"
+        ).bind(normalizeOriginUrl(url)).first<Row>()
+      ),
 
     updateOrigin: async (id, params) => {
       const sets: string[] = [];
@@ -436,6 +495,28 @@ export const db = (client: D1Database): Db => {
       return {
         healthy: (row.last_health_status as string) === 'healthy',
         last_checked_at: row.last_checked_at as number | null
+      };
+    },
+
+    getInventoryCounts: async () => {
+      const row = await prep(
+        `SELECT
+          (SELECT COUNT(*) FROM series) AS series,
+          (SELECT COUNT(*) FROM chapters) AS chapters,
+          (SELECT COUNT(*) FROM chapter_pages) AS chapter_pages,
+          (SELECT COUNT(*) FROM users) AS users,
+          (SELECT COUNT(*) FROM bookmarks) AS bookmarks`
+      ).first<Row>();
+      // Row hilang = data tidak terukur, bukan 0. Admin menampilkan "—" untuk
+      // null; angka 0 palsu akan dibaca sebagai "tidak ada konten".
+      const count = (value: unknown): number | null =>
+        typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : null;
+      return {
+        series: count(row?.series),
+        chapters: count(row?.chapters),
+        chapterPages: count(row?.chapter_pages),
+        users: count(row?.users),
+        bookmarks: count(row?.bookmarks),
       };
     },
 
@@ -490,86 +571,6 @@ export const db = (client: D1Database): Db => {
     listScrapeJobs: async (limit = 50) => {
       const { results } = await prep('SELECT * FROM scrape_jobs ORDER BY created_at DESC LIMIT ?1').bind(limit).all<Row>();
       return (results ?? []) as unknown as ListResult<ScrapeJob>;
-    },
-
-    getSavedContentSummary: async () => {
-      const sRow = await prep(
-        'SELECT COUNT(DISTINCT s.slug) AS c FROM series s JOIN chapters ch ON ch.series_slug = s.slug'
-      ).first<Row>();
-      const cRow = await prep('SELECT COUNT(*) AS c FROM chapters').first<Row>();
-      const pRow = await prep('SELECT COUNT(*) AS c FROM chapter_pages').first<Row>();
-      const per = (await prep(
-        `SELECT m.source,
-                COUNT(DISTINCT s.slug) AS series,
-                COUNT(c.id) AS chapters,
-                MAX(m.last_scraped_at) AS last_scraped_at
-         FROM manga_source_link m
-         JOIN series s ON s.id = m.manga_id
-         LEFT JOIN chapters c ON c.series_slug = s.slug
-         GROUP BY m.source
-         ORDER BY chapters DESC`
-      ).all<Row>()).results ?? [];
-      return {
-        series_total: Number(sRow?.c ?? 0),
-        chapters_total: Number(cRow?.c ?? 0),
-        pages_stored: Number(pRow?.c ?? 0),
-        per_source: (per as Row[]).map((r) => ({
-          source: r.source as string,
-          series: Number(r.series),
-          chapters: Number(r.chapters),
-          last_scraped_at: r.last_scraped_at == null ? null : (r.last_scraped_at as number),
-        })),
-      };
-    },
-
-    listSavedSeries: async ({ page = 1, limit = 20 }) => {
-      const rows = (await prep(
-        `SELECT s.slug, s.title, s.source, COUNT(c.id) AS chapter_count,
-                (SELECT MAX(m.last_scraped_at) FROM manga_source_link m WHERE m.manga_id = s.id) AS last_scraped_at
-         FROM series s
-         JOIN chapters c ON c.series_slug = s.slug
-         GROUP BY s.id
-         ORDER BY chapter_count DESC, s.title ASC
-         LIMIT ?1 OFFSET ?2`
-      ).bind(limit, (page - 1) * limit).all<Row>()).results ?? [];
-      const totalRow = await prep(
-        'SELECT COUNT(DISTINCT s.slug) AS c FROM series s JOIN chapters ch ON ch.series_slug = s.slug'
-      ).first<Row>();
-      return {
-        total: Number(totalRow?.c ?? 0),
-        rows: (rows as Row[]).map((r) => ({
-          slug: r.slug as string,
-          title: r.title as string,
-          source: r.source as string,
-          chapter_count: Number(r.chapter_count),
-          last_scraped_at: r.last_scraped_at == null ? null : (r.last_scraped_at as number),
-        })),
-      };
-    },
-
-    listSavedChapters: async ({ page = 1, limit = 20 }) => {
-      const rows = (await prep(
-        `SELECT c.id AS chapter_id, c.series_slug, c.chapter_number, s.title AS series_title,
-                COUNT(p.id) AS pages_count, c.created_at
-         FROM chapters c
-         JOIN series s ON s.slug = c.series_slug
-         LEFT JOIN chapter_pages p ON p.chapter_id = c.id
-         GROUP BY c.id
-         ORDER BY c.created_at DESC, c.id ASC
-         LIMIT ?1 OFFSET ?2`
-      ).bind(limit, (page - 1) * limit).all<Row>()).results ?? [];
-      const totalRow = await prep('SELECT COUNT(*) AS c FROM chapters').first<Row>();
-      return {
-        total: Number(totalRow?.c ?? 0),
-        rows: (rows as Row[]).map((r) => ({
-          series_slug: r.series_slug as string,
-          series_title: r.series_title as string,
-          chapter_id: r.chapter_id as string,
-          chapter_number: Number(r.chapter_number),
-          pages_count: Number(r.pages_count),
-          created_at: r.created_at as number,
-        })),
-      };
     },
 
     recordSourceHealth: async (p) => {

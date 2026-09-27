@@ -1,5 +1,9 @@
 import { Hono } from 'hono';
+import { PeerInventorySchema, type PeerInventory } from '@manga-platform/shared/types';
 import type { Env, Context } from '../lib/context';
+import { getDb } from '../lib/context';
+import { collectPeerInventory } from '../lib/adminInventory';
+import { getTopology } from '../lib/peers';
 import { writeLocal } from '../lib/dbWrite';
 import { constantTimeEqualStr } from '../lib/auth';
 
@@ -25,6 +29,20 @@ router.use('/*', async (c, next) => {
 });
 
 const OVERFLOW_RESPONSE_STATUS = 503;
+const INVENTORY_CACHE_TTL = 300;
+const INVENTORY_MAX_BODY_BYTES = 1024;
+
+const hasInternalAuth = (c: Context): boolean => {
+  const forwardKey = c.req.header('x-db-forward-key');
+  if (forwardKey && c.env.DB_FORWARD_KEY && constantTimeEqualStr(forwardKey, c.env.DB_FORWARD_KEY as string)) return true;
+  const mirrorKey = c.req.header('x-db-mirror-key');
+  return Boolean(
+    mirrorKey
+    && c.env.DB_MIRROR_KEY
+    && c.req.header('x-db-mirror') === '1'
+    && constantTimeEqualStr(mirrorKey, c.env.DB_MIRROR_KEY as string)
+  );
+};
 
 const ALLOWED_TABLES = new Set([
   'users',
@@ -51,6 +69,7 @@ const QUERY_ALLOWED_TABLES = new Set([
   'reading_history',
   'series',
   'chapters',
+  'manga_source_link',
   'b2_temp_objects',
   'b2_usage',
 ]);
@@ -96,6 +115,54 @@ const isWriteStatement = (sql: string): boolean =>
 
 const containsDangerKeyword = (sql: string): boolean =>
   /\b(SELECT|ATTACH|DETACH|PRAGMA|VACUUM|REINDEX|ALTER|DROP|TRUNCATE|WITH|UNION|JOIN|GLOB|LIKE\s*\(|LOAD_EXTENSION)\b/i.test(sql);
+
+router.post('/admin/inventory', async (c: Context) => {
+  if (!hasInternalAuth(c)) return c.json({ error: 'forbidden' }, 403);
+
+  const entries: [string, string][] = [];
+  new URL(c.req.url).searchParams.forEach((value, key) => entries.push([key, value]));
+  if (entries.some(([key, value]) => key !== 'refresh' || value !== '1') || entries.length > 1) {
+    return c.json({ error: 'invalid query' }, 400);
+  }
+  const contentLength = Number(c.req.header('content-length') ?? '0');
+  if (contentLength > INVENTORY_MAX_BODY_BYTES) {
+    return c.json({ error: 'payload too large' }, 413);
+  }
+  const body = c.req.raw.body;
+  if (body) {
+    const reader = body.getReader();
+    const first = await reader.read();
+    if (first.done) {
+      reader.releaseLock();
+    } else {
+      await reader.cancel();
+      return c.json({ error: 'body not allowed' }, 400);
+    }
+  }
+
+  const topology = getTopology(c.env);
+  const cacheKey = `peer:inventory:v2:${topology.hash}`;
+  // A cached snapshot is only reusable when the hash AND the resolved self
+  // still match. The hash covers URLs only, so a PEER_INDEX change (self
+  // gained or lost) keeps the same key and would otherwise serve a stale self.
+  const expectSelf = topology.peers.some((peer) => peer.self);
+  if (entries.length === 0) {
+    const cached = await c.env.CACHE_KV.get(cacheKey, 'json').catch(() => null) as { data?: unknown } | null;
+    const parsed = PeerInventorySchema.safeParse(cached?.data);
+    if (parsed.success && parsed.data.topologyHash === topology.hash && parsed.data.self === expectSelf) {
+      return c.json({ data: parsed.data });
+    }
+  }
+
+  let data: PeerInventory;
+  try {
+    data = await collectPeerInventory(c.env, getDb(c));
+  } catch {
+    return c.json({ error: 'inventory collection failed' }, 500);
+  }
+  await c.env.CACHE_KV.put(cacheKey, JSON.stringify({ data }), { expirationTtl: INVENTORY_CACHE_TTL }).catch(() => null);
+  return c.json({ data });
+});
 
 router.post('/db/exec', async (c: Context) => {
   const forwardKey = c.req.header('x-db-forward-key');

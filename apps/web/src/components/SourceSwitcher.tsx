@@ -57,7 +57,7 @@ async function fetchSourceLinks(apiUrl: string, source: string, sourceId: string
 function SourceIcon({ source, dim = 'h-4 w-4' }: { source: string; dim?: string }) {
   const src = SOURCE_ICONS[source];
   if (!src) return null;
-  return <img src={src} alt="" className={`${dim} rounded-full object-cover ring-1 ring-white/15`} />;
+  return <img src={src} alt="" decoding="async" className={`${dim} rounded-full object-cover ring-1 ring-white/15`} />;
 }
 
 // Per-slug source preference. Single JSON key + LRU cap (else a key per manga

@@ -24,9 +24,12 @@ export const drainResponse = async (res: Response): Promise<void> => {
 
 /**
  * Normalize a manga cover URL so the image CDN serves the ORIGINAL portrait
- * art instead of a cropped landscape thumbnail.
+ * art instead of a cropped landscape thumbnail, and so the URL is actually
+ * loadable from our HTTPS pages.
  *
- * Two problems this solves:
+ * Three problems this solves:
+ * 0. `http://` cover URLs are blocked as mixed content on https://oktzz.xyz —
+ *    the <img> silently fails (naturalWidth 0). Upgraded to https.
  * 1. Komiku's search HTML ships covers with `?resize=450,235` (landscape crop),
  *    which collapses portrait manga into a 1.91:1 strip.
  * 2. WordPress.com CDN (i2.wp.com) used by bacakomik/manhwaindo crops via
@@ -43,6 +46,7 @@ export const sanitizeCoverUrl = (url: string | null | undefined): string | null 
   const decoded = url.replace(/&#0?38;/g, '&').trim();
   const [base, hash] = decoded.split('#');
   const [origin, _oldQuery] = base.split('?');
-  if (!hash) return origin;
-  return `${origin}#${hash}`;
+  const schemeFixed = origin.replace(/^http:\/\//i, 'https://');
+  if (!hash) return schemeFixed;
+  return `${schemeFixed}#${hash}`;
 };

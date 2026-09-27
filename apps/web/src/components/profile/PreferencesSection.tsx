@@ -19,7 +19,10 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export function PreferencesSection({ user, onUpdate }: Props) {
   const prefs = user.preferences ?? {};
-  const [theme, setTheme] = useState<UserPreferences['theme']>(prefs.theme ?? 'dark');
+  // `theme` tidak lagi punya kontrol di sini — paletisplay pindah ke
+  // ThemeSwitcher (localStorage). State tetap diikutkan agar PATCH tidak
+  // wiping nilai theme yang sudah tersimpan.
+  const [theme] = useState<UserPreferences['theme']>(prefs.theme ?? 'dark');
   const [language, setLanguage] = useState<UserPreferences['language']>(prefs.language ?? 'id');
   const [readerMode, setReaderMode] = useState<UserPreferences['reader_mode']>(prefs.reader_mode ?? 'scroll');
   const [defaultSource, setDefaultSource] = useState<UserPreferences['default_source']>(prefs.default_source ?? null);
@@ -77,19 +80,6 @@ export function PreferencesSection({ user, onUpdate }: Props) {
       <p className="text-sm text-muted mb-4">Atur tampilan, bahasa, dan mode baca default.</p>
 
       <div className="space-y-5 max-w-md">
-        <div>
-          <label className="block text-sm text-secondary mb-2">Tema</label>
-          <Segmented
-            options={[
-              { value: 'dark', label: 'Dark' },
-              { value: 'light', label: 'Light' },
-              { value: 'system', label: 'Sistem' },
-            ]}
-            value={theme}
-            onChange={(v) => setTheme(v as UserPreferences['theme'])}
-          />
-        </div>
-
         <div>
           <label className="block text-sm text-secondary mb-2">Bahasa UI</label>
           <Segmented

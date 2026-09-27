@@ -1,23 +1,42 @@
 'use client';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchMe, apiGet, apiPost, getAuthApiUrl, roleLabel, type AuthUser } from '@/lib/api';
+import type { AdminInventory } from '@manga-platform/shared/types';
+import { Card, CardHead, StatCard, EmptyState, AreaChart, StorageDonut, fmtNum } from '@/components/admin/charts';
 import {
-  Card,
-  CardHead,
-  StatCard,
-  EmptyState,
-  AreaChart,
-  StorageDonut,
-  fmtNum,
-} from '@/components/admin/charts';
+  B2Section,
+  D1Section,
+  InventoryWarningBanner,
+  KVSection,
+  TopologySection,
+} from '@/components/admin/InventorySections';
+import {
+  PENDING_TOPOLOGY_STEPS,
+  EMPTY_BANNERS,
+  accountCreateOutcome,
+  accountOptionsFromConflict,
+  accountSelectionControl,
+  bannersAfter,
+  canSubmitCredential,
+  credentialDraftChanged,
+  filterInventory,
+  inventoryUrl,
+  lbRowsFromInventory,
+  originDraftFrom,
+  storageFromInventory,
+  tabIndexFromKey,
+  type AdminBanners,
+  type CredentialDraft,
+  type InventoryAccountOption,
+} from '@/lib/adminInventory';
+import { useAdminRefresh } from '@/lib/useAdminRefresh';
 
 /* ═══════════════════════════════════════════════════════════════════════
  * Types — mirror the exact API response shapes.
  *
- * NOTE ON ENVELOPES: several admin endpoints return a BARE payload
- * (no `{ data }` wrapper): lb/settings, lb/accounts, lb/origins,
- * scrape-jobs, users. Others ARE wrapped.
- * See apps/api-cf/src/routes/admin/*.ts. Do not "unify" these blindly.
+ * NOTE ON ENVELOPES: /api/admin/inventory, /api/admin/overview and the
+ * dashboard metric routes are wrapped in `{ data }`. See
+ * apps/api-cf/src/routes/admin/*.ts. Do not "unify" these blindly.
  * ═══════════════════════════════════════════════════════════════════════ */
 
 type Overview = {
@@ -25,15 +44,6 @@ type Overview = {
   bookmarksTotal: number;
   scrape24h: { success: number; failed: number };
   providers: { healthy: number; degraded: number; down: number };
-};
-
-type StoragePoint = { ts: number; size_bytes: number | null; rows_or_objects: number | null };
-type StorageData = {
-  accounts: Array<{ idx: number; name: string; bucket: string; bytes: number; quota: number }>;
-  total_bytes: number;
-  d1_bytes: number | null;
-  quota: number;
-  trend: Array<{ db_name: string; points: StoragePoint[] }>;
 };
 
 type SourceHealth = {
@@ -50,53 +60,14 @@ type SourceHealth = {
 
 type ReqData = { dates: string[]; series: Array<{ origin: string; points: number[] }> };
 
-type LbSettings = {
-  id?: number;
-  mode?: 'off' | 'on';
-  implementation?: 'native_cf' | 'custom';
-  steering_policy?: string;
-  health_check_interval_sec?: number;
-  health_check_timeout_ms?: number;
-  failure_threshold?: number;
-};
-
-type LbAccount = {
-  id: string;
-  provider: string;
-  label: string;
-  account_ref: string | null;
-  token_last4: string;
+type ProvisionStatus = {
   status: string;
-  created_at: number;
+  step: string;
+  error: string | null;
+  workerUrl: string | null;
 };
 
-/** `/lb/origins` returns `enabled` as 0|1 (raw row). `/lb/status` returns boolean. */
-type LbOrigin = {
-  id: string;
-  account_id: string | null;
-  origin_url: string;
-  priority: number;
-  weight: number;
-  enabled: number;
-  last_health_status: string | null;
-  last_checked_at: number | null;
-};
-
-type LbStatus = {
-  mode: string;
-  implementation: string;
-  origins: Array<{
-    id: string;
-    origin_url: string;
-    enabled: boolean;
-    priority: number;
-    last_health_status: string | null;
-    last_checked_at: number | null;
-  }>;
-};
-
-type UsageRow = { origin_url: string; req_count: number };
-
+type MutationFailure = { error?: string; accounts?: unknown };
 /* ═══════════════════════════════════════════════════════════════════════
  * Format helpers
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -117,6 +88,15 @@ const fmtDayLabel = (iso: string): string => {
 
 /** Strip scheme + trailing slash for compact display. */
 const hostOf = (url: string): string => url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+const TEST_LABELS: Record<string, string> = {
+  verified: 'Terverifikasi',
+  failed: 'Gagal diverifikasi',
+  unavailable: 'Tidak tersedia',
+};
+
+const credentialTone = (status: string | null): string =>
+  status === 'verified' ? 'text-success' : status === 'failed' ? 'text-error' : 'text-muted';
 
 /* ═══════════════════════════════════════════════════════════════════════
  * Icons — inline SVG, consistent 1.6–1.8 stroke, no emoji.
@@ -255,92 +235,67 @@ function SourceHealthCard({ sources, delay = 160 }: { sources: SourceHealth[]; d
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- * Origins — real rows + today's real request counts.
- * Replaces the fabricated "Invoices" card (previously `$priority * 7`).
+ * Credential forms
  * ═══════════════════════════════════════════════════════════════════════ */
 
-function OriginsCard({
-  origins,
-  usage,
-  query,
-  onViewAll,
+const chipCls =
+  'text-[10px] px-2 py-0.5 border border-border-default rounded-full text-secondary whitespace-nowrap';
+
+const labelCls = 'text-[11px] text-secondary block';
+const hintCls = 'text-[10px] text-muted leading-relaxed';
+
+function AccountPicker({
+  id,
+  choices,
+  value,
+  onChange,
+  required,
 }: {
-  origins: LbOrigin[];
-  usage: UsageRow[];
-  query: string;
-  onViewAll: () => void;
+  id: string;
+  choices: InventoryAccountOption[];
+  value: string;
+  onChange: (next: string) => void;
+  required: boolean;
 }) {
-  const usageByUrl = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const u of usage) m.set(u.origin_url, u.req_count);
-    return m;
-  }, [usage]);
-
-  const list = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const f = q ? origins.filter((o) => o.origin_url.toLowerCase().includes(q)) : origins;
-    return f.slice(0, 6);
-  }, [origins, query]);
-
-  const enabledCount = origins.filter((o) => o.enabled === 1).length;
-
-  const statusMeta = (st: string | null) => {
-    if (st === 'healthy') return { color: 'var(--success)', label: 'Sehat' };
-    if (st === 'unhealthy' || st === 'down') return { color: 'var(--error)', label: 'Down' };
-    return { color: 'var(--text-muted)', label: 'Belum dicek' };
-  };
-
   return (
-    <Card delay={240}>
-      <CardHead
-        icon={<IconServer className="w-4 h-4" />}
-        title="Origin pool"
-        hint={`${enabledCount} aktif dari ${origins.length} origin`}
-      />
-
-      {list.length === 0 ? (
-        <EmptyState>{query ? `Tidak ada origin yang cocok dengan “${query}”.` : 'Belum ada origin terdaftar.'}</EmptyState>
-      ) : (
-        <ul className="space-y-2.5">
-          {list.map((o) => {
-            const st = statusMeta(o.last_health_status);
-            const reqs = usageByUrl.get(o.origin_url);
-            return (
-              <li key={o.id} className="flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{ background: st.color }}
-                      aria-hidden="true"
-                    />
-                    <span className="text-[12px] text-primary truncate" title={o.origin_url}>
-                      {hostOf(o.origin_url)}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-muted mt-0.5 tabular ml-3">
-                    P{o.priority} · W{o.weight} · {o.enabled === 1 ? 'aktif' : 'nonaktif'}
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-[12px] tabular text-primary">
-                    {reqs == null ? '—' : fmtNum(reqs)}
-                  </div>
-                  <div className="text-[10px] text-muted">req hari ini</div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      <button
-        onClick={onViewAll}
-        className="mt-4 text-[11px] text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded"
+    <div className="pt-1 space-y-1.5">
+      <label htmlFor={id} className={labelCls}>
+        Akun Cloudflare yang dipakai
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={inputCls}
+        required={required}
+        aria-describedby={`${id}-hint`}
       >
-        Kelola origin →
-      </button>
-    </Card>
+        <option value="">Pilih akun…</option>
+        {choices.map((choice) => (
+          <option key={choice.id} value={choice.id}>
+            {choice.name}
+            {choice.type ? ` · ${choice.type}` : ''}
+          </option>
+        ))}
+      </select>
+      <p id={`${id}-hint`} className={hintCls}>
+        Token tetap hanya di memori halaman ini dan tidak pernah ditulis ke storage peramban.
+      </p>
+    </div>
+  );
+}
+
+function PendingTopologySteps() {
+  return (
+    <ol className="text-[11px] text-secondary leading-relaxed space-y-1 pt-1">
+      <li className="text-muted">Origin baru nonaktif sampai topologi sinkron:</li>
+      {PENDING_TOPOLOGY_STEPS.map((step, i) => (
+        <li key={step} className="flex gap-1.5">
+          <span className="text-muted tabular shrink-0">{i + 1}.</span>
+          <span>{step}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -349,81 +304,92 @@ function OriginsCard({
  * ═══════════════════════════════════════════════════════════════════════ */
 
 const TABS = [
-  { key: 'settings', label: 'Mode' },
-  { key: 'accounts', label: 'Akun' },
-  { key: 'origins', label: 'Origin Pool' },
-  { key: 'status', label: 'Status' },
+  { key: 'topology', label: 'Topology' },
+  { key: 'd1', label: 'D1' },
+  { key: 'kv', label: 'KV' },
+  { key: 'b2', label: 'B2' },
+  { key: 'credentials', label: 'Kredensial' },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];
 
+const inputCls =
+  'w-full bg-base/60 border border-border-subtle rounded-xl px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors';
+const btnCls =
+  'px-4 py-2 border border-border-default rounded-xl text-sm text-secondary hover:bg-bg-secondary hover:text-primary transition-colors disabled:opacity-50';
+
+const workerNameFallback = (): string => `manga-api-${crypto.randomUUID().slice(0, 8)}`;
+
 export default function AdminSettingsPage() {
-  
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [banners, setBanners] = useState<AdminBanners>(EMPTY_BANNERS);
   const [lastLoad, setLastLoad] = useState<number | null>(null);
 
-  // Real metrics
+  const [inventory, setInventory] = useState<AdminInventory | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [storage, setStorage] = useState<StorageData | null>(null);
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [requests, setRequests] = useState<ReqData | null>(null);
 
-  // LB config
-  const [settings, setSettings] = useState<LbSettings | null>(null);
-  const [accounts, setAccounts] = useState<LbAccount[]>([]);
-  const [origins, setOrigins] = useState<LbOrigin[]>([]);
-  const [status, setStatus] = useState<LbStatus | null>(null);
-  const [usage, setUsage] = useState<UsageRow[]>([]);
-
-  const [tab, setTab] = useState<TabKey>('settings');
+  const [tab, setTab] = useState<TabKey>('topology');
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [query, setQuery] = useState('');
-  const [provisionStatus, setProvisionStatus] = useState<any>(null);
-  const [provisioning, setProvisioning] = useState(false);
+
+  const [provision, setProvision] = useState({ label: '', workerName: '', token: '' });
+  const [provisionAccountId, setProvisionAccountId] = useState('');
+  const [provisionChoices, setProvisionChoices] = useState<InventoryAccountOption[]>([]);
+  const [provisionStatus, setProvisionStatus] = useState<ProvisionStatus | null>(null);
+  const [submittingProvision, setSubmittingProvision] = useState(false);
   const provisionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const headers = () => ({ 'Content-Type': 'application/json' });
+  const [account, setAccount] = useState({ label: '', provider: 'cloudflare', accountRef: '', token: '' });
+  const [accountAccountId, setAccountAccountId] = useState('');
+  const [accountChoices, setAccountChoices] = useState<InventoryAccountOption[]>([]);
+  const [submittingAccount, setSubmittingAccount] = useState(false);
+  const [submittingOrigin, setSubmittingOrigin] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, string>>({});
 
   /* ── Data loading ────────────────────────────────────────────────────
-   * Each call is individually tolerant: one failing/empty table must not
-   * blank the whole page. Envelope shapes differ per endpoint — see the
-   * type block at the top of this file.
+   * One inventory call drives every resource tab. A failed inventory
+   * response leaves the previous snapshot in place and only records the
+   * inventory banner, so a transient outage never blanks the page and
+   * never overwrites a mutation error.
    * ─────────────────────────────────────────────────────────────────── */
-  const loadAll = useCallback(async () => {
-    try {
-      const [ov, st, sh, rq, s, a, o, lbStatus, us] = await Promise.all([
-        apiGet<{ data: Overview }>('/api/admin/overview').catch(() => null),
-        apiGet<{ data: StorageData }>('/api/admin/dashboard/storage').catch(() => null),
-        apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health').catch(() => null),
-        apiGet<{ data: ReqData }>('/api/admin/dashboard/requests?days=14').catch(() => null),
-        apiGet<LbSettings>('/api/admin/lb/settings').catch(() => null),
-        apiGet<LbAccount[]>('/api/admin/lb/accounts').catch(() => null),
-        apiGet<LbOrigin[]>('/api/admin/lb/origins').catch(() => null),
-        apiGet<{ data: LbStatus }>('/api/admin/lb/status').catch(() => null),
-        apiGet<{ data: UsageRow[] }>('/api/admin/lb/usage').catch(() => null),
-      ]);
+  const loadAll = useCallback(async (forceRefresh: boolean) => {
+    const [inv, ov, sh, rq] = await Promise.allSettled([
+      apiGet<{ data: AdminInventory }>(inventoryUrl(forceRefresh)),
+      apiGet<{ data: Overview }>('/api/admin/overview'),
+      apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health'),
+      apiGet<{ data: ReqData }>('/api/admin/dashboard/requests?days=14'),
+    ]);
 
-      setOverview(ov?.data ?? null);
-      setStorage(st?.data ?? null);
-      setSources(sh?.data ?? []);
-      setRequests(rq?.data ?? null);
-      setSettings(s ?? null);
-      setAccounts(a ?? []);
-      setOrigins(o ?? []);
-      setStatus(lbStatus?.data ?? null);
-      setUsage(us?.data ?? []);
-      setLastLoad(Date.now());
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    setOverview(ov.status === 'fulfilled' ? ov.value.data : null);
+    setSources(sh.status === 'fulfilled' ? (sh.value.data ?? []) : []);
+    setRequests(rq.status === 'fulfilled' ? rq.value.data : null);
+    setLastLoad(Date.now());
+
+    if (inv.status === 'fulfilled' && inv.value.data) {
+      setInventory(inv.value.data);
+      setBanners((prev) => bannersAfter(prev, { kind: 'inventory', ok: true }));
+    } else {
+      const reason = inv.status === 'rejected' ? String(inv.reason) : 'respons inventaris kosong';
+      setBanners((prev) =>
+        bannersAfter(prev, {
+          kind: 'inventory',
+          ok: false,
+          message: `Inventaris gagal dimuat — menampilkan data terakhir. ${reason}`,
+        })
+      );
     }
+
+    setLoading(false);
+    setRefreshing(false);
   }, []);
+
+  const refresh = useAdminRefresh(loadAll, user?.role === 'admin');
 
   useEffect(() => {
     let alive = true;
@@ -438,16 +404,6 @@ export default function AdminSettingsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (user?.role !== 'admin') return;
-    loadAll();
-    const iv = setInterval(() => {
-      setRefreshing(true);
-      loadAll();
-    }, 30000);
-    return () => clearInterval(iv);
-  }, [user, loadAll]);
-
   useEffect(
     () => () => {
       if (provisionPollRef.current) clearInterval(provisionPollRef.current);
@@ -455,71 +411,68 @@ export default function AdminSettingsPage() {
     [],
   );
 
+  const setMutationBanner = useCallback(
+    (outcome: 'success' | 'partial' | 'failure', message?: string) => {
+      setBanners((prev) => bannersAfter(prev, { kind: 'mutation', outcome, message }));
+    },
+    []
+  );
+
   /* ── Mutations ─────────────────────────────────────────────────────── */
 
-  const updateSettings = async (updates: Partial<LbSettings>) => {
-    try {
-      const base = await getAuthApiUrl();
-      const res = await fetch(`${base}/api/admin/lb/settings`, {
-        method: 'PUT',
-        headers: headers(),
-        credentials: 'include',
-        body: JSON.stringify(updates),
-      });
-      if (!res.ok) throw new Error(`Gagal menyimpan (${res.status})`);
-      setSettings((prev) => (prev ? { ...prev, ...updates } : prev));
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const addAccount = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    const rawToken = String(f.get('rawToken') ?? '');
-    try {
-      const base = await getAuthApiUrl();
-      const res = await fetch(`${base}/api/admin/lb/accounts`, {
-        method: 'POST',
-        headers: headers(),
-        credentials: 'include',
-        body: JSON.stringify({
-          label: f.get('label'),
-          provider: f.get('provider'),
-          account_ref: f.get('account_ref') || null,
-          rawToken,
-          token_last4: rawToken.slice(-4),
-        }),
-      });
-      if (!res.ok) throw new Error(`Gagal menambah akun (${res.status})`);
-      e.currentTarget.reset();
-      setError(null);
-      await loadAll();
-    } catch (err) {
-      setError(String(err));
-    }
+  const readFailure = async (res: Response): Promise<{ body: unknown; choices: InventoryAccountOption[] }> => {
+    const body = await res.json().catch(() => null);
+    const code = typeof (body as MutationFailure | null)?.error === 'string' ? String((body as MutationFailure).error) : '';
+    return {
+      body,
+      choices: code === 'account selection required' ? accountOptionsFromConflict((body as MutationFailure).accounts) : [],
+    };
   };
 
   const provisionAccount = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    const label = String(f.get('provision_label') ?? '');
-    const token = String(f.get('provision_token') ?? '');
-    const workerName = String(f.get('provision_worker_name') ?? '') || `manga-api-${crypto.randomUUID().slice(0, 8)}`;
-    setProvisioning(true);
+    if (
+      !canSubmitCredential({
+        busy: submittingProvision,
+        awaitingSelection: provisionControl.kind === 'picker',
+        selectedAccountId: provisionAccountId,
+      })
+    ) {
+      setMutationBanner('failure', 'Pilih akun Cloudflare terlebih dahulu, lalu kirim ulang.');
+      return;
+    }
+    setSubmittingProvision(true);
     setProvisionStatus(null);
     try {
       const base = await getAuthApiUrl();
       const res = await fetch(`${base}/api/admin/lb/accounts/provision`, {
         method: 'POST',
-        headers: headers(),
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ label, cfApiToken: token, workerName }),
+        body: JSON.stringify({
+          label: provision.label,
+          cfApiToken: provision.token,
+          workerName: provision.workerName.trim() || workerNameFallback(),
+          accountId: provisionAccountId || null,
+        }),
       });
+      if (!res.ok) {
+        const { choices } = await readFailure(res);
+        if (choices.length > 0) {
+          setProvisionChoices(choices);
+          setSubmittingProvision(false);
+          setMutationBanner('failure', 'Token ini melihat beberapa akun Cloudflare — pilih satu, lalu kirim ulang.');
+          return;
+        }
+        throw new Error(`Gagal provision (${res.status})`);
+      }
       const j = (await res.json()) as { job_id?: string };
       const jobId = j.job_id;
       if (!jobId) throw new Error('Server tidak mengembalikan job_id');
+      setProvisionAccountId('');
+      setProvisionChoices([]);
+      setProvision((p) => ({ ...p, token: '' }));
+      setMutationBanner('success');
 
       let ticks = 0;
       const poll = setInterval(async () => {
@@ -527,19 +480,21 @@ export default function AdminSettingsPage() {
         if (++ticks > 100) {
           clearInterval(poll);
           provisionPollRef.current = null;
-          setProvisioning(false);
-          setError('Provision polling timeout — cek status akun secara manual.');
+          setSubmittingProvision(false);
+          setMutationBanner('failure', 'Provision polling timeout — cek status akun secara manual.');
           return;
         }
         try {
-          const st = await apiGet<{ data: any }>(`/api/admin/lb/accounts/${jobId}/provision-status`);
+          const st = await apiGet<{ data: ProvisionStatus }>(
+            `/api/admin/lb/accounts/${jobId}/provision-status`
+          );
           const data = st?.data ?? null;
           setProvisionStatus(data);
           if (data?.status === 'completed' || data?.status === 'failed') {
             clearInterval(poll);
             provisionPollRef.current = null;
-            setProvisioning(false);
-            await loadAll();
+            setSubmittingProvision(false);
+            await loadAll(true);
           }
         } catch {
           /* keep polling */
@@ -547,52 +502,175 @@ export default function AdminSettingsPage() {
       }, 3000);
       provisionPollRef.current = poll;
     } catch (err) {
-      setProvisioning(false);
-      setError(String(err));
+      setSubmittingProvision(false);
+      setMutationBanner('failure', String(err));
+    }
+  };
+
+  const addAccount = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (
+      !canSubmitCredential({
+        busy: submittingAccount,
+        awaitingSelection: accountControl.kind === 'picker',
+        selectedAccountId: accountAccountId,
+      })
+    ) {
+      setMutationBanner('failure', 'Pilih akun Cloudflare terlebih dahulu, lalu kirim ulang.');
+      return;
+    }
+    setSubmittingAccount(true);
+    try {
+      const base = await getAuthApiUrl();
+      const res = await fetch(`${base}/api/admin/lb/accounts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          label: account.label,
+          provider: account.provider,
+          accountId: account.provider === 'vercel' ? account.accountRef || null : accountAccountId || null,
+          rawToken: account.token,
+        }),
+      });
+      const { body, choices } = await readFailure(res);
+      if (choices.length > 0) {
+        setAccountChoices(choices);
+        setSubmittingAccount(false);
+        setMutationBanner('failure', 'Token ini melihat beberapa akun Cloudflare — pilih satu, lalu kirim ulang.');
+        return;
+      }
+      if (!res.ok) {
+        const outcome = accountCreateOutcome(res.status, body);
+        if (outcome.kind === 'failed') {
+          setSubmittingAccount(false);
+          setMutationBanner('failure', outcome.message);
+          return;
+        }
+        setMutationBanner('partial', `Akun tersimpan dengan status ${outcome.status} — token tidak lolos verifikasi provider.`);
+      } else {
+        setMutationBanner('success');
+      }
+      setSubmittingAccount(false);
+      setAccount({ label: '', provider: 'cloudflare', accountRef: '', token: '' });
+      setAccountAccountId('');
+      setAccountChoices([]);
+      await loadAll(true);
+    } catch (err) {
+      setSubmittingAccount(false);
+      setMutationBanner('failure', String(err));
     }
   };
 
   const addOrigin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const f = new FormData(e.currentTarget);
+    if (submittingOrigin) return;
+    const form = e.currentTarget;
+    const data = new FormData(form);
+    const draft = originDraftFrom((name) => data.get(name));
+    setSubmittingOrigin(true);
     try {
       const base = await getAuthApiUrl();
       const res = await fetch(`${base}/api/admin/lb/origins`, {
         method: 'POST',
-        headers: headers(),
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          account_id: f.get('account_id') || null,
-          origin_url: f.get('origin_url'),
-          priority: Number(f.get('priority') || 0),
-          weight: Number(f.get('weight') || 1),
-          enabled: 1,
+          account_id: draft.accountId || null,
+          origin_url: draft.url,
+          priority: draft.priority,
+          weight: draft.weight,
+          enabled: 0,
         }),
       });
-      if (!res.ok) throw new Error(`Gagal menambah origin (${res.status})`);
-      e.currentTarget.reset();
-      setError(null);
-      await loadAll();
+      if (!res.ok) {
+        setMutationBanner('failure', `Gagal menambah origin (${res.status})`);
+        return;
+      }
+      form.reset();
+      setMutationBanner('success');
+      await loadAll(true);
     } catch (err) {
-      setError(String(err));
+      setMutationBanner('failure', String(err));
+    } finally {
+      setSubmittingOrigin(false);
     }
   };
 
   const testAccount = async (id: string) => {
+    if (testingId !== null) return;
+    setTestingId(id);
     try {
-      await apiPost(`/api/admin/lb/accounts/${id}/test`);
-      await loadAll();
-    } catch (e) {
-      setError(String(e));
+      const res = await apiPost<{ ok: boolean; status: string }>(`/api/admin/lb/accounts/${id}/test`);
+      setTestResults((prev) => ({ ...prev, [id]: TEST_LABELS[res.status] ?? `Status: ${res.status}` }));
+      setMutationBanner('success');
+      await loadAll(true);
+    } catch (err) {
+      setMutationBanner('failure', String(err));
+    } finally {
+      setTestingId(null);
     }
+  };
+
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const next = tabIndexFromKey(TABS.findIndex((t) => t.key === tab), e.key, TABS.length);
+    if (next === null) return;
+    e.preventDefault();
+    setTab(TABS[next].key);
+    tabRefs.current[next]?.focus();
   };
 
   /* ── Derived (all real) ────────────────────────────────────────────── */
 
+  const view = useMemo(() => filterInventory(inventory, query), [inventory, query]);
+  const storage = useMemo(() => storageFromInventory(inventory), [inventory]);
+  const credentials = useMemo(
+    () => lbRowsFromInventory(inventory, undefined, query).filter((row) => row.accountId !== null),
+    [inventory, query]
+  );
+  const originAccountOptions = useMemo(
+    () => lbRowsFromInventory(inventory).filter((row) => row.accountId !== null),
+    [inventory]
+  );
+  const provisionDraft: CredentialDraft = {
+    token: provision.token,
+    accountId: provisionAccountId,
+    choices: provisionChoices,
+  };
+  const accountDraft: CredentialDraft = {
+    token: account.token,
+    accountId: accountAccountId,
+    choices: accountChoices,
+  };
+  const accountControl = accountSelectionControl(account.provider, accountDraft.choices);
+  const provisionControl = accountSelectionControl('cloudflare', provisionDraft.choices);
+  const provisionSubmit = canSubmitCredential({
+    busy: submittingProvision,
+    awaitingSelection: provisionControl.kind === 'picker',
+    selectedAccountId: provisionDraft.accountId,
+  });
+  const accountSubmit = canSubmitCredential({
+    busy: submittingAccount,
+    awaitingSelection: accountControl.kind === 'picker',
+    selectedAccountId: accountDraft.accountId,
+  });
+
+  const onProvisionToken = (token: string) => {
+    const next = credentialDraftChanged(provisionDraft, token);
+    if (next.choices !== provisionDraft.choices) setProvisionChoices(next.choices);
+    if (next.accountId !== provisionDraft.accountId) setProvisionAccountId(next.accountId);
+    setProvision((p) => ({ ...p, token: next.token }));
+  };
+
+  const onAccountToken = (token: string) => {
+    const next = credentialDraftChanged(accountDraft, token);
+    if (next.choices !== accountDraft.choices) setAccountChoices(next.choices);
+    if (next.accountId !== accountDraft.accountId) setAccountAccountId(next.accountId);
+    setAccount((a) => ({ ...a, token: next.token }));
+  };
+
   const scrapeTotal = (overview?.scrape24h.success ?? 0) + (overview?.scrape24h.failed ?? 0);
   const scrapeRate = scrapeTotal > 0 ? Math.round(((overview?.scrape24h.success ?? 0) / scrapeTotal) * 100) : 0;
-
-  const healthyOrigins = status?.origins.filter((o) => o.last_health_status === 'healthy').length ?? 0;
 
   const trafficPoints = useMemo(() => {
     if (!requests?.series.length) return [];
@@ -602,8 +680,6 @@ export default function AdminSettingsPage() {
   }, [requests]);
 
   const trafficTotal = trafficPoints.reduce((a, b) => a + b, 0);
-
-  const quotaTotal = storage?.accounts.reduce((a, x) => a + x.quota, 0) ?? storage?.quota ?? 0;
 
   /* ── Guards ────────────────────────────────────────────────────────── */
 
@@ -625,11 +701,6 @@ export default function AdminSettingsPage() {
 
   if (!user || user.role !== 'admin') return null;
 
-  const inputCls =
-    'w-full bg-base/60 border border-border-subtle rounded-xl px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors';
-  const btnCls =
-    'px-4 py-2 border border-border-default rounded-xl text-sm text-secondary hover:bg-bg-secondary hover:text-primary transition-colors disabled:opacity-50';
-
   return (
     <main className="max-w-7xl mx-auto">
       {/* Ambient glow — purely decorative, sits behind content */}
@@ -642,9 +713,27 @@ export default function AdminSettingsPage() {
         }}
       />
 
-      {error && (
-        <div className="mb-5 text-sm text-error border border-error/30 rounded-xl p-3 bg-error/5">
-          {error}
+      {banners.inventory && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mb-5 text-sm text-error border border-error/30 rounded-xl p-3 bg-error/5"
+        >
+          {banners.inventory}
+        </div>
+      )}
+
+      {banners.mutation && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className={`mb-5 text-sm border rounded-xl p-3 ${
+            banners.mutationTone === 'warning'
+              ? 'text-accent border-accent/30 bg-accent/5'
+              : 'text-error border-error/30 bg-error/5'
+          }`}
+        >
+          {banners.mutation}
         </div>
       )}
 
@@ -653,7 +742,7 @@ export default function AdminSettingsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-primary">Settings</h1>
           <p className="text-sm text-muted mt-1">
-            Load balancer, origin pool, dan metrik platform
+            Inventaris dinamis seluruh worker, D1, KV, B2, dan kredensial
           </p>
         </div>
 
@@ -673,8 +762,8 @@ export default function AdminSettingsPage() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Cari origin..."
-              aria-label="Cari origin"
+              placeholder="Cari sumber daya..."
+              aria-label="Cari sumber daya"
               className="w-36 md:w-48 bg-transparent text-sm text-primary placeholder:text-muted focus:outline-none"
             />
           </div>
@@ -682,12 +771,12 @@ export default function AdminSettingsPage() {
           <button
             onClick={() => {
               setRefreshing(true);
-              loadAll();
+              refresh(true);
             }}
             disabled={refreshing}
             className="w-9 h-9 flex items-center justify-center rounded-full bg-elevated border border-border-subtle text-secondary hover:text-primary hover:border-border-default transition-colors disabled:opacity-50"
-            aria-label="Muat ulang data"
-            title="Muat ulang"
+            aria-label="Muat ulang inventaris"
+            title="Muat ulang inventaris"
           >
             <IconRefresh className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
@@ -731,10 +820,10 @@ export default function AdminSettingsPage() {
         />
         <StatCard
           icon={<IconServer className="w-4 h-4" />}
-          label="Origin sehat"
-          value={status ? `${healthyOrigins}/${status.origins.length}` : '—'}
-          sub={status ? `mode ${status.mode} · ${status.implementation}` : 'memuat...'}
-          tone={status && status.origins.length > 0 && healthyOrigins === status.origins.length ? 'success' : 'default'}
+          label="Peer terjangkau"
+          value={`${fmtNum(view.coverage.reachable)}/${fmtNum(view.topology.count)}`}
+          sub={`${fmtNum(view.coverage.liveAccounts)} akun live · ${fmtNum(view.totals.registrations)} pendaftaran`}
+          tone={view.topology.count > 0 && view.coverage.reachable === view.topology.count ? 'success' : 'default'}
           delay={120}
         />
       </div>
@@ -779,28 +868,36 @@ export default function AdminSettingsPage() {
         </Card>
 
         <StorageDonut
-          accounts={storage?.accounts ?? []}
-          totalBytes={storage?.total_bytes ?? 0}
-          quota={quotaTotal}
-          d1Bytes={storage?.d1_bytes ?? null}
+          accounts={storage.accounts}
+          totalBytes={null}
+          quota={storage.totalQuota}
+          d1Bytes={null}
+          tracked
           icon={<IconDatabase className="w-4 h-4" />}
         />
 
         <SourceHealthCard sources={sources} delay={200} />
-        <OriginsCard
-          origins={origins}
-          usage={usage}
-          query={query}
-          onViewAll={() => setTab('origins')}
-        />
       </div>
 
-      {/* ── Management tabs ── */}
+      {/* ── Resource tabs ── */}
       <div className="mt-6 bg-elevated border border-border-subtle rounded-2xl p-5 anim-slide-up">
-        <div className="flex gap-1 mb-5 border-b border-border-subtle pb-4 flex-wrap">
-          {TABS.map((t) => (
+        <div
+          role="tablist"
+          aria-label="Inventaris sumber daya"
+          onKeyDown={onTabKeyDown}
+          className="flex gap-1 mb-5 border-b border-border-subtle pb-4 flex-wrap"
+        >
+          {TABS.map((t, i) => (
             <button
               key={t.key}
+              ref={(node) => {
+                tabRefs.current[i] = node;
+              }}
+              role="tab"
+              id={`tab-${t.key}`}
+              aria-selected={tab === t.key}
+              aria-controls={`panel-${t.key}`}
+              tabIndex={tab === t.key ? 0 : -1}
               onClick={() => setTab(t.key)}
               className={`px-4 py-1.5 text-sm rounded-full transition-all duration-200 ${
                 tab === t.key
@@ -813,91 +910,22 @@ export default function AdminSettingsPage() {
           ))}
         </div>
 
-        {/* ── Mode ── */}
-        {tab === 'settings' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="lb-mode" className="text-sm text-secondary">
-                Mode
-              </label>
-              <select
-                id="lb-mode"
-                value={settings?.mode ?? 'off'}
-                onChange={(e) => updateSettings({ mode: e.target.value as 'off' | 'on' })}
-                className={`${inputCls} mt-1`}
-              >
-                <option value="off">Nonaktif</option>
-                <option value="on">Aktif</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="lb-impl" className="text-sm text-secondary">
-                Implementasi
-              </label>
-              <select
-                id="lb-impl"
-                value={settings?.implementation ?? 'custom'}
-                onChange={(e) => updateSettings({ implementation: e.target.value as 'native_cf' | 'custom' })}
-                className={`${inputCls} mt-1`}
-              >
-                <option value="custom">Custom (gratis)</option>
-                <option value="native_cf">Native CF LB</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="lb-steering" className="text-sm text-secondary">
-                Steering Policy
-              </label>
-              <input
-                id="lb-steering"
-                defaultValue={settings?.steering_policy ?? ''}
-                onBlur={(e) => updateSettings({ steering_policy: e.target.value })}
-                className={`${inputCls} mt-1`}
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label htmlFor="lb-interval" className="text-xs text-muted">
-                  Interval (s)
-                </label>
-                <input
-                  id="lb-interval"
-                  type="number"
-                  defaultValue={settings?.health_check_interval_sec ?? 30}
-                  onBlur={(e) => updateSettings({ health_check_interval_sec: Number(e.target.value) })}
-                  className={`${inputCls} mt-1`}
-                />
-              </div>
-              <div>
-                <label htmlFor="lb-timeout" className="text-xs text-muted">
-                  Timeout (ms)
-                </label>
-                <input
-                  id="lb-timeout"
-                  type="number"
-                  defaultValue={settings?.health_check_timeout_ms ?? 3000}
-                  onBlur={(e) => updateSettings({ health_check_timeout_ms: Number(e.target.value) })}
-                  className={`${inputCls} mt-1`}
-                />
-              </div>
-              <div>
-                <label htmlFor="lb-threshold" className="text-xs text-muted">
-                  Fail Threshold
-                </label>
-                <input
-                  id="lb-threshold"
-                  type="number"
-                  defaultValue={settings?.failure_threshold ?? 2}
-                  onBlur={(e) => updateSettings({ failure_threshold: Number(e.target.value) })}
-                  className={`${inputCls} mt-1`}
-                />
-              </div>
-            </div>
-          </div>
-        )}
+        <div role="tabpanel" id="panel-topology" aria-labelledby="tab-topology" hidden={tab !== 'topology'}>
+          <InventoryWarningBanner warnings={view.warnings} stale={view.stale} observedAt={view.observedAt} />
+          <TopologySection view={view} />
+        </div>
+        <div role="tabpanel" id="panel-d1" aria-labelledby="tab-d1" hidden={tab !== 'd1'}>
+          <D1Section view={view} />
+        </div>
+        <div role="tabpanel" id="panel-kv" aria-labelledby="tab-kv" hidden={tab !== 'kv'}>
+          <KVSection view={view} />
+        </div>
+        <div role="tabpanel" id="panel-b2" aria-labelledby="tab-b2" hidden={tab !== 'b2'}>
+          <B2Section view={view} />
+        </div>
 
-        {/* ── Akun ── */}
-        {tab === 'accounts' && (
+        <div role="tabpanel" id="panel-credentials" aria-labelledby="tab-credentials" hidden={tab !== 'credentials'}>
+          <InventoryWarningBanner warnings={view.warnings} stale={view.stale} observedAt={view.observedAt} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-4">
               <div className="bg-base/50 border border-border-subtle rounded-xl p-4 space-y-2">
@@ -906,18 +934,61 @@ export default function AdminSettingsPage() {
                   Membuat D1 + Worker baru otomatis di akun Cloudflare lain. Token memerlukan permission:
                   Workers Scripts:Edit, D1:Edit, KV:Edit, R2:Edit.
                 </p>
-                <form onSubmit={provisionAccount} className="space-y-2">
-                  <input name="provision_label" placeholder="Label akun" required className={inputCls} />
-                  <input name="provision_worker_name" placeholder="Nama worker (opsional)" className={inputCls} />
-                  <input
-                    name="provision_token"
-                    type="password"
-                    placeholder="CF API Token"
-                    required
-                    className={inputCls}
-                  />
-                  <button type="submit" disabled={provisioning} className={btnCls}>
-                    {provisioning ? 'Provisioning...' : 'Provision'}
+                <form onSubmit={provisionAccount} className="space-y-2" aria-busy={submittingProvision}>
+                  <div>
+                    <label htmlFor="provision-label" className={labelCls}>
+                      Nama akun
+                    </label>
+                    <input
+                      id="provision-label"
+                      value={provision.label}
+                      onChange={(e) => setProvision((p) => ({ ...p, label: e.target.value }))}
+                      placeholder="Nama akun (opsional)"
+                      className={`${inputCls} mt-1`}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="provision-worker" className={labelCls}>
+                      Nama worker
+                    </label>
+                    <input
+                      id="provision-worker"
+                      value={provision.workerName}
+                      onChange={(e) => setProvision((p) => ({ ...p, workerName: e.target.value }))}
+                      placeholder="Nama worker (opsional)"
+                      className={`${inputCls} mt-1`}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="provision-token" className={labelCls}>
+                      CF API Token
+                    </label>
+                    <input
+                      id="provision-token"
+                      value={provision.token}
+                      onChange={(e) => onProvisionToken(e.target.value)}
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="CF API Token"
+                      required
+                      className={`${inputCls} mt-1`}
+                    />
+                  </div>
+                  {provisionControl.kind === 'picker' && (
+                    <AccountPicker
+                      id="provision-account"
+                      choices={provisionControl.choices}
+                      value={provisionAccountId}
+                      onChange={setProvisionAccountId}
+                      required
+                    />
+                  )}
+                  <button type="submit" disabled={!provisionSubmit} className={btnCls}>
+                    {submittingProvision
+                      ? 'Provisioning...'
+                      : provisionControl.kind === 'picker'
+                        ? 'Kirim ulang dengan akun terpilih'
+                        : 'Provision'}
                   </button>
                 </form>
                 {provisionStatus && (
@@ -936,150 +1007,235 @@ export default function AdminSettingsPage() {
                     {provisionStatus.workerUrl && (
                       <div className="text-success break-all">Worker URL: {provisionStatus.workerUrl}</div>
                     )}
-                    {provisionStatus.error && <div className="text-error break-all">Error: {provisionStatus.error}</div>}
+                    {provisionStatus.error && (
+                      <div className="text-error break-all">Error: {provisionStatus.error}</div>
+                    )}
+                    {provisionStatus.status === 'completed' && <PendingTopologySteps />}
                   </div>
                 )}
               </div>
 
-              <form onSubmit={addAccount} className="bg-base/50 border border-border-subtle rounded-xl p-4 space-y-2">
+              <form
+                onSubmit={addAccount}
+                className="bg-base/50 border border-border-subtle rounded-xl p-4 space-y-2"
+                aria-busy={submittingAccount}
+              >
                 <h3 className="text-sm font-medium text-primary">Tambah akun</h3>
-                <input name="label" placeholder="Label" required className={inputCls} />
-                <select name="provider" className={inputCls} defaultValue="cloudflare">
-                  <option value="cloudflare">Cloudflare</option>
-                  <option value="vercel">Vercel</option>
-                </select>
-                <input name="account_ref" placeholder="Account / Team ID (opsional)" className={inputCls} />
-                <input name="rawToken" placeholder="API Token" required className={inputCls} />
-                <button type="submit" className={btnCls}>
-                  Tambah
+                <div>
+                  <label htmlFor="account-label" className={labelCls}>
+                    Nama akun
+                  </label>
+                  <input
+                    id="account-label"
+                    value={account.label}
+                    onChange={(e) => setAccount((a) => ({ ...a, label: e.target.value }))}
+                    placeholder="Nama akun (opsional)"
+                    className={`${inputCls} mt-1`}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="account-provider" className={labelCls}>
+                    Provider
+                  </label>
+                  <select
+                    id="account-provider"
+                    value={account.provider}
+                    onChange={(e) => {
+                      setAccount({ ...account, provider: e.target.value });
+                      setAccountAccountId('');
+                      setAccountChoices([]);
+                    }}
+                    className={`${inputCls} mt-1`}
+                  >
+                    <option value="cloudflare">Cloudflare</option>
+                    <option value="vercel">Vercel</option>
+                  </select>
+                </div>
+                {accountControl.kind === 'reference' && (
+                  <div>
+                    <label htmlFor="account-ref" className={labelCls}>
+                      Vercel account / team ID
+                    </label>
+                    <input
+                      id="account-ref"
+                      value={account.accountRef}
+                      onChange={(e) => setAccount((a) => ({ ...a, accountRef: e.target.value }))}
+                      maxLength={100}
+                      placeholder="Account / Team ID (opsional)"
+                      className={`${inputCls} mt-1`}
+                    />
+                    <p className={`${hintCls} mt-1`}>Maksimal 100 karakter.</p>
+                  </div>
+                )}
+                <div>
+                  <label htmlFor="account-token" className={labelCls}>
+                    API Token
+                  </label>
+                  <input
+                    id="account-token"
+                    value={account.token}
+                    onChange={(e) => onAccountToken(e.target.value)}
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="API Token"
+                    required
+                    className={`${inputCls} mt-1`}
+                  />
+                </div>
+                {accountControl.kind === 'picker' && (
+                  <AccountPicker
+                    id="account-picker"
+                    choices={accountControl.choices}
+                    value={accountAccountId}
+                    onChange={setAccountAccountId}
+                    required
+                  />
+                )}
+                <button type="submit" disabled={!accountSubmit} className={btnCls}>
+                  {submittingAccount
+                    ? 'Menyimpan...'
+                    : accountControl.kind === 'picker'
+                      ? 'Kirim ulang dengan akun terpilih'
+                      : 'Tambah'}
                 </button>
+              </form>
+
+              <form
+                onSubmit={addOrigin}
+                className="bg-base/50 border border-border-subtle rounded-xl p-4 space-y-2"
+                aria-busy={submittingOrigin}
+              >
+                <h3 className="text-sm font-medium text-primary">Tambah origin</h3>
+                <p className="text-xs text-muted leading-relaxed">
+                  Origin baru selalu dibuat nonaktif dan belum masuk trafik sampai topologi sinkron.
+                </p>
+                <div>
+                  <label htmlFor="origin-url" className={labelCls}>
+                    URL origin
+                  </label>
+                  <input
+                    id="origin-url"
+                    name="origin_url"
+                    type="url"
+                    placeholder="https://..."
+                    required
+                    className={`${inputCls} mt-1`}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="origin-account" className={labelCls}>
+                    Akun
+                  </label>
+                  <select id="origin-account" name="origin_account_id" className={`${inputCls} mt-1`} defaultValue="">
+                    <option value="">Tanpa akun</option>
+                    {originAccountOptions.map((row) => (
+                      <option key={row.accountId} value={row.accountId ?? ''}>
+                        {row.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label htmlFor="origin-priority" className={labelCls}>
+                      Priority
+                    </label>
+                    <input
+                      id="origin-priority"
+                      name="priority"
+                      type="number"
+                      min={0}
+                      defaultValue={0}
+                      className={`${inputCls} mt-1`}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label htmlFor="origin-weight" className={labelCls}>
+                      Weight
+                    </label>
+                    <input
+                      id="origin-weight"
+                      name="weight"
+                      type="number"
+                      min={1}
+                      defaultValue={1}
+                      className={`${inputCls} mt-1`}
+                    />
+                  </div>
+                </div>
+                <button type="submit" disabled={submittingOrigin} className={btnCls}>
+                  {submittingOrigin ? 'Menyimpan...' : 'Tambah'}
+                </button>
+                <PendingTopologySteps />
               </form>
             </div>
 
-            <div className="divide-y divide-border-subtle border border-border-subtle rounded-xl bg-base/50 max-h-[440px] overflow-y-auto">
-              {accounts.map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-primary truncate">{a.label}</span>
-                      <span className="text-[10px] px-2 py-0.5 border border-border-default rounded-full text-secondary">
-                        {a.provider}
-                      </span>
+            <div className="divide-y divide-border-subtle border border-border-subtle rounded-xl bg-base/50 max-h-[600px] overflow-y-auto self-start">
+              {credentials.map((row) => (
+                <div key={row.key} className="px-4 py-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-primary truncate">{row.label}</span>
+                        {row.provider && <span className={chipCls}>{row.provider}</span>}
+                        {row.topologyStatus === 'pending_topology' && (
+                          <span className={`${chipCls} text-accent border-accent/40`}>menunggu topologi</span>
+                        )}
+                      </div>
+                      <p className="text-muted text-[11px] tabular mt-0.5 break-all">
+                        {row.accountRef ?? row.accountId}
+                      </p>
                     </div>
-                    <span className="text-muted text-[11px] tabular">cf_****{a.token_last4}</span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span
-                      className={`text-[11px] ${a.status === 'verified' ? 'text-success' : 'text-error'}`}
-                    >
-                      {a.status}
-                    </span>
-                    <button
-                      onClick={() => testAccount(a.id)}
-                      className="text-[11px] text-secondary hover:text-primary transition-colors"
-                    >
-                      Tes
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {accounts.length === 0 && (
-                <div className="px-4 py-3 text-muted text-sm">Belum ada akun terdaftar.</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Origin pool ── */}
-        {tab === 'origins' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <form onSubmit={addOrigin} className="bg-base/50 border border-border-subtle rounded-xl p-4 space-y-2 h-fit">
-              <h3 className="text-sm font-medium text-primary">Tambah origin</h3>
-              <input name="origin_url" placeholder="https://..." required className={inputCls} />
-              <input name="account_id" placeholder="Account ID (opsional)" className={inputCls} />
-              <div className="flex gap-2">
-                <input
-                  name="priority"
-                  type="number"
-                  placeholder="Priority"
-                  defaultValue={0}
-                  className={`${inputCls} flex-1`}
-                />
-                <input
-                  name="weight"
-                  type="number"
-                  placeholder="Weight"
-                  defaultValue={1}
-                  className={`${inputCls} flex-1`}
-                />
-              </div>
-              <button type="submit" className={btnCls}>
-                Tambah
-              </button>
-            </form>
-
-            <div className="divide-y divide-border-subtle border border-border-subtle rounded-xl bg-base/50 max-h-[440px] overflow-y-auto">
-              {origins.map((o) => (
-                <div key={o.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-                  <div className="min-w-0">
-                    <div className="text-primary break-all text-[13px]">{o.origin_url}</div>
-                    <div className="text-muted text-[11px] tabular mt-0.5">
-                      P{o.priority} · W{o.weight}
-                      {o.last_checked_at ? ` · dicek ${fmtRel(o.last_checked_at)}` : ''}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-[11px] ${credentialTone(row.status)}`}>{row.status ?? '—'}</span>
+                      <button
+                        onClick={() => testAccount(row.accountId as string)}
+                        disabled={testingId !== null}
+                        className="text-[11px] text-secondary hover:text-primary transition-colors disabled:opacity-50"
+                      >
+                        {testingId === row.accountId ? 'Menguji...' : 'Tes'}
+                      </button>
                     </div>
                   </div>
-                  <span
-                    className={`text-[11px] shrink-0 ${
-                      o.enabled === 1 ? 'text-success' : 'text-muted'
-                    }`}
-                  >
-                    {o.enabled === 1 ? 'ON' : 'OFF'}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-[10px] text-muted">
+                    {row.accountId && testResults[row.accountId] && (
+                      <span className="text-secondary">{testResults[row.accountId]}</span>
+                    )}
+                    <span>Tes terakhir: {fmtRel(row.lastTestedAt)}</span>
+                  </div>
+                  {row.origins.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5">
+                      {row.origins.map((origin) => (
+                        <li
+                          key={origin.id ?? origin.url ?? 'origin'}
+                          className="flex items-center justify-between gap-2 text-[10px] text-muted"
+                        >
+                          <span className="truncate" title={origin.url ?? ''}>
+                            {origin.url === null ? '—' : hostOf(origin.url)}
+                          </span>
+                          <span className="tabular shrink-0">
+                            P{origin.priority ?? '—'} · W{origin.weight ?? '—'} ·{' '}
+                            {origin.enabled === 1 ? 'aktif' : 'nonaktif'} ·{' '}
+                            {origin.lastHealthStatus ?? 'belum dicek'}
+                            {origin.lastCheckedAt ? ` · dicek ${fmtRel(origin.lastCheckedAt)}` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               ))}
-              {origins.length === 0 && (
-                <div className="px-4 py-3 text-muted text-sm">Belum ada origin terdaftar.</div>
+              {credentials.length === 0 && (
+                <div className="px-4 py-3 text-muted text-sm">
+                  {query ? 'Tidak ada kredensial yang cocok dengan pencarian.' : 'Belum ada kredensial terdaftar.'}
+                </div>
               )}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* ── Status ── */}
-        {tab === 'status' && (
-          <div>
-            <div className="mb-4 flex flex-wrap gap-x-6 gap-y-1 text-sm">
-              <span>
-                <span className="text-secondary">Mode: </span>
-                <span className="text-primary">{status?.mode ?? '—'}</span>
-              </span>
-              <span>
-                <span className="text-secondary">Implementasi: </span>
-                <span className="text-primary">{status?.implementation ?? '—'}</span>
-              </span>
-            </div>
-            <div className="divide-y divide-border-subtle">
-              {(status?.origins ?? []).map((o) => (
-                <div key={o.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                  <span className="text-primary break-all text-[13px]">{o.origin_url}</span>
-                  <span
-                    className={`text-[11px] shrink-0 ${
-                      o.last_health_status === 'healthy'
-                        ? 'text-success'
-                        : o.last_health_status === 'unhealthy'
-                          ? 'text-error'
-                          : 'text-muted'
-                    }`}
-                  >
-                    {o.last_health_status ?? 'belum dicek'}
-                    {o.last_checked_at ? ` · ${fmtRel(o.last_checked_at)}` : ''}
-                  </span>
-                </div>
-              ))}
-              {(status?.origins?.length ?? 0) === 0 && (
-                <div className="py-3 text-muted text-sm">Belum ada origin terdaftar.</div>
-              )}
-            </div>
-          </div>
+        {!inventory && !banners.inventory && (
+          <EmptyState>Belum ada inventaris. Muat ulang untuk mengambil snapshot sumber daya.</EmptyState>
         )}
       </div>
     </main>

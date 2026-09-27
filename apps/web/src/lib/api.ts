@@ -14,6 +14,40 @@ const envPublic = (key: string): string => {
   return v;
 };
 
+// Service-token BFF gate (API hardening): secret dibaca SSR-only dari
+// process.env (dashboard Worker → Variables / `wrangler secret put` — BUKAN
+// PUBLIC_*, jadi tidak pernah di-inline ke client bundle). Nilai harus sama
+// dengan SERVICE_TOKEN yang di-set di semua worker API. Browser (client
+// island) tidak mengirim token — akses publik diselesaikan API via Origin
+// allowlist / cookie / Turnstile.
+export const serviceHeaders = (): Record<string, string> => {
+  if (typeof window !== 'undefined') return {};
+  const g = globalThis as { __SERVICE_TOKEN__?: string };
+  const tok =
+    g.__SERVICE_TOKEN__ ?? (typeof process !== 'undefined' ? process.env?.SERVICE_TOKEN : undefined);
+  return tok ? { 'x-service-token': tok } : {};
+};
+
+// Host/Origin API untuk CSP connect-src. Dinamis: derive dari
+// PUBLIC_API_ORIGINS (CSV origin lengkap, e.g.
+// "https://a.tld,https://b.tld"). Fallback = 4 host default saat ini agar
+// output identik sebelum var dibalik. Dipakai middleware.ts (SSR) — JANGAN
+// diimport dari client bundle (berisi scheme penuh, aman utk CSP).
+const DEFAULT_API_CSP_ORIGINS = [
+  'https://manga-api.oktz.workers.dev',
+  'https://manga-api-2.tzok5555.workers.dev',
+  'https://manga-api-3.dwikaoktyffan.workers.dev',
+  'https://manga-api-4.oktznih.workers.dev',
+];
+
+export const apiCspHosts = (): string[] => {
+  const raw = envPublic('PUBLIC_API_ORIGINS')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return raw.length > 0 ? raw : [...DEFAULT_API_CSP_ORIGINS];
+};
+
 // API_URL: worker API utama. Production via PUBLIC_API_URL (Pages env).
 export const API_URL = envPublic('PUBLIC_API_URL') || 'http://localhost:8787';
 
@@ -93,10 +127,15 @@ export interface Chapter {
 // triggering a 502 when the Worker API is slow on cold KV cache.
 async function api<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
+    headers: serviceHeaders(),
     cache: 'no-store',
     signal: AbortSignal.timeout(12000),
   });
-  if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
+  if (!res.ok) {
+    let body = '';
+    try { body = (await res.clone().text()).slice(0, 160); } catch {}
+    throw new Error(`API ${path} → ${res.status} ${body}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -353,6 +392,7 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
     if (state && state.until > now) continue; // circuit open → skip
     try {
       const res = await fetch(`${origin.url}${path}`, {
+        headers: serviceHeaders(),
         signal: AbortSignal.timeout(8000),
       });
       if (res.status === 429 || res.status >= 500) {
@@ -372,8 +412,6 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
   }
   return api<T>(path); // semua origin gagal → main API
 }
-
-// ---- Auth (Google OAuth via /api/auth/google/login) ------------------------
 import type { UserPreferences, MeResponse } from '@manga-platform/shared/types';
 
 export type { UserPreferences };

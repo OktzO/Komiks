@@ -1,4 +1,7 @@
 /*
+  # NOTE(static): _headers tidak bisa template. connect-src di bawah = snapshot 4
+  # host API. Kalau PUBLIC_API_ORIGINS berubah (dynamic-N), sync manual blok
+  # Content-Security-Policy ini dgn middleware.ts (apiCspHosts di lib/api.ts).
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: no-referrer

@@ -3,6 +3,7 @@
 // Topbar client island untuk pathname-based active state.
 import { ClientRouter } from 'astro:transitions';
 import AdminTopbar from '@/components/pages/AdminTopbar';
+import ThemeInit from '@/components/ThemeInit.astro';
 import '../styles/global.css';
 
 export interface Props {
@@ -13,9 +14,10 @@ const { title } = Astro.props;
 ---
 
 <!doctype html>
-<html lang="id" class="dark">
+<html lang="id">
   <head>
     <meta charset="utf-8" />
+    <ThemeInit />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{`${title} - Oktz. Admin`}</title>
     <meta name="robots" content="noindex, nofollow" />

@@ -65,7 +65,7 @@ export function BentoGrid({ items }: BentoGridProps) {
                   src={featured.cover_image}
                   alt=""
                   className="w-full h-full object-cover opacity-25 filter blur-xl scale-110 transition-transform duration-700 group-hover:scale-125"
-                  loading="lazy" {...NO_REF}
+                  loading="lazy" decoding="async" {...NO_REF}
                 />
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-bg-base via-bg-base/80 to-transparent" />

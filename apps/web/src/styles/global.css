@@ -50,41 +50,133 @@
   --font-geist-mono: 'Geist Mono';
 }
 
+/* ══ Token: sistem 60-30-10 ══════════════════════════════════════════
+   60% kanvas (--bg-base/sunken) · 30% struktur (card/elevated/secondary +
+   text-secondary/muted) · 10% aksen (--accent* + status).
+   Nama token tidak pernah berubah → 60+ file komponen ikut theme gratis.
+   ══════════════════════════════════════════════════════════════════════ */
+
 :root {
-  /* ── Surface ladder (satu keluarga zinc-biru gelap, tanpa flip warm/cool) ── */
-  --bg-base: oklch(10% 0.008 262);        /* zinc-950 tinted */
-  --bg-elevated: oklch(14% 0.008 262);
-  --bg-card: oklch(13.5% 0.008 262);
-  --bg-secondary: oklch(18.5% 0.01 262);
-  --bg-sunken: oklch(8% 0.006 262);
+  --font-geist-sans: 'Geist';
+  --font-geist-mono: 'Geist Mono';
 
-  /* ── Border scale: SATU sistem 3 tingkat, dipakai konsisten semua page ── */
-  --border-subtle: oklch(100% 0 0 / 0.07);
-  --border-default: oklch(100% 0 0 / 0.13);
-  --border-strong: oklch(100% 0 0 / 0.22);
+  color-scheme: dark;
 
-  /* ── Text ladder ── */
-  --text-primary: oklch(97% 0.005 262);
-  --text-secondary: oklch(72% 0.01 262);
-  --text-muted: oklch(52% 0.008 262);
+  --bg-base: oklch(11.5% 0.006 265);
+  --bg-sunken: oklch(8.5% 0.005 265);
+  --bg-card: oklch(14.5% 0.006 265);
+  --bg-elevated: oklch(17% 0.007 265);
+  --bg-secondary: oklch(21% 0.008 265);
 
-  /* ── Aksen: vermilion-orange (satu aksen, lock seluruh situs) ── */
-  --accent: oklch(71.5% 0.178 43);
-  --accent-hover: oklch(76% 0.175 43);
-  --accent-soft: oklch(71.5% 0.178 43 / 0.14);
-  --accent-border: oklch(71.5% 0.178 43 / 0.35);
-  --accent-ink: oklch(15% 0.02 43);       /* teks di atas tombol aksen */
+  --border-subtle: oklch(100% 0 0 / 0.08);
+  --border-default: oklch(100% 0 0 / 0.15);
+  --border-strong: oklch(100% 0 0 / 0.26);
 
-  --success: oklch(70% 0.16 155);
-  --error: oklch(66% 0.19 25);
+  --text-primary: oklch(98% 0.003 265);
+  --text-secondary: oklch(79% 0.007 265);
+  --text-muted: oklch(67% 0.008 265);
 
+  --accent: oklch(72% 0.175 45);
+  --accent-hover: oklch(77% 0.17 45);
+  --accent-soft: oklch(72% 0.175 45 / 0.16);
+  --accent-border: oklch(72% 0.175 45 / 0.42);
+  --accent-ink: oklch(16% 0.03 45);
+
+  --success: oklch(74% 0.16 155);
+  --warning: oklch(78% 0.13 80);
+  --error: oklch(70% 0.19 25);
+
+  --surface-solid: oklch(16% 0.006 265);
+  --nav-solid: oklch(14% 0.006 265 / 0.94);
+
+  --glass-surface: oklch(15% 0.006 265 / 0.72);
+  --glass-border: oklch(100% 0 0 / 0.15);
+
+  --decor-wash: oklch(100% 0 0 / 0.028);
+  --decor-veil: oklch(100% 0 0 / 0.05);
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-base: oklch(97.5% 0.004 85);
+  --bg-sunken: oklch(93.5% 0.005 85);
+  --bg-card: oklch(100% 0 0);
+  --bg-elevated: oklch(99% 0.002 85);
+  --bg-secondary: oklch(94% 0.006 85);
+
+  --border-subtle: oklch(23% 0.012 265 / 0.09);
+  --border-default: oklch(23% 0.012 265 / 0.16);
+  --border-strong: oklch(23% 0.012 265 / 0.3);
+
+  --text-primary: oklch(23% 0.012 265);
+  --text-secondary: oklch(44% 0.011 265);
+  --text-muted: oklch(54% 0.01 265);
+
+  --accent: oklch(55% 0.17 45);
+  --accent-hover: oklch(50% 0.17 45);
+  --accent-soft: oklch(55% 0.17 45 / 0.12);
+  --accent-border: oklch(55% 0.17 45 / 0.4);
+  --accent-ink: oklch(99% 0 0);
+
+  --success: oklch(48% 0.13 155);
+  --warning: oklch(52% 0.12 70);
+  --error: oklch(52% 0.19 25);
+
+  --surface-solid: oklch(100% 0 0);
+  --nav-solid: oklch(100% 0 0 / 0.94);
+
+  --glass-surface: oklch(100% 0 0 / 0.8);
+  --glass-border: oklch(23% 0.012 265 / 0.14);
+
+  --decor-wash: oklch(23% 0.012 265 / 0.03);
+  --decor-veil: oklch(23% 0.012 265 / 0.05);
+}
+
+[data-theme='orange'] {
+  color-scheme: dark;
+
+  --bg-base: oklch(16.5% 0.026 42);
+  --bg-sunken: oklch(12.5% 0.022 42);
+  --bg-card: oklch(20% 0.03 42);
+  --bg-elevated: oklch(23.5% 0.032 42);
+  --bg-secondary: oklch(27.5% 0.034 42);
+
+  --border-subtle: oklch(97% 0.014 70 / 0.1);
+  --border-default: oklch(97% 0.014 70 / 0.17);
+  --border-strong: oklch(97% 0.014 70 / 0.3);
+
+  --text-primary: oklch(97% 0.014 70);
+  --text-secondary: oklch(85% 0.03 65);
+  --text-muted: oklch(74% 0.036 55);
+
+  --accent: oklch(85% 0.145 78);
+  --accent-hover: oklch(89% 0.14 78);
+  --accent-soft: oklch(85% 0.145 78 / 0.16);
+  --accent-border: oklch(85% 0.145 78 / 0.4);
+  --accent-ink: oklch(20% 0.05 42);
+
+  --success: oklch(76% 0.15 150);
+  --warning: oklch(82% 0.13 80);
+  --error: oklch(72% 0.17 28);
+
+  --surface-solid: oklch(22% 0.03 42);
+  --nav-solid: oklch(19% 0.03 42 / 0.94);
+
+  --glass-surface: oklch(21% 0.03 42 / 0.78);
+  --glass-border: oklch(97% 0.014 70 / 0.16);
+
+  --decor-wash: oklch(97% 0.014 70 / 0.03);
+  --decor-veil: oklch(97% 0.014 70 / 0.05);
+}
+
+:root {
   /* ── Shape lock: controls=pill, cards=14px, panels=16px, inner=8px ── */
   --radius: 14px;
   --radius-panel: 16px;
   --radius-inner: 8px;
+  --measure: 68ch;
 
-  --glass-surface: oklch(13% 0.008 262 / 0.7);
-  --glass-border: oklch(100% 0 0 / 0.14);
   --nav-width-rest: min(100vw, 100%);
   --nav-width-active: min(720px, calc(100vw - 28px));
 }
@@ -99,7 +191,6 @@
 html, body {
   background: var(--bg-base);
   color: var(--text-primary);
-  color-scheme: dark;
   font-family: var(--font-geist-sans), 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -164,13 +255,10 @@ a:hover { color: var(--accent); }
   }
 }
 @media (max-width: 767px) {
-  /* Fixed full-width backdrop-filter = repaint seluruh layar tiap frame
-     scroll di Android Chrome. Mobile: solid semi-opaque, look sama di
-     dark theme, scroll jadi compositor-only. Blur tetap di md+. */
   .nav-island {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-    background: oklch(14% 0 0 / 0.92);
+    background: var(--nav-solid);
   }
 }
 
@@ -253,8 +341,8 @@ a:hover { color: var(--accent); }
 .hamburger[aria-expanded="true"] .bars span:nth-child(1) { transform: translateY(-50%) rotate(45deg); }
 .hamburger[aria-expanded="true"] .bars span:nth-child(2) { transform: translateY(-50%) rotate(-45deg); }
 
-/* Menu card floating di bawah hamburger (kanan) */
-#nav-menu {
+
+#nav-menu, #admin-menu {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
@@ -273,20 +361,20 @@ a:hover { color: var(--accent); }
   transition: opacity 0.2s ease-out, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   z-index: 60;
 }
-#nav-menu.open {
+#nav-menu.open, #admin-menu.open {
   opacity: 1;
   transform: translateY(0) scale(1);
   pointer-events: auto;
 }
-#nav-menu a {
+#nav-menu a, #admin-menu a {
   display: block;
   border-radius: 0.75rem;
   min-height: 40px;
 }
 
-/* Mobile: nav-menu spans full width below navbar island. */
+/* Mobile: menu spans full width below navbar island. */
 @media (max-width: 767px) {
-  #nav-menu {
+  #nav-menu, #admin-menu {
     position: fixed;
     top: calc(56px + 12px);
     left: 16px;
@@ -297,15 +385,19 @@ a:hover { color: var(--accent); }
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 0.75rem;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: var(--surface-solid);
   }
-  #nav-menu a,
-  #nav-menu button {
+  #nav-menu a, #nav-menu button,
+  #admin-menu a, #admin-menu button {
     padding: 12px 16px;
     font-size: 16px; /* prevent iOS zoom on focus */
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  #navbar, #navbar .nav-island, .hamburger .bars span, #nav-menu { transition: none !important; }
+  #navbar, #navbar .nav-island, .hamburger .bars span, #nav-menu,
+  #admin-navbar, #admin-navbar .nav-island, #admin-menu { transition: none !important; }
 }
 
 /* ── Reader chrome: top bar + bottom toolbox + daftar chapter sheet ──
@@ -426,15 +518,20 @@ a:hover { color: var(--accent); }
   max-height: 72vh;
   display: flex;
   flex-direction: column;
-  background: var(--glass-surface);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  backdrop-filter: blur(24px) saturate(180%);
+  background: var(--surface-solid);
   border-top: 1px solid var(--glass-border);
   border-radius: 1.5rem 1.5rem 0 0;
   padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
   transform: translateY(105%);
   transition: transform 0.34s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: transform;
+}
+@media (min-width: 768px) {
+  .reader-sheet {
+    background: var(--glass-surface);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+  }
 }
 .reader-sheet.open { transform: translateY(0); }
 .reader-sheet .sheet-list {
@@ -455,7 +552,7 @@ a:hover { color: var(--accent); }
 .skeleton {
   position: relative;
   overflow: hidden;
-  background: oklch(14% 0 0);
+  background: var(--bg-secondary);
   border-radius: var(--radius);
 }
 .skeleton::after {
@@ -465,7 +562,10 @@ a:hover { color: var(--accent); }
   bottom: 0;
   left: -100%;
   width: 200%;
-  background: linear-gradient(90deg, oklch(14% 0 0) 25%, oklch(20% 0 0) 50%, oklch(14% 0 0) 75%);
+  background: linear-gradient(90deg,
+    var(--bg-secondary) 25%,
+    var(--bg-elevated) 50%,
+    var(--bg-secondary) 75%);
   animation: shimmer-sweep 0.8s linear infinite;
   will-change: transform;
 }
@@ -518,7 +618,8 @@ a:hover { color: var(--accent); }
   width: 10px;
   height: 10px;
   border-radius: 9999px;
-  border: 1.5px solid oklch(70% 0 0 / 0.35);
+  border: 1.5px solid var(--border-default);
+  border-top-color: var(--text-muted);
   border-top-color: var(--accent);
   animation: src-spin 0.6s linear infinite;
   flex: 0 0 auto;
@@ -631,7 +732,7 @@ a:hover { color: var(--accent); }
   display: inline-block;
 }
 .status-dot.healthy { background: var(--success); }
-.status-dot.degraded { background: oklch(70% 0.12 75); }
+.status-dot.degraded { background: var(--warning); }
 .status-dot.down { background: var(--error); }
 .status-dot.unknown { background: var(--text-muted); }
 .status-dot.live { animation: pulse-soft 1.8s ease-in-out infinite; }
@@ -651,7 +752,7 @@ a:hover { color: var(--accent); }
 
 /* ── Modern Bento & Spotlight Landing Page Enhancements ── */
 .radial-ambient {
-  background: radial-gradient(ellipse 80% 50% at 50% -20%, oklch(98% 0 0 / 0.08), transparent 70%);
+  background: radial-gradient(ellipse 80% 50% at 50% -20%, var(--decor-wash), transparent 70%);
 }
 
 .bento-card {
@@ -674,7 +775,7 @@ a:hover { color: var(--accent); }
 
 .bento-featured-card {
   position: relative;
-  background: linear-gradient(180deg, oklch(14% 0 0) 0%, oklch(10% 0 0) 100%);
+  background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-sunken) 100%);
   border: 1px solid var(--border-default);
   border-radius: var(--radius);
   overflow: hidden;
@@ -682,13 +783,13 @@ a:hover { color: var(--accent); }
 }
 
 .bento-featured-card:hover {
-  border-color: oklch(100% 0 0 / 0.3);
-  box-shadow: 0 16px 40px -12px oklch(0% 0 0 / 0.7),
-              0 0 24px -6px oklch(100% 0 0 / 0.06);
+  border-color: var(--border-strong);
+  box-shadow: 0 16px 40px -12px oklch(0% 0 0 / 0.5),
+              0 0 24px -6px var(--decor-veil);
 }
 
 .glass-pill {
-  background: oklch(100% 0 0 / 0.04);
+  background: var(--decor-veil);
   border: 1px solid var(--border-subtle);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -696,7 +797,7 @@ a:hover { color: var(--accent); }
 }
 
 .glass-pill:hover {
-  background: oklch(100% 0 0 / 0.08);
+  background: var(--decor-wash);
   border-color: var(--border-default);
 }
 
@@ -752,7 +853,7 @@ a:hover { color: var(--accent); }
   color: var(--text-primary);
   border-color: var(--border-default);
 }
-.btn-secondary:hover:not(:disabled) { border-color: var(--border-strong); background: oklch(22% 0.01 262); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-secondary); }
 
 .btn-ghost {
   background: transparent;
@@ -786,6 +887,8 @@ a:hover { color: var(--accent); }
   color: var(--text-muted);
 }
 
+.measure { max-width: var(--measure); }
+
 /* Hiasan latar: grid halus + glow aksen (pointer-events none) */
 .page-decoration {
   position: absolute;
@@ -799,8 +902,8 @@ a:hover { color: var(--accent); }
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(oklch(100% 0 0 / 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, oklch(100% 0 0 / 0.025) 1px, transparent 1px);
+    linear-gradient(var(--decor-wash) 1px, transparent 1px),
+    linear-gradient(90deg, var(--decor-wash) 1px, transparent 1px);
   background-size: 56px 56px;
   mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 75%);
   -webkit-mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, black 25%, transparent 75%);
@@ -814,7 +917,7 @@ a:hover { color: var(--accent); }
   height: 420px;
   transform: translateX(-50%);
   background: radial-gradient(ellipse, color-mix(in oklab, var(--accent) 9%, transparent), transparent 70%);
-  filter: blur(20px);
+  filter: blur(14px);
 }
 
 
@@ -840,57 +943,6 @@ img[data-broken] { visibility: hidden; }
               border-radius 0.32s cubic-bezier(0.22, 1, 0.36, 1),
               background-color 0.2s,
               border-color 0.2s;
-}
-#admin-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  min-width: 220px;
-  max-width: calc(100vw - 32px);
-  padding: 0.5rem;
-  background-color: var(--glass-surface);
-  border: 1px solid var(--glass-border);
-  border-radius: 1.25rem;
-  -webkit-backdrop-filter: blur(18px) saturate(180%);
-  backdrop-filter: blur(18px) saturate(180%);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-  opacity: 0;
-  transform: translateY(-8px) scale(0.98);
-  pointer-events: none;
-  transition: opacity 0.2s ease-out, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-  z-index: 60;
-}
-#admin-menu.open {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-  pointer-events: auto;
-}
-#admin-menu a {
-  display: block;
-  border-radius: 0.75rem;
-  min-height: 40px;
-}
-@media (max-width: 767px) {
-  #admin-menu {
-    position: fixed;
-    top: calc(56px + 12px);
-    left: 16px;
-    right: 16px;
-    min-width: 0;
-    width: auto;
-    max-height: calc(100vh - 80px);
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding: 0.75rem;
-  }
-  #admin-menu a,
-  #admin-menu button {
-    padding: 12px 16px;
-    font-size: 16px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  #admin-navbar, #admin-navbar .nav-island, #admin-menu { transition: none !important; }
 }
 
 /* Fix: warna `base` di theme (bg-base) membuat Tailwind mengeluarkan utilitas

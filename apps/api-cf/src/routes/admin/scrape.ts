@@ -144,6 +144,8 @@ router.post('/scrape', requireAdminKey, async (c: Context) => {
           lastScrapedAt: Math.floor(Date.now() / 1000),
         });
       }
+      // Persist sources chapter catalog (sumber "chapter tersimpan" admin).
+      await db.upsertChapters({ seriesSlug: finalSlug, chapters: result.chapters }).catch(() => {});
 
       // Migrate chapter rows to the canonical slug when merged.
       if (!isNew && finalSlug !== srcSlug) {

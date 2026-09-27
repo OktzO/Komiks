@@ -45,7 +45,7 @@ export function SourceBadge({ sources, size = 'sm', primary }: { sources?: strin
             s === primary ? 'ring-2 ring-accent' : 'ring-1 ring-white/15'
           }`}
         >
-          <img src={SOURCE_ICONS[s]} alt={SOURCE_LABELS[s] ?? s} className="h-full w-full object-cover" loading="lazy" />
+          <img src={SOURCE_ICONS[s]} alt={SOURCE_LABELS[s] ?? s} className="h-full w-full object-cover" loading="lazy" decoding="async" />
         </span>
       ))}
       {overflow > 0 && (

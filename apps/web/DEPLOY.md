@@ -39,6 +39,7 @@ SUDAH DIHAPUS (2026-09-15) — satu-satunya web worker: `manga-web`.
 | `PUBLIC_SITE_URL` | `https://oktzz.xyz` | fallback image proxy base |
 | `PUBLIC_AUTH_API_URL` | `https://manga-api-2.tzok5555.workers.dev` | auth origin (akun-2) |
 | `PUBLIC_TURNSTILE_SITE_KEY` | (site key Turnstile) | unset → widget login disembunyikan |
+| `SERVICE_TOKEN` | `openssl rand -hex 24` | **secret**, bukan var: BFF gate api.ts `serviceHeaders()` (SSR-only) |
 
 **PENTING — PUBLIC_* di-inline saat build.** Env var di dashboard hanya
 berlaku untuk nilai SSR runtime (`process.env`); nilai yang dibaca di client
@@ -48,6 +49,43 @@ di CI build environment** (atau `.env.local` saat build lokal), bukan hanya
 di dashboard. Di GitHub Actions: secrets → env pada step build.
 
 `.env.local` (gitignored) dipakai dev + build lokal. Jangan commit.
+
+## Service-token BFF gate (API hardening)
+
+API worker (api-cf) kini punya `serviceGateMw` (lib/serviceGate.ts): request
+`/api/*` tanpa jalur sah (service token / Origin allowlist / session cookie /
+Turnstile untuk tier SENSITIVE) ditolak 403. Panggilan **SSR** web → API wajib
+membawa header `x-service-token` (di-attach otomatis oleh `serviceHeaders()`
+di `src/lib/api.ts` + `sitemap.xml.ts`); **client island TIDAK** mengirim token.
+
+Cara set — dua command **terpisah**, masing-masing dari repo root (jangan
+menyalin dalam satu shell berurutan: `cd` pertama membuat `cd` berikutnya
+salah folder):
+```bash
+# 1. tiap worker API (ulang sekali per config)
+cd apps/api-cf && npx wrangler secret put SERVICE_TOKEN
+```
+```bash
+# 2. worker web manga-web (config di-generate saat astro build)
+cd apps/web && npx wrangler --config dist/server/wrangler.json secret put SERVICE_TOKEN
+```
+> Tidak ada `apps/web/wrangler.jsonc` — wrangler config di-generate otomatis
+> (`dist/server/wrangler.json`) saat `astro build`. Token jadi secret binding
+> `process.env.SERVICE_TOKEN` di SSR runtime. Jika tidak di-set, SSR web hanya
+> bisa menjangkau tier PUBLIC-READ (via server → tapi tanpa Origin/cookie juga
+> 403), jadi **set dulu sebelum deploy gate**.
+
+Tier gate (ringkas):
+- **EXEMPT**: `/api/health`, `/api/origins`, `/api/auth/*`, `/api/_internal/*`,
+  `/api/scrape`, `/img/*`, legacy `/api/reader/:source/page/:chapterId/:pageNo`.
+- **PUBLIC-READ**: `/api/search*`, `/api/series*`, `/api/homepage`, `/api/reader*`
+  (non-page), `/api/manga`, `/api/source-status`, GET `/api/user/*`
+  → token / Origin / cookie. `/api/search` sengaja di tier ini supaya pencarian
+  tetap jalan buat tamu (client-island memanggilnya langsung).
+- **SENSITIVE**: `/api/resolve`, `/api/identify`, `/api/admin/*`,
+  mutasi `/api/user/*` → token / cookie / Turnstile (`?turnstile_token=` atau
+  header `x-turnstile-token`).
+- lain-lain `/api/*` → 403.
 
 ## Custom domain (kondisi saat ini)
 

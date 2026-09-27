@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
+import ThemeInit from '@/components/ThemeInit.astro';
 
 // Shell untuk 404 yang dirender inline dari route reader/detail — sama
 // struktur head + body class seperti halaman reader (tanpa navbar).
@@ -12,9 +13,10 @@ const { title } = Astro.props;
 ---
 
 <!doctype html>
-<html lang="id" class="dark">
+<html lang="id">
   <head>
     <meta charset="utf-8" />
+    <ThemeInit />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{`${title} - Oktz.`}</title>
     <meta name="robots" content="noindex, nofollow" />

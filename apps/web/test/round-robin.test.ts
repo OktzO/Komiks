@@ -3,13 +3,19 @@
 //  T2 client: sessionStorage cursor rotation unchanged (no regression)
 //  T3 server: circuit-open origin is skipped BEFORE random selection
 //  T4 server: all origins open -> falls back to main API, no hard error
-// Run: bun apps/web/test/round-robin.test.ts
+// RUN: bun apps/web/test/round-robin.test.ts   |   N-agnostik: satukan TEST_ORIGINS=N (N≥3).
+// N<3 tidak bermakna utk round-robin/failover (T3 butuh ORIGINS[2], T2 butuh ≥2) → skip bersih.
 import assert from 'node:assert/strict';
 
 delete (globalThis as any).sessionStorage; // server-like env initially
 delete (globalThis as any).window;
 
-const ORIGINS = ['https://w0.test', 'https://w1.test', 'https://w2.test', 'https://w3.test'];
+const N_ORIGINS = Number(process.env.TEST_ORIGINS ?? 4);
+if (N_ORIGINS < 3) {
+  console.log(`skip: round-robin test butuh N≥3 origin (TEST_ORIGINS=${N_ORIGINS})`);
+  process.exit(0);
+}
+const ORIGINS = Array.from({ length: N_ORIGINS }, (_, i) => `https://w${i}.test`);
 const hits: Record<string, number> = {};
 const injectedFails: Record<string, number> = {}; // origin -> remaining 500s to inject
 
@@ -75,8 +81,15 @@ for (let i = 0; i < 12; i++) {
   await apiWithFailover(PATH);
   clientHits[seq[seq.length - 1]] = (clientHits[seq[seq.length - 1]] ?? 0) + 1;
 }
-assert.deepEqual(clientHits, { 'https://w0.test': 3, 'https://w1.test': 3, 'https://w2.test': 3, 'https://w3.test': 3 });
-assert.ok(seq[0] === ORIGINS[1], `T2 FAIL: cursor should start at index 1 (prev=null -> 1), got ${seq[0]}`);
+// N-agnostik: 12 request rotasi merata → setiap origin ke-cover, selisih
+// hit antar-origin ≤ 1 (round-robin murni). Untuk N besar (≥12) tetap valid:
+// counts ∈ {floor(12/N), ceil(12/N)}.
+for (const o of ORIGINS) {
+  assert.ok((clientHits[o] ?? 0) > 0, `T2 FAIL: origin ${o} tidak tersentuh (clientHits=${JSON.stringify(clientHits)})`);
+}
+const cVals = Object.values(clientHits);
+assert.ok(Math.max(...cVals) - Math.min(...cVals) <= 1, `T2 FAIL: spread >1: ${JSON.stringify(clientHits)}`);
+assert.ok(seq[0] === ORIGINS[1 % N_ORIGINS], `T2 FAIL: cursor should start at index 1 (prev=null -> 1), got ${seq[0]}`);
 for (let i = 0; i < seq.length - 1; i++) {
   assert.ok(seq[i] !== seq[i + 1], 'T2 FAIL: consecutive requests hit the same origin');
 }
@@ -134,12 +147,15 @@ for (let i = 0; i < 600; i++) {
   assert.ok(origin !== MAIN, 'T5 FAIL: main API origin (akun-1) must be excluded');
   seen[origin] = (seen[origin] ?? 0) + 1;
 }
-assert.ok(Object.keys(seen).length === 4, `T5 FAIL: expected 4 non-main origins, got ${Object.keys(seen).length}`);
+assert.ok(
+  Object.keys(seen).length === N_ORIGINS,
+  `T5 FAIL: expected ${N_ORIGINS} non-main origins, got ${Object.keys(seen).length}`
+);
 const vals = Object.values(seen);
 assert.ok(Math.min(...vals) / Math.max(...vals) > 0.3, 'T5 FAIL: distribution skew too high');
 assert.equal(imgOriginFor('/img/komiku/ch-1/1'), imgOriginFor('/img/komiku/ch-1/1'), 'T5 FAIL: same path must map to same origin');
 assert.notEqual(imgOriginFor('/img/komiku/ch-1/1', 1), imgOriginFor('/img/komiku/ch-1/1', 0), 'T5 FAIL: retry should shift to another origin');
-console.log(`T5 PASS - imgOriginFor: 4 origins (main excluded), dist=${JSON.stringify(seen)}, retry shifts\n`);
+console.log(`T5 PASS - imgOriginFor: ${N_ORIGINS} origins (main excluded), dist=${JSON.stringify(seen)}, retry shifts\n`);
 (globalThis as any).sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
 console.log('\nALL TESTS PASSED');

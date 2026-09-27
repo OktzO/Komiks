@@ -105,6 +105,7 @@ export const LbAccountSchema = z.object({
   encrypted_token: z.instanceof(ArrayBuffer).or(z.instanceof(Uint8Array)),
   token_last4: z.string().length(4),
   status: z.enum(['verified', 'unverified', 'failed']).default('unverified'),
+  last_tested_at: z.number().int().nullable().optional(),
   created_by: z.number().int().positive().nullable().optional(),
   created_at: z.number().int().optional()
 });
@@ -127,6 +128,138 @@ export const LbOriginSchema = z.object({
   created_at: z.number().int().optional()
 });
 export type LbOrigin = z.infer<typeof LbOriginSchema>;
+
+export const ResourceStatus = z.enum(['ok', 'degraded', 'unavailable']);
+export type ResourceStatus = z.infer<typeof ResourceStatus>;
+
+export const ResourceSource = z.enum(['live', 'local', 'tracked', 'derived', 'unavailable']);
+export type ResourceSource = z.infer<typeof ResourceSource>;
+
+export const ResourceStateSchema = z.object({
+  status: ResourceStatus,
+  source: ResourceSource,
+  observedAt: z.number().int().nullable(),
+  errorCode: z.string().nullable(),
+});
+export type ResourceState = z.infer<typeof ResourceStateSchema>;
+
+export const PeerInventorySchema = z.object({
+  topologyHash: z.string().min(1),
+  self: z.boolean(),
+  account: z.object({
+    id: z.string().nullable(),
+    name: z.string().nullable(),
+    type: z.string().nullable(),
+    state: ResourceStateSchema,
+  }),
+  worker: z.object({
+    name: z.string().nullable(),
+    createdAt: z.string().nullable(),
+    modifiedAt: z.string().nullable(),
+    state: ResourceStateSchema,
+  }),
+  d1: z.object({
+    id: z.string().nullable(),
+    name: z.string().nullable(),
+    fileBytes: z.number().int().nonnegative().nullable(),
+    jurisdiction: z.string().nullable(),
+    region: z.string().nullable(),
+    counts: z.object({
+      series: z.number().int().nonnegative().nullable(),
+      chapters: z.number().int().nonnegative().nullable(),
+      chapterPages: z.number().int().nonnegative().nullable(),
+      users: z.number().int().nonnegative().nullable(),
+      bookmarks: z.number().int().nonnegative().nullable(),
+    }),
+    state: ResourceStateSchema,
+  }),
+  kv: z.object({
+    id: z.string().nullable(),
+    title: z.string().nullable(),
+    jurisdiction: z.string().nullable(),
+    keyCount: z.number().int().nonnegative().nullable(),
+    byteCount: z.number().int().nonnegative().nullable(),
+    operationalD1Bytes: z.number().int().nonnegative().nullable(),
+    state: ResourceStateSchema,
+  }),
+  lb: z.object({
+    account: LbAccountSafeSchema.pick({
+      id: true,
+      provider: true,
+      label: true,
+      account_ref: true,
+      status: true,
+      last_tested_at: true,
+      created_at: true,
+    }).nullable(),
+    origins: z.array(LbOriginSchema),
+  }),
+});
+export type PeerInventory = z.infer<typeof PeerInventorySchema>;
+
+export const InventoryWarningSchema = z.object({
+  code: z.string().min(1),
+  peerUrl: z.string().url().nullable(),
+  message: z.string().min(1),
+  observedAt: z.number().int(),
+});
+export type InventoryWarning = z.infer<typeof InventoryWarningSchema>;
+
+export const InventoryB2AccountSchema = z.object({
+  configuredName: z.string().min(1),
+  providerAccountId: z.string().nullable(),
+  bucketId: z.string().nullable(),
+  bucketName: z.string().nullable(),
+  bucketType: z.string().nullable(),
+  options: z.array(z.string()),
+  trackedBytes: z.number().int().nonnegative().nullable(),
+  trackedUpdatedAt: z.number().int().nullable(),
+  quotaBytes: z.number().int().positive(),
+  state: ResourceStateSchema,
+});
+export type InventoryB2Account = z.infer<typeof InventoryB2AccountSchema>;
+
+export const InventoryRegistrationSchema = z.object({
+  account: LbAccountSafeSchema.pick({
+    id: true,
+    provider: true,
+    label: true,
+    account_ref: true,
+    status: true,
+    last_tested_at: true,
+    created_at: true,
+  }),
+  origin: LbOriginSchema.nullable(),
+  topologyStatus: z.enum(['registered', 'pending_topology']),
+});
+export type InventoryRegistration = z.infer<typeof InventoryRegistrationSchema>;
+
+export const AdminInventorySchema = z.object({
+  observedAt: z.number().int(),
+  stale: z.boolean(),
+  topology: z.object({
+    source: z.literal('PEER_URLS'),
+    count: z.number().int().nonnegative(),
+    hash: z.string().min(1),
+    consistent: z.boolean(),
+  }),
+  accounts: z.array(z.object({
+    topologyHash: z.string().min(1),
+    index: z.number().int().nonnegative(),
+    url: z.string().url(),
+    self: z.boolean(),
+    reachable: z.boolean(),
+    account: PeerInventorySchema.shape.account,
+    worker: PeerInventorySchema.shape.worker,
+    d1: PeerInventorySchema.shape.d1,
+    kv: PeerInventorySchema.shape.kv,
+    lb: PeerInventorySchema.shape.lb,
+  })),
+  registrations: z.array(InventoryRegistrationSchema),
+  b2: z.array(InventoryB2AccountSchema),
+  warnings: z.array(InventoryWarningSchema),
+});
+export type AdminInventory = z.infer<typeof AdminInventorySchema>;
 
 // ---- Load balancing audit log ----------------------------------------------
 export const LbAuditLogSchema = z.object({

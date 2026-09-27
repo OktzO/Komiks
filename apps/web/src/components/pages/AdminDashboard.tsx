@@ -1,7 +1,17 @@
 'use client';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { fetchMe, apiGet, roleLabel, type AuthUser } from '@/lib/api';
+import type { AdminInventory } from '@manga-platform/shared/types';
 import { Card, CardHead, StatCard, fmtNum, fmtBytes } from '@/components/admin/charts';
+import { InventoryWarningBanner } from '@/components/admin/InventorySections';
+import {
+  b2RowKey,
+  filterInventory,
+  inventoryUrl,
+  lbRowsFromInventory,
+  storageFromInventory,
+} from '@/lib/adminInventory';
+import { useAdminRefresh } from '@/lib/useAdminRefresh';
 
 /* ─────────────────────────────────────────────────────────────────────
  * Types (mirror API response shapes)
@@ -12,16 +22,6 @@ type Overview = {
   bookmarksTotal: number;
   scrape24h: { success: number; failed: number };
   providers: { healthy: number; degraded: number; down: number };
-};
-
-type StoragePoint = { ts: number; size_bytes: number | null; rows_or_objects: number | null };
-type StorageTrend = { db_name: string; points: StoragePoint[] };
-type StorageData = {
-  accounts: Array<{ idx: number; name: string; bucket: string; bytes: number; quota: number }>;
-  total_bytes: number;
-  d1_bytes: number | null;
-  quota: number;
-  trend: StorageTrend[];
 };
 
 type SourceHealth = {
@@ -38,8 +38,7 @@ type SourceHealth = {
 
 type ReqData = { dates: string[]; series: Array<{ origin: string; points: number[] }> };
 
-type LbAccount = { id: string; provider: string; label: string; account_ref: string | null; token_last4: string; status: string; created_at: number };
-type LbOrigin = { id: string; account_id: string | null; origin_url: string; priority: number; weight: number; enabled: number; last_health_status: string | null; last_checked_at: number | null };
+type UsageRow = { origin_url: string; req_count: number };
 
 type UserRow = { id: number; email: string; name: string | null; role: string; status: string; created_at: number; last_login_at: number | null; bookmark_count: number };
 
@@ -55,9 +54,6 @@ const fmtRel = (ts: number | null): string => {
   if (d < 86400) return `${Math.floor(d / 3600)} jam lalu`;
   return `${Math.floor(d / 86400)} hari lalu`;
 };
-
-const fmtDay = (ts: number): string =>
-  new Date(ts * 1000).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
 
 /* ─────────────────────────────────────────────────────────────────────
  * Ikon kecil stroke (pola IconBook di AdminSaved)
@@ -127,75 +123,6 @@ function IconServer({ className }: { className?: string }) {
  * Mini chart primitives (custom SVG — no chart lib, no CSP issues)
  * ───────────────────────────────────────────────────────────────────── */
 
-// Area chart with hover tooltip. points: [{ts, value}].
-function AreaChart({ points, height = 180 }: { points: Array<{ ts: number; value: number }>; height?: number }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const { w, h } = { w: 640, h: height };
-  const padX = 8;
-  const padY = 24;
-  if (points.length < 2) {
-    return (
-      <div className="h-[180px] flex items-center justify-center text-xs text-muted">
-        Snapshot belum cukup — isi bertambah tiap jam (perlu ≥ 2 titik).
-      </div>
-    );
-  }
-  const max = Math.max(...points.map((p) => p.value), 1);
-  const iw = w - padX * 2;
-  const ih = h - padY * 2;
-  const x = (i: number) => padX + (points.length === 1 ? iw / 2 : (i / (points.length - 1)) * iw);
-  const y = (v: number) => padY + ih - (v / max) * ih;
-  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
-  const area = `${path} L${x(points.length - 1).toFixed(1)},${(padY + ih).toFixed(1)} L${x(0).toFixed(1)},${(padY + ih).toFixed(1)} Z`;
-  const gid = `grad-${Math.random().toString(36).slice(2, 8)}`;
-
-  return (
-    <div className="relative w-full">
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height }} preserveAspectRatio="none"
-        onMouseLeave={() => setHover(null)}>
-        <defs>
-          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.28" />
-            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {[0.25, 0.5, 0.75].map((f) => (
-          <line key={f} x1={padX} x2={w - padX} y1={padY + ih * f} y2={padY + ih * f}
-            stroke="var(--border-subtle)" strokeWidth="1" strokeDasharray="3 4" />
-        ))}
-        <path d={area} fill={`url(#${gid})`} />
-        <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
-        {points.map((p, i) => (
-          <circle key={i} cx={x(i)} cy={y(p.value)} r="3" fill="var(--accent)"
-            fillOpacity={hover === i ? 1 : 0}
-            stroke="var(--bg-base)" strokeWidth="1.5" />
-        ))}
-        {hover !== null && (
-          <g>
-            <line x1={x(hover)} x2={x(hover)} y1={padY} y2={padY + ih} stroke="var(--accent)" strokeOpacity="0.4" strokeDasharray="2 3" />
-            <circle cx={x(hover)} cy={y(points[hover].value)} r="4" fill="var(--accent)" stroke="var(--bg-base)" strokeWidth="2" />
-          </g>
-        )}
-      </svg>
-      {/* Tooltip + axis labels (HTML layer, avoids SVG text reflow) */}
-      <div className="pointer-events-none absolute inset-0 flex items-end" style={{ paddingBottom: 4 }}>
-        {hover !== null ? (
-          <div className="absolute -translate-x-1/2 bg-elevated border border-border-default rounded-lg px-3 py-2 text-[11px] shadow-xl"
-            style={{ left: `${(x(hover) / w) * 100}%`, bottom: '100%', marginBottom: 6 }}>
-            <div className="text-muted font-mono tabular">{fmtDay(points[hover].ts)}</div>
-            <div className="text-primary font-mono tabular">{fmtBytes(points[hover].value)}</div>
-          </div>
-        ) : null}
-      </div>
-      {/* hit area for hover */}
-      <div className="absolute inset-0 flex">
-        {points.map((p, i) => (
-          <div key={i} className="flex-1 h-full" onMouseEnter={() => setHover(i)} />
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // Stacked bars per day (request counts per origin).
 function ReqBars({ data, height = 160 }: { data: ReqData; height?: number }) {
@@ -322,15 +249,13 @@ export default function AdminDashboardPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
 
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [storage, setStorage] = useState<StorageData | null>(null);
+  const [inventory, setInventory] = useState<AdminInventory | null>(null);
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [requests, setRequests] = useState<ReqData | null>(null);
-  const [lbAccounts, setLbAccounts] = useState<LbAccount[]>([]);
-  const [lbOrigins, setLbOrigins] = useState<LbOrigin[]>([]);
-  const [lbUsage, setLbUsage] = useState<Array<{ origin_url: string; req_count: number }>>([]);
+  const [lbUsage, setLbUsage] = useState<UsageRow[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
   const [savedChapters, setSavedChapters] = useState(0);
@@ -346,50 +271,45 @@ export default function AdminDashboardPage() {
     return () => { alive = false; };
   }, []);
 
-  const loadAll = useCallback(async () => {
-    if (document.hidden) return;
+  const loadAll = useCallback(async (forceRefresh = false) => {
     setRefreshing(true);
-    try {
-      const [ov, st, sh, rq, a, o, us, sv] = await Promise.all([
-        apiGet<{ data: Overview }>('/api/admin/overview'),
-        apiGet<{ data: StorageData }>('/api/admin/dashboard/storage'),
-        apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health'),
-        apiGet<{ data: ReqData }>('/api/admin/dashboard/requests?days=14'),
-        apiGet<LbAccount[]>('/api/admin/lb/accounts'),
-        apiGet<{ data: LbOrigin[] }>('/api/admin/lb/origins'),
-        apiGet<{ data: UserRow[]; total: number }>('/api/admin/users?limit=2000'),
-        apiGet<{ data: { summary: { chapters_total: number } } }>('/api/admin/saved?page=1&limit=1'),
-      ]);
-      setOverview(ov.data);
-      setStorage(st.data);
-      setSources(sh.data || []);
-      setRequests(rq.data);
-      setLbAccounts(a || []);
-      setLbOrigins(o.data || []);
-      setUsers(us.data || []);
-      setUsersTotal(us.total);
-      setSavedChapters(sv.data?.summary?.chapters_total ?? 0);
-      setLbUsage((await apiGet<{ data: Array<{ origin_url: string; req_count: number }> }>('/api/admin/lb/usage')).data || []);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setRefreshing(false);
+    const [inv, ov, sh, rq, us, sv, ub] = await Promise.allSettled([
+      apiGet<{ data: AdminInventory }>(inventoryUrl(forceRefresh)),
+      apiGet<{ data: Overview }>('/api/admin/overview'),
+      apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health'),
+      apiGet<{ data: ReqData }>('/api/admin/dashboard/requests?days=14'),
+      apiGet<{ data: UserRow[]; total: number }>('/api/admin/users?limit=2000'),
+      apiGet<{ data: { summary: { chapters_total: number } } }>('/api/admin/saved?page=1&limit=1'),
+      apiGet<{ data: UsageRow[] }>('/api/admin/lb/usage'),
+    ]);
+    if (inv.status === 'fulfilled' && inv.value.data) {
+      setInventory(inv.value.data);
+      setInventoryError(null);
+    } else {
+      setInventoryError('Inventaris gagal dimuat — panel lain tetap ditampilkan.');
     }
+    setOverview(ov.status === 'fulfilled' ? ov.value.data : null);
+    setSources(sh.status === 'fulfilled' ? (sh.value.data ?? []) : []);
+    setRequests(rq.status === 'fulfilled' ? rq.value.data : null);
+    setUsers(us.status === 'fulfilled' ? (us.value.data ?? []) : []);
+    setUsersTotal(us.status === 'fulfilled' ? us.value.total : 0);
+    setSavedChapters(sv.status === 'fulfilled' ? (sv.value.data?.summary?.chapters_total ?? 0) : 0);
+    setLbUsage(ub.status === 'fulfilled' ? (ub.value.data ?? []) : []);
+    setRefreshing(false);
   }, []);
 
-  useEffect(() => {
-    if (user?.role === 'admin') {
-      loadAll();
-      const iv = setInterval(loadAll, 30000);
-      return () => clearInterval(iv);
-    }
-  }, [user, loadAll]);
+  const refresh = useAdminRefresh(loadAll, user?.role === 'admin');
 
   // Derived numbers
-  const storageTotal = storage?.total_bytes ?? 0;
-  const storageQuota = storage?.accounts.reduce((a, x) => a + x.quota, 0) || 1;
-  const storagePct = (storageTotal / storageQuota) * 100;
+  const view = useMemo(() => filterInventory(inventory, ''), [inventory]);
+  const storage = useMemo(() => storageFromInventory(inventory), [inventory]);
+  const lbRows = useMemo(() => lbRowsFromInventory(inventory, lbUsage), [inventory, lbUsage]);
+  const trackedB2 = storage.accounts.filter((account) => account.bytes !== null);
+  const trackedBytes = trackedB2.length > 0
+    ? trackedB2.reduce((sum, account) => sum + (account.bytes ?? 0), 0)
+    : null;
+  const storagePct =
+    trackedBytes === null || storage.totalQuota <= 0 ? null : (trackedBytes / storage.totalQuota) * 100;
 
   const avgUptime = useMemo(() => {
     const vals = sources.filter((s) => s.uptime_pct != null).map((s) => s.uptime_pct as number);
@@ -408,20 +328,6 @@ export default function AdminDashboardPage() {
     () => requests?.series.reduce((a, s) => a + s.points.reduce((b, p) => b + p, 0), 0) ?? 0,
     [requests]
   );
-
-  // Storage trend: total per timestamp across all b2:* accounts
-  const storageSeries = useMemo(() => {
-    if (!storage) return [];
-    const b2 = storage.trend.filter((t) => t.db_name.startsWith('b2:'));
-    const byTs = new Map<number, number>();
-    for (const t of b2) {
-      for (const p of t.points) {
-        if (p.size_bytes == null) continue;
-        byTs.set(p.ts, (byTs.get(p.ts) ?? 0) + p.size_bytes);
-      }
-    }
-    return [...byTs.entries()].sort((a, b) => a[0] - b[0]).map(([ts, value]) => ({ ts, value }));
-  }, [storage]);
 
   if (loading) {
     return (
@@ -447,22 +353,36 @@ export default function AdminDashboardPage() {
           <span className={`status-dot ${refreshing ? 'live' : 'unknown'}`} />
           {refreshing ? 'refreshing' : 'live'}
         </span>
+        <button
+          type="button"
+          onClick={() => refresh(true)}
+          disabled={refreshing}
+          className="px-3 py-1.5 text-xs text-secondary border border-border-default rounded-full hover:bg-bg-secondary transition-colors disabled:opacity-50"
+        >
+          {refreshing ? 'Memuat...' : 'Muat ulang'}
+        </button>
       </div>
 
-      {error && (
-        <div className="text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">{error}</div>
+      {inventoryError && (
+        <div role="alert" aria-live="assertive" className="text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">
+          {inventoryError}
+        </div>
       )}
+
+      <InventoryWarningBanner warnings={view.warnings} stale={view.stale} observedAt={view.observedAt} />
 
       {/* ── A. Top KPI strip ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <StatCard icon={<IconDb className="w-4 h-4" />} label="Storage · B2" value={fmtBytes(storageTotal)}
-          sub={`${storagePct.toFixed(1)}% dari ${fmtBytes(storageQuota)} quota`} />
+        <StatCard icon={<IconDb className="w-4 h-4" />} label="Storage · B2" value={fmtBytes(trackedBytes)}
+          sub={storagePct === null
+            ? `${fmtNum(storage.accounts.length)} akun · belum terukur`
+            : `${storagePct.toFixed(1)}% dari ${fmtBytes(storage.totalQuota)} quota`} />
         <StatCard icon={<IconBook className="w-4 h-4" />} label="Konten tersimpan" value={fmtNum(savedChapters)}
           sub="chapter tersimpan · lihat halaman Konten" />
         <StatCard icon={<IconChart className="w-4 h-4" />} label="Request · 14d" value={fmtNum(reqTotal7d)}
           sub={`${requests?.series.length ?? 0} origin terlayani`} />
-        <StatCard icon={<IconPulse className="w-4 h-4" />} label="Source uptime" value={avgUptime > 0 ? `${avgUptime}%` : '—'}
-          sub={`${sources.length} source dipantau`} />
+        <StatCard icon={<IconPulse className="w-4 h-4" />} label="Peer terjangkau" value={`${fmtNum(view.coverage.reachable)}/${fmtNum(view.topology.count)}`}
+          sub={`${fmtNum(view.coverage.d1)} D1 live · ${fmtNum(view.coverage.kv)} KV live`} />
         <StatCard icon={<IconZap className="w-4 h-4" />} label="Scrape · 24h" value={scrapeTotal > 0 ? `${scrapeRate}%` : '—'}
           sub={scrapeTotal > 0 ? `${overview!.scrape24h.success}/${scrapeTotal} sukses` : 'belum ada aktivitas'} />
         <StatCard icon={<IconUsers className="w-4 h-4" />} label="Users" value={fmtNum(usersTotal)}
@@ -472,12 +392,29 @@ export default function AdminDashboardPage() {
       {/* ── B + C row ────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card delay={40} className="lg:col-span-2">
-          <CardHead icon={<IconDb className="w-4 h-4" />} title="Storage trend · B2" hint="Snapshot tiap jam · 30 hari terakhir" />
-          <AreaChart points={storageSeries} />
-          <div className="flex items-center justify-between mt-3 text-[11px] text-muted">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[var(--accent)]" /> Total usage</span>
-            <span>{storage?.accounts.map((a) => a.name).join(' + ') || '—'}</span>
-          </div>
+          <CardHead icon={<IconDb className="w-4 h-4" />} title="Bucket B2" hint={`${view.visibleB2.length} akun · byte terlacak, bukan pembacaan langsung`} />
+          {view.visibleB2.length === 0 ? (
+            <div className="admin-inner py-8 text-sm text-muted text-center">Belum ada akun B2 terkonfigurasi.</div>
+          ) : (
+            <ul className="admin-inner divide-y divide-border-subtle">
+              {view.visibleB2.map((entry, position) => (
+                <li key={b2RowKey(entry, position)} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="text-primary text-[13px] truncate">{entry.configuredName}</div>
+                    <div className="text-[10px] text-muted truncate">
+                      {[entry.bucketName, entry.bucketType].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="tabular text-primary text-[13px]">{fmtBytes(entry.trackedBytes)}</div>
+                    <div className="text-[10px] text-muted tabular">
+                      {entry.quotaBytes === null ? 'kuota belum diatur' : `dari ${fmtBytes(entry.quotaBytes)}`}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
 
         <Card delay={80}>
@@ -523,13 +460,13 @@ export default function AdminDashboardPage() {
         </Card>
       </div>
 
-      {/* ── E. LB accounts ───────────────────────────────────────────────── */}
+      {/* ── E. Topology + credentials ────────────────────────────────────── */}
       <Card delay={200} className="overflow-hidden">
-        <CardHead icon={<IconServer className="w-4 h-4" />} title="Load balancer accounts"
-          hint="Round-robin worker · status akun + health origin + request hari ini"
+        <CardHead icon={<IconServer className="w-4 h-4" />} title="Topologi & akun load balancer"
+          hint="Setiap peer PEER_URLS + kredensial yang belum punya peer · status, origin, request hari ini"
           action={<a href="/admin/settings" className="text-xs text-secondary hover:text-accent transition-colors">Kelola →</a>} />
-        {lbAccounts.length === 0 ? (
-          <div className="admin-inner py-8 text-sm text-muted text-center">Belum ada akun.</div>
+        {lbRows.length === 0 ? (
+          <div className="admin-inner py-8 text-sm text-muted text-center">Belum ada peer terkonfigurasi.</div>
         ) : (
           <div className="admin-inner overflow-hidden">
             <div className="overflow-x-auto">
@@ -539,38 +476,62 @@ export default function AdminDashboardPage() {
                     <th className="text-left font-medium px-4 py-2">Akun</th>
                     <th className="text-left font-medium px-3 py-2">Provider</th>
                     <th className="text-left font-medium px-3 py-2">Status</th>
+                    <th className="text-left font-medium px-3 py-2">Topologi</th>
                     <th className="text-left font-medium px-3 py-2">Origin</th>
                     <th className="text-right font-medium px-4 py-2">Req hari ini</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {lbAccounts.map((a) => {
-                    const origins = lbOrigins.filter((o) => o.account_id === a.id);
-                    const req = lbUsage.filter((u) => origins.some((o) => o.origin_url === u.origin_url)).reduce((x, u) => x + u.req_count, 0);
-                    return (
-                      <tr key={a.id} className="border-b border-border-subtle last:border-0 hover:bg-bg-secondary/20 transition-colors">
-                        <td className="px-4 py-3">
-                          <div className="text-primary">{a.label}</div>
-                          <div className="text-[10px] text-muted font-mono">{a.id}</div>
-                        </td>
-                        <td className="px-3 py-3 text-secondary">{a.provider}</td>
-                        <td className="px-3 py-3"><StatusBadge status={a.status} /></td>
-                        <td className="px-3 py-3">
-                          {origins.length === 0 ? <span className="text-xs text-muted">—</span> : (
-                            <div className="flex flex-col gap-0.5">
-                              {origins.map((o) => (
-                                <div key={o.id} className="flex items-center gap-1.5 text-xs">
-                                  <span className={`status-dot ${o.last_health_status === 'healthy' ? 'healthy' : o.last_health_status === 'unhealthy' ? 'down' : 'unknown'}`} />
-                                  <span className="text-secondary truncate max-w-[220px]">{o.origin_url.replace('https://', '')}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono tabular text-primary">{fmtNum(req)}</td>
-                      </tr>
-                    );
-                  })}
+                  {lbRows.map((row) => (
+                    <tr key={row.key} className="border-b border-border-subtle last:border-0 hover:bg-bg-secondary/20 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="text-primary">{row.label}</div>
+                        <div className="text-[10px] text-muted font-mono break-all">{row.accountId ?? row.topologyUrl}</div>
+                      </td>
+                      <td className="px-3 py-3 text-secondary">{row.provider ?? '—'}</td>
+                      <td className="px-3 py-3">
+                        {row.status ? <StatusBadge status={row.status} /> : <span className="text-xs text-muted">—</span>}
+                      </td>
+                      <td className="px-3 py-3">
+                        {row.topologyUrl === null ? (
+                          <span className="text-xs text-accent">
+                            {row.topologyStatus === 'pending_topology' ? 'menunggu topologi' : 'di luar topologi'}
+                          </span>
+                        ) : row.reachable === false ? (
+                          <span className="text-xs text-error">tidak terjangkau</span>
+                        ) : (
+                          <span className="text-xs text-secondary">
+                            {row.topologyIndex === null ? 'topology' : `#${row.topologyIndex}`}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        {row.origins.length === 0 ? (
+                          <span className="text-xs text-muted">—</span>
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {row.origins.map((origin) => (
+                              <div
+                                key={origin.id ?? origin.url ?? 'origin'}
+                                className="flex items-center gap-1.5 text-xs"
+                              >
+                                <span className={`status-dot ${origin.lastHealthStatus === 'healthy' ? 'healthy' : origin.lastHealthStatus === 'unhealthy' ? 'down' : 'unknown'}`} />
+                                <span className="text-secondary truncate max-w-[180px]">
+                                  {(origin.url ?? '—').replace('https://', '')}
+                                </span>
+                                <span className="text-muted text-[10px] tabular shrink-0">
+                                  P{origin.priority ?? '—'} · W{origin.weight ?? '—'} ·{' '}
+                                  {origin.enabled === 1 ? 'ON' : 'OFF'}
+                                  {origin.lastCheckedAt ? ` · ${fmtRel(origin.lastCheckedAt)}` : ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular text-primary">{fmtNum(row.requestsToday)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

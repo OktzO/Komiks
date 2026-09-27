@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { Env, json, allowedOriginFor, Context } from './lib/context';
 import { rateLimit, rateLimitIdentify, rateLimitAdmin, rateLimitImg, rateLimitInternal } from './lib/rateLimit';
+import { serviceGateMw } from './lib/serviceGate';
 import { router as healthRouter } from './routes/health';
 import { router as seriesRouter } from './routes/series';
 import { router as searchRouter } from './routes/search';
@@ -12,6 +13,7 @@ import { router as originsRouter } from './routes/origins';
 import { router as identifyRouter } from './routes/identify';
 import { router as lbAdminRouter } from './routes/admin/lb';
 import { router as monitoringAdminRouter } from './routes/admin/monitoring';
+import { router as inventoryAdminRouter } from './routes/admin/inventory';
 import { router as dashboardAdminRouter } from './routes/admin/dashboard';
 import { router as savedAdminRouter } from './routes/admin/saved';
 import { router as logAdminRouter } from './routes/admin/log';
@@ -95,6 +97,11 @@ app.use('/api/_internal/*', rateLimitInternal);
 app.route('/api/_internal', internalRouter);
 app.use('/img/*', rateLimitImg);
 app.route('/img', imgRouter);
+// BFF service-token gate: mounted SETELAH /api/_internal + /img routers (yang
+// sudah punya guard sendiri) dan SETELAH corsMw (preflight OPTIONS sudah
+// dijawab di sana). Berarti hanya lalu-lintas /api/* normal yang kena gate,
+// dan sebelum global rateLimit sehingga penolakan tidak menghabiskan bucket.
+app.use('*', serviceGateMw);
 app.use('*', rateLimit);
 app.route('/api', healthRouter);
 app.route('/api', seriesRouter);
@@ -105,6 +112,7 @@ app.route('/api', sourceStatusRouter);
 app.route('/api', originsRouter);
 app.route('/api/admin/lb', lbAdminRouter);
 app.route('/api/admin/merge', mergeAdminRouter);
+app.route('/api/admin', inventoryAdminRouter);
 // Admin monitoring: read-only endpoints (overview, providers, scrape-jobs, db-usage, users).
 // requireAdminSession (session.role===admin) enforced inside router. rateLimitAdmin applies to all /api/admin/*.
 app.route('/api/admin', monitoringAdminRouter);

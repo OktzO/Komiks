@@ -1,7 +1,11 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { fetchMe, apiGet, type AuthUser } from '@/lib/api';
+import type { AdminInventory } from '@manga-platform/shared/types';
 import { Card, CardHead, EmptyState, fmtNum, fmtBytes } from '@/components/admin/charts';
+import { D1Section, InventoryWarningBanner, KVSection } from '@/components/admin/InventorySections';
+import { filterInventory, inventoryUrl, nonD1SnapshotRows } from '@/lib/adminInventory';
+import { useAdminRefresh } from '@/lib/useAdminRefresh';
 
 type DbUsageCurrent = { db_name: string; rows_or_objects: number | null; size_bytes: number | null };
 type DbUsagePoint = { ts: number; size_bytes: number | null; rows_or_objects: number | null };
@@ -66,10 +70,11 @@ export default function AdminMonitoringPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [sources, setSources] = useState<SourceHealth[]>([]);
+  const [inventory, setInventory] = useState<AdminInventory | null>(null);
   const [dbUsage, setDbUsage] = useState<DbUsage | null>(null);
   const [logRows, setLogRows] = useState<ScrapeLogRow[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -82,34 +87,30 @@ export default function AdminMonitoringPage() {
     return () => { alive = false; };
   }, []);
 
-  const loadAll = useCallback(async () => {
-    if (document.hidden) return; // tab background — jangan boros API/KV
+  const loadAll = useCallback(async (forceRefresh = false) => {
     setRefreshing(true);
-    try {
-      const [hRes, dRes, lRes] = await Promise.all([
-        apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health'),
-        apiGet<{ data: DbUsage }>('/api/admin/db-usage?days=7'),
-        apiGet<{ data: { rows: ScrapeLogRow[] } }>('/api/admin/log?type=scrape&limit=30'),
-      ]);
-      setSources(hRes.data || []);
-      setDbUsage(dRes.data);
-      setLogRows(lRes.data.rows || []);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setRefreshing(false);
+    const [hRes, invRes, dRes, lRes] = await Promise.allSettled([
+      apiGet<{ data: SourceHealth[] }>('/api/admin/dashboard/source-health'),
+      apiGet<{ data: AdminInventory }>(inventoryUrl(forceRefresh)),
+      apiGet<{ data: DbUsage }>('/api/admin/db-usage?days=7'),
+      apiGet<{ data: { rows: ScrapeLogRow[] } }>('/api/admin/log?type=scrape&limit=30'),
+    ]);
+    setSources(hRes.status === 'fulfilled' ? (hRes.value.data ?? []) : []);
+    if (invRes.status === 'fulfilled' && invRes.value.data) {
+      setInventory(invRes.value.data);
+      setInventoryError(null);
+    } else {
+      setInventoryError('Inventaris gagal dimuat — panel lain tetap ditampilkan.');
     }
+    setDbUsage(dRes.status === 'fulfilled' ? dRes.value.data : null);
+    setLogRows(lRes.status === 'fulfilled' ? (lRes.value.data.rows ?? []) : []);
+    setRefreshing(false);
   }, []);
 
-  useEffect(() => {
-    if (user?.role === 'admin') {
-      loadAll();
-      // 30s refresh — less aggressive than 12s, reduces API/KV load.
-      const interval = setInterval(loadAll, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [user, loadAll]);
+  const refresh = useAdminRefresh(loadAll, user?.role === 'admin');
+
+  const view = useMemo(() => filterInventory(inventory, ''), [inventory]);
+  const snapshotRows = useMemo(() => nonD1SnapshotRows(dbUsage?.current), [dbUsage]);
 
   if (loading) {
     return (
@@ -134,13 +135,23 @@ export default function AdminMonitoringPage() {
           <span className={`status-dot ${refreshing ? 'live' : 'unknown'}`} />
           {refreshing ? 'refreshing' : 'live'}
         </span>
+        <button
+          type="button"
+          onClick={() => refresh(true)}
+          disabled={refreshing}
+          className="px-3 py-1.5 text-xs text-secondary border border-border-default rounded-full hover:bg-bg-secondary transition-colors disabled:opacity-50"
+        >
+          {refreshing ? 'Memuat...' : 'Muat ulang'}
+        </button>
       </div>
 
-      {error && (
-        <div className="text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">
-          {error}
+      {inventoryError && (
+        <div role="alert" aria-live="assertive" className="text-sm text-error border border-error/40 rounded-lg p-3 bg-error/5">
+          {inventoryError}
         </div>
       )}
+
+      <InventoryWarningBanner warnings={view.warnings} stale={view.stale} observedAt={view.observedAt} />
 
       <Card>
         <CardHead icon={<IconActivity className="w-4 h-4" />} title="Source health" hint="Uptime dari riwayat pengecekan" />
@@ -172,10 +183,10 @@ export default function AdminMonitoringPage() {
       </Card>
 
       <Card>
-        <CardHead icon={<IconDatabase className="w-4 h-4" />} title="Storage / DB usage" hint="Snapshot db_usage · tiap jam" />
+        <CardHead icon={<IconDatabase className="w-4 h-4" />} title="Snapshot lokal" hint="db_usage_snapshot tiap jam · hanya B2, ukuran D1 tampil di section D1" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {dbUsage?.current.length ? dbUsage.current.map((d) => {
-            const trend = dbUsage.trend.find((t) => t.db_name === d.db_name);
+          {snapshotRows.length ? snapshotRows.map((d) => {
+            const trend = dbUsage?.trend.find((t) => t.db_name === d.db_name);
             const prev = trend && trend.points.length > 1 ? trend.points[trend.points.length - 2] : null;
             const curr = trend && trend.points.length > 0 ? trend.points[trend.points.length - 1] : null;
             const sizeDelta = prev && curr && prev.size_bytes != null && curr.size_bytes != null
@@ -194,9 +205,14 @@ export default function AdminMonitoringPage() {
                 </div>
               </div>
             );
-          }) : <EmptyState>Belum ada snapshot penyimpanan. Terisi tiap jam oleh cron.</EmptyState>}
+          }) : <EmptyState>Belum ada snapshot B2. Terisi tiap jam oleh cron.</EmptyState>}
         </div>
       </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <D1Section view={view} />
+        <KVSection view={view} />
+      </div>
 
       <Card>
         <CardHead icon={<IconActivity className="w-4 h-4" />} title="Scrape jobs live" hint="scrape_jobs · refresh 30 detik" />

@@ -1,19 +1,167 @@
 import { Hono } from 'hono';
 import type { Env, Context } from '../../lib/context';
 import { getDb, json } from '../../lib/context';
-import { requireAdminSession } from '../../lib/auth';
-import { createAccount, listAccountsSafe, testAccount } from '@manga-platform/lb/accounts';
+import { requireAdminSession, requireAuth } from '../../lib/auth';
+import {
+  createAccount,
+  listAccountsSafe,
+  testAccount,
+  resolveCloudflareAccount,
+} from '@manga-platform/lb/accounts';
+import type { TestAccountResult } from '@manga-platform/lb/accounts';
 import { provisionAccount, checkProvisionStatus } from '@manga-platform/lb/provision';
 
 export const router = new Hono<{ Bindings: Env }>();
 
-// LB admin mutations: require admin session role (same as monitoring endpoints).
-// Step-up password removed — OAuth admin session is the sole auth path.
-router.use('*', requireAdminSession);
+const LABEL_MAX = 100;
+const PROVIDER_REF_MAX = 100;
+const WORKER_NAME_MAX = 63;
+const TOKEN_MAX = 512;
+const CLOUDFLARE_ACCOUNT_ID = /^[0-9a-f]{32}$/i;
+const WORKER_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+type Validated<T> = { ok: true; value: T } | { ok: false; error: string };
+const fail = (error: string): Validated<never> => ({ ok: false, error });
+
+export interface AccountBody {
+  label: string;
+  provider: 'cloudflare' | 'vercel';
+  accountId: string | null;
+  rawToken: string;
+}
+
+export interface ProvisionBody {
+  label: string;
+  cfApiToken: string;
+  workerName: string;
+  accountId: string | null;
+}
+
+const asRecord = (body: unknown): Record<string, unknown> | null =>
+  body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
+
+const readLabel = (raw: unknown): Validated<string> => {
+  if (raw === undefined || raw === null) return { ok: true, value: '' };
+  if (typeof raw !== 'string') return fail('invalid label');
+  const label = raw.trim();
+  return label.length > LABEL_MAX ? fail('label too long') : { ok: true, value: label };
+};
+
+const readToken = (raw: unknown): Validated<string> => {
+  if (typeof raw !== 'string' || raw.trim() === '') return fail('token required');
+  const token = raw.trim();
+  return token.length > TOKEN_MAX ? fail('token too long') : { ok: true, value: token };
+};
+
+const readAccountId = (raw: unknown, provider: string): Validated<string | null> => {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  if (typeof raw !== 'string' || raw.trim() === '') return fail('invalid accountId');
+  const accountId = raw.trim();
+  if (provider === 'cloudflare') {
+    return CLOUDFLARE_ACCOUNT_ID.test(accountId) ? { ok: true, value: accountId } : fail('invalid accountId');
+  }
+  return accountId.length > PROVIDER_REF_MAX ? fail('invalid accountId') : { ok: true, value: accountId };
+};
+
+export const validateAccountBody = (body: unknown): Validated<AccountBody> => {
+  const rec = asRecord(body);
+  if (!rec) return fail('invalid body');
+  const provider = rec.provider;
+  if (provider !== 'cloudflare' && provider !== 'vercel') return fail('invalid provider');
+  const label = readLabel(rec.label);
+  if (!label.ok) return label;
+  const rawToken = readToken(rec.rawToken);
+  if (!rawToken.ok) return rawToken;
+  const accountId = readAccountId(rec.accountId, provider);
+  if (!accountId.ok) return accountId;
+  return { ok: true, value: { label: label.value, provider, accountId: accountId.value, rawToken: rawToken.value } };
+};
+
+export const validateProvisionBody = (body: unknown): Validated<ProvisionBody> => {
+  const rec = asRecord(body);
+  if (!rec) return fail('invalid body');
+  const label = readLabel(rec.label);
+  if (!label.ok) return label;
+  const cfApiToken = readToken(rec.cfApiToken);
+  if (!cfApiToken.ok) return cfApiToken;
+  if (typeof rec.workerName !== 'string' || rec.workerName.trim() === '') return fail('worker name required');
+  const workerName = rec.workerName.trim();
+  if (workerName.length > WORKER_NAME_MAX || !WORKER_NAME.test(workerName)) return fail('invalid worker name');
+  const accountId = readAccountId(rec.accountId, 'cloudflare');
+  if (!accountId.ok) return accountId;
+  return { ok: true, value: { label: label.value, cfApiToken: cfApiToken.value, workerName, accountId: accountId.value } };
+};
+
+export interface ErrorResponse {
+  status: number;
+  body: { error: string; accounts?: { id: string; name: string; type: string | null }[] };
+}
+
+export interface AccountTestBody {
+  ok: boolean;
+  status: 'verified' | 'failed' | 'unavailable';
+  err: string | null;
+}
+
+const errorCode = (e: unknown): string =>
+  e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string'
+    ? (e as { code: string }).code
+    : '';
+
+const safeAccounts = (e: unknown): { id: string; name: string; type: string | null }[] => {
+  const list = (e as { accounts?: unknown }).accounts;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((row) => {
+    if (!row || typeof row !== 'object') return [];
+    const { id, name, type } = row as { id?: unknown; name?: unknown; type?: unknown };
+    if (typeof id !== 'string' || typeof name !== 'string') return [];
+    return [{ id, name, type: typeof type === 'string' ? type : null }];
+  });
+};
+
+export const accountMutationErrorResponse = (e: unknown): ErrorResponse => {
+  switch (errorCode(e)) {
+    case 'account_selection_required':
+      return { status: 409, body: { error: 'account selection required', accounts: safeAccounts(e) } };
+    case 'account_not_accessible':
+      return { status: 409, body: { error: 'account not accessible' } };
+    case 'no_cloudflare_accounts':
+      return { status: 422, body: { error: 'no accessible cloudflare accounts' } };
+    case 'cloudflare_token_rejected':
+    case 'cloudflare_account_read_forbidden':
+      return { status: 422, body: { error: errorCode(e) } };
+    case 'cloudflare_unavailable':
+    case 'cloudflare_invalid_response':
+      return { status: 502, body: { error: errorCode(e) } };
+    default:
+      return { status: 500, body: { error: 'account create failed' } };
+  }
+};
+
+export const provisionRequestErrorResponse = (e: unknown): ErrorResponse => {
+  const mapped = accountMutationErrorResponse(e);
+  if (mapped.status === 500) return { status: 500, body: { error: 'provision request rejected' } };
+  return mapped;
+};
+
+export const accountTestResponse = (res: TestAccountResult): { status: number; body: AccountTestBody } => ({
+  status: 200,
+  body: { ok: res.ok, status: res.status, err: res.err ?? null },
+});
+
+export const accountTestErrorResponse = (): { status: number; body: { error: string } } => ({
+  status: 500,
+  body: { error: 'account test failed' },
+});
+
 router.use('*', async (_c, next) => {
   await next();
   _c.res.headers.set('Cache-Control', 'no-store');
 });
+
+// LB admin mutations: require admin session role (same as monitoring endpoints).
+// Step-up password removed — OAuth admin session is the sole auth path.
+router.use('*', requireAdminSession);
 
 // ---- settings -------------------------------------------------------------
 router.get('/settings', async (c: Context) => {
@@ -52,15 +200,23 @@ router.put('/settings', async (c) => {
 router.get('/accounts', async (c) => json(c, await listAccountsSafe(getDb(c))));
 
 router.post('/accounts', async (c) => {
-  const body = await c.req.json().catch(() => null) as {
-    label: string; provider: 'cloudflare' | 'vercel';
-    account_ref?: string | null; rawToken: string; token_last4: string;
-  } | null;
-  if (!body || !body.label || !body.provider || !body.rawToken || !body.token_last4) {
-    return json(c, { error: 'missing fields' }, 400);
+  const parsed = validateAccountBody(await c.req.json().catch(() => null));
+  if (!parsed.ok) return json(c, { error: parsed.error }, 400);
+  const input = parsed.value;
+  try {
+    const res = await createAccount(c.env, getDb(c), {
+      label: input.label,
+      provider: input.provider,
+      accountId: input.accountId,
+      rawToken: input.rawToken,
+      created_by: requireAuth(c)?.id ?? null,
+    });
+    return json(c, res, res.status === 'verified' ? 200 : 422);
+  } catch (e) {
+    console.error('[admin/lb] createAccount', String(e).slice(0, 200));
+    const mapped = accountMutationErrorResponse(e);
+    return json(c, mapped.body, mapped.status);
   }
-  const res = await createAccount(c.env, getDb(c), body);
-  return json(c, res, res.status === 'verified' ? 200 : 422);
 });
 
 router.delete('/accounts/:id', async (c) => {
@@ -72,9 +228,16 @@ router.delete('/accounts/:id', async (c) => {
 
 router.post('/accounts/:id/test', async (c) => {
   const id = c.req.param('id');
-  const res = await testAccount(c.env, id);
-  await getDb(c).addAuditLog({ accountId: id, action: `account.test.${res.status ?? 'failed'}` });
-  return json(c, res);
+  try {
+    const res = await testAccount(c.env, getDb(c), id);
+    await getDb(c).addAuditLog({ accountId: id, action: `account.test.${res.status}` });
+    const mapped = accountTestResponse(res);
+    return json(c, mapped.body, mapped.status);
+  } catch (e) {
+    console.error('[admin/lb] testAccount', String(e).slice(0, 200));
+    const mapped = accountTestErrorResponse();
+    return json(c, mapped.body, mapped.status);
+  }
 });
 
 // ---- origins --------------------------------------------------------------
@@ -142,25 +305,48 @@ router.get('/usage', async (c) => {
 });
 
 router.post('/accounts/provision', async (c) => {
-  const body = await c.req.json().catch(() => null) as {
-    label: string;
-    cfApiToken: string;
-    workerName?: string;
-  } | null;
-  if (!body || !body.label || !body.cfApiToken) {
-    return json(c, { error: 'label and cfApiToken required' }, 400);
+  const parsed = validateProvisionBody(await c.req.json().catch(() => null));
+  if (!parsed.ok) return json(c, { error: parsed.error }, 400);
+  const input = parsed.value;
+  let account;
+  try {
+    account = await resolveCloudflareAccount(input.cfApiToken, input.accountId);
+  } catch (e) {
+    console.error('[admin/lb] provision account discovery', String(e).slice(0, 200));
+    const mapped = provisionRequestErrorResponse(e);
+    return json(c, mapped.body, mapped.status);
   }
-  const workerName = body.workerName || `manga-api-${Date.now().toString(36)}`;
   const jobId = crypto.randomUUID();
   c.executionCtx.waitUntil(
-    provisionAccount(c.env, { label: body.label, cfApiToken: body.cfApiToken, workerName, jobId })
+    provisionAccount(c.env, {
+      label: input.label,
+      cfApiToken: input.cfApiToken,
+      workerName: input.workerName,
+      jobId,
+      accountId: account.id,
+      resolvedAccount: account,
+      createdBy: requireAuth(c)?.id ?? null,
+    })
       .catch((e) => console.error('[provision]', e))
   );
-  return json(c, { job_id: jobId, worker_name: workerName, provisioning: true });
+  return json(c, { job_id: jobId, worker_name: input.workerName, provisioning: true });
 });
 
 router.get('/accounts/:id/provision-status', async (c) => {
-  const status = await checkProvisionStatus(c.env, c.req.param('id'));
+  const id = c.req.param('id');
+  const status = await checkProvisionStatus(c.env, id);
   if (!status) return json(c, { error: 'job not found' }, 404);
-  return json(c, { data: status });
+  const { status: jobStatus, step, error, workerUrl, accountId, databaseId, kvId } = status;
+  return json(c, {
+    data: {
+      job_id: id,
+      status: jobStatus,
+      step,
+      error: error ?? null,
+      workerUrl: workerUrl ?? null,
+      accountId: accountId ?? null,
+      databaseId: databaseId ?? null,
+      kvId: kvId ?? null
+    }
+  });
 });

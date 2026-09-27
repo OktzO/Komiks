@@ -14,12 +14,27 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   TURNSTILE_SECRET_KEY?: string;
+  // BFF service-token (API hardening): secret yang sama juga di-set di worker
+  // web (manga-web) supaya panggilan SSR manga-web ke /api/* dikenali gate
+  // di lib/serviceGate.ts. Non-PUBLIC_ → tidak pernah di-inline ke bundle.
+  SERVICE_TOKEN?: string;
+  // Signed image URLs (anti-scraping /img/*): HMAC short-lived signature.
+  // Satu nama secret utk semua worker — nilai boleh identik lintas akun supaya
+  // signed URL dari worker mana pun valid di worker mana pun (hash-routing
+  // worker non-deterministik vs worker yang mint). UNSET → /img fail-open tanpa
+  // signature (dev) + warning sekali, konsisten dgn SERVICE_TOKEN/Turnstile.
+  SIGNED_IMG_SECRET?: string;
   ADMIN_PASSWORD_HASH?: string;
    ADMIN_PASSWORD?: string;
    ADMIN_EMAILS?: string;
    SCRAPE_API_KEY?: string;
   B2_CONFIG?: string;
   B2_ACCOUNTS?: string;
+  CF_ACCOUNT_ID?: string;
+  CF_WORKER_NAME?: string;
+  CF_D1_ID?: string;
+  CF_KV_ID?: string;
+  CF_INVENTORY_TOKEN?: string;
   PEER_URLS?: string;
   PEER_INDEX?: string;
   EVICTION_OWNER?: string;

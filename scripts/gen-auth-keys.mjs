@@ -7,7 +7,12 @@ import { webcrypto } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 
 const crypto = webcrypto;
-const workers = ['manga-api', 'manga-api-2', 'manga-api-3', 'manga-api-4'];
+// N-agnostik: jumlah worker dari GEN_WORKERS (CSV nama worker, default =
+// 4 akun saat ini). Contoh: GEN_WORKERS=manga-api,manga-api-2 node scripts/gen-auth-keys.mjs
+const workers = (process.env.GEN_WORKERS || 'manga-api,manga-api-2,manga-api-3,manga-api-4')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const out = { generated_at: new Date().toISOString(), workers: {} };
 const pub = [];

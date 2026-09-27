@@ -3,6 +3,7 @@
 const NO_REF = { referrerpolicy: "no-referrer" };
 import { useEffect, useState } from 'react';
 import { getAuthApiUrl, safeType, typedChapterUrl } from '@/lib/api';
+import { sanitizeCoverUrl } from '@manga-platform/shared/http';
 
 interface HistoryItem {
   id: string;
@@ -88,7 +89,7 @@ export function ContinueReadingRail() {
             >
               <div className="w-10 h-14 shrink-0 overflow-hidden rounded bg-bg-secondary border border-border-subtle flex items-center justify-center text-xs text-muted">
                 {item.cover_image ? (
-                  <img src={item.cover_image} alt="" className="h-full w-full object-cover" loading="lazy" {...NO_REF} />
+                  <img src={sanitizeCoverUrl(item.cover_image) ?? undefined} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" {...NO_REF} />
                 ) : (
                   <span className="font-mono text-[10px]">Ch.{item.chapter_number}</span>
                 )}

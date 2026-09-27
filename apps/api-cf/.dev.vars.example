@@ -11,3 +11,10 @@ B2_EVICTION_DAYS=
 PEER_URLS=http://localhost:8787
 PEER_INDEX=0
 DB_FORWARD_KEY=
+# Inventory metadata (isi sama dgn [vars] wrangler utk peer yang di-bridge)
+CF_ACCOUNT_ID=
+CF_WORKER_NAME=
+CF_D1_ID=
+CF_KV_ID=
+# Kosong = inventory jatuh ke fallback lokal/derived (tanpa bacaan provider CF)
+CF_INVENTORY_TOKEN=

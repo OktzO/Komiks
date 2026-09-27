@@ -24,6 +24,11 @@ PEER_URLS = "https://manga-api.oktz.workers.dev,https://manga-api-2.tzok5555.wor
 PEER_INDEX = "1"
 AUTH_PUBLIC_KEYS = '[{"kid":"manga-api","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"7t_Lay1YVxbVCkR7nNNMsNOTzOuy7B2GJNnGIaXgft4","y":"GmlK-twGCtCS2wXkZwllV2vO1ACUTPph75Pkh11yCTs","crv":"P-256"}},{"kid":"manga-api-2","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"TY2VCzF0ShaaZ7CWFmr8QQ1-4Y1kVBM_Bq68kIbh_1U","y":"fIe-sM7w-tAOeGKhT40D5-1lSkon4b0aYT0Qn96ZBN0","crv":"P-256"}},{"kid":"manga-api-3","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"0fJmUlRFoNlFu-TdYLhxA-US4-vYjSViLqCNaKg3ymY","y":"X5M9xNq0NjrwY0Udpg9MqgMI76XEaRCg_arDRWLh0rY","crv":"P-256"}},{"kid":"manga-api-4","key":{"key_ops":["verify"],"ext":true,"kty":"EC","x":"rUDSZFmCL79QnJUnJsAmEu5RjuU8u0nh0CV6_FZXn0c","y":"rJdiYevESLD2cdGe_ncmrzu6PppMl3UbERk88t4I56U","crv":"P-256"}}]'
 
+CF_ACCOUNT_ID = "6a0bdfb8bccff744bd738a57502d0380"
+CF_WORKER_NAME = "manga-api-2"
+CF_D1_ID = "61cbf1b1-508e-4b00-a0e6-dd68528e54ba"
+CF_KV_ID = "cf560313c1204ec08f174c8924ad3118"
+
 [cache]
 enabled = true
 
