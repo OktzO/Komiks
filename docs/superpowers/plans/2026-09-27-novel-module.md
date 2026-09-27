@@ -300,7 +300,7 @@ git commit -m "feat(sources): gooddreamer + noveltoon metadata fallback adapters
 - [ ] **Step 1: Run the full baseline and record it**
 
 ```bash
-node --test apps/api-cf/test/*.test.mjs 2>&1 | tail -20
+npm --prefix apps/api-cf test 2>&1 | tail -20
 npm --prefix packages/sources test
 npm --prefix packages/db test
 ```
@@ -591,10 +591,10 @@ git commit -m "chore(db): migration runner support for novel tables"
 - [ ] **Step 1: Run every suite**
 
 ```bash
-node --test apps/api-cf/test/*.test.mjs 2>&1 | tail -25
+npm --prefix apps/api-cf test 2>&1 | tail -25
 npm --prefix packages/sources test
 npm --prefix packages/db test
-node --test packages/shared/test/*.test.mjs
+packages/db/node_modules/.bin/tsx --test packages/shared/test/http-cover.test.mjs
 cd apps/web && bun test
 node scripts/scan-secrets.mjs
 ```
