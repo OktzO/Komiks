@@ -67,8 +67,9 @@ const parseChapterList = (html: string, seriesSlug: string): Chapter[] => {
   const links = Array.from(html.matchAll(/<a[^>]*href="(\/[^"]*-chapter-[\d.-]+\/?)"[^>]*title="([^"]*)"/g)).map((m) => {
     const href = m[1];
     const title = decodeHtmlEntities(m[2].replace(/^Baca\s+/, '').replace(/\s+Bahasa Indonesia$/, '').replace(/\s+Terbaru$/, '')) ?? '';
-    // Normalize: strip trailing slash so /foo-chapter-12/ and /foo-chapter-12 dedupe.
-    const id = (href.split('/').filter(Boolean).pop() ?? '').replace(/\/$/, '');
+    // `filter(Boolean)` already drops the empty trailing segment, so pop() can
+    // never return a slash-suffixed string; the two href forms dedupe on their own.
+    const id = href.split('/').filter(Boolean).pop() ?? '';
     return { id, title, href };
   });
   const seen = new Set<string>();
