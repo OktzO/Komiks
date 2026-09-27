@@ -6,7 +6,7 @@ import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { decodeHtmlEntities } from '@manga-platform/shared/entities';
 import { mapStatusText } from '@manga-platform/shared/status';
 import { KOMIKU_SELECTORS } from './selectors.js';
-import { fetchRobots, isPathAllowed, KOMIKU_BASE, KOMIKU_UA, KOMIKU_REFERER } from './client.js';
+import { fetchRobots, isPathAllowed, KOMIKU_BASE, KOMIKU_API_BASE, KOMIKU_UA, KOMIKU_REFERER } from './client.js';
 import type { RobotsResult } from './client.js';
 
 export interface AdapterEnv {
@@ -160,7 +160,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
     async search({ q, limit = 20 }: { q: string; limit?: number; offset?: number }): Promise<Series[]> {
       // Komiku search via htmx API endpoint — returns HTML directly, no JS render needed.
       // Avoids Puppeteer launch for search (saves browser requests for reader).
-      const res = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(q)}&post_type=manga`, {
+      const res = await fetch(`${KOMIKU_API_BASE}/?s=${encodeURIComponent(q)}&post_type=manga`, {
         headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
         signal: AbortSignal.timeout(15000),
       });
@@ -193,7 +193,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
       if (!cover) {
         try {
           const qWords = sourceId.split('-').slice(0, 2).join(' ');
-           const searchRes = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
+           const searchRes = await fetch(`${KOMIKU_API_BASE}/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
              headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
              signal: AbortSignal.timeout(8000),
            });
@@ -243,7 +243,7 @@ export const komikuAdapter = (env?: AdapterEnv) => {
       if (!cover) {
         try {
           const qWords = sourceId.split('-').slice(0, 2).join(' ');
-          const searchRes = await fetch(`https://api.komiku.org/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
+          const searchRes = await fetch(`${KOMIKU_API_BASE}/?s=${encodeURIComponent(qWords)}&post_type=manga`, {
             headers: { 'User-Agent': KOMIKU_UA, 'Referer': KOMIKU_REFERER },
             signal: AbortSignal.timeout(8000),
           });

@@ -1,5 +1,8 @@
 // Komiku HTTP client: robots.txt fetch + raw HTML fetch (no puppeteer for static pages).
 const BASE = 'https://komiku.org';
+// Search runs against the api subdomain (htmx endpoint returning HTML directly);
+// the site origin does not serve `?s=` results in the shape parseSearchHtml needs.
+export const KOMIKU_API_BASE = 'https://api.komiku.org';
 
 // Komiku.org (and its api subdomain) sit behind a DDoS-guard style edge that
 // silently stalls (10-15s) on non-browser User-Agents — `manga-platform/1.0`
