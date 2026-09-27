@@ -35,3 +35,8 @@ apps/api-cf/.auth-keys.json
 # isolated git worktrees (superpowers:using-git-worktrees)
 .worktrees/
 apps/web/.astro/
+
+# local package-link symlinks into node_modules/ (npm workspaces); a `git add -A`
+# would otherwise sweep the links in
+apps/web/manga-web
+apps/api-cf/manga-api

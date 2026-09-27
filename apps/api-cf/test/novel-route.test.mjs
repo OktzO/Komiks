@@ -84,7 +84,13 @@ const stubD1 = ({ series: rows = [], chapters = [] } = {}) => {
           if (sql.includes('FROM novel_chapters')) {
             const mine = chapters.filter((c) => c.series_id === rec.args[0]);
             const { offset, limit } = windowOf(rec.args, mine.length);
-            return { results: mine.slice(offset, offset + limit) };
+            // A real D1 answers only the projected columns. The stub must do the
+            // same, or a summary query would still be handed the prose it did
+            // not ask for and the payload assertions below would prove nothing.
+            const cols = sql.slice(sql.indexOf('SELECT') + 6, sql.indexOf('FROM')).split(',').map((s) => s.trim());
+            return {
+              results: mine.slice(offset, offset + limit).map((c) => Object.fromEntries(cols.filter((k) => k in c).map((k) => [k, c[k]]))),
+            };
           }
           return { results: [] };
         },
@@ -239,6 +245,47 @@ test('series detail embeds the stored chapters', async () => {
   assert.equal(body.data.id, 'novelid-tekaburu');
   assert.equal(body.data.chapters.length, 1);
   assert.equal(body.data.chapters[0].source_chapter_id, 'tekaburu/1');
+});
+
+// A 50-row window of chapter bodies is ~1MB that no list caller reads. Both
+// list paths must answer with summaries; only the single-chapter read may carry
+// prose. Asserted on the serialized body, which is what actually crosses the wire.
+const PROSE = '<p>prose</p>';
+const noProseIn = (payload, what) => {
+  const json = JSON.stringify(payload);
+  assert.ok(!json.includes(PROSE), `${what} leaked chapter prose`);
+  for (const col of ['"content"', '"content_hash"', '"source_url"']) {
+    assert.ok(!json.includes(col), `${what} leaked ${col}`);
+  }
+};
+
+test('the chapter list response carries no chapter prose', async () => {
+  const many = Array.from({ length: 50 }, (_, i) => chapter({ id: `novelid-tekaburu:tekaburu/${i + 1}`, source_chapter_id: `tekaburu/${i + 1}`, number: i + 1, content: PROSE }));
+  const { client, trace } = stubD1({ series: [SERIES], chapters: many });
+  const { res, body } = await call('/api/novel/series/novelid-tekaburu/chapters?limit=50', envFor({ DB: client }));
+  assert.equal(res.status, 200);
+  assert.equal(body.data.length, 50);
+  assert.equal(body.data[0].source_chapter_id, 'tekaburu/1');
+  assert.equal(body.data[0].title, 'Bab 1');
+  assert.equal(body.data[0].content, undefined);
+  noProseIn(body.data, 'chapter list');
+  const list = trace.find((r) => r.sql.includes('FROM novel_chapters'));
+  assert.doesNotMatch(list.sql, /content_hash|content,|source_url/);
+});
+
+test('the embedded chapter list in the series detail carries no prose either', async () => {
+  const { client, trace } = stubD1({ series: [SERIES], chapters: [chapter()] });
+  const { body } = await call('/api/novel/series/novelid-tekaburu', envFor({ DB: client }));
+  assert.equal(body.data.chapters[0].source_chapter_id, 'tekaburu/1');
+  noProseIn(body.data.chapters, 'series detail chapters');
+  const list = trace.find((r) => r.sql.includes('FROM novel_chapters'));
+  assert.doesNotMatch(list.sql, /content_hash|content,|source_url/);
+});
+
+test('the single-chapter read still returns the body', async () => {
+  const { client } = stubD1({ series: [SERIES], chapters: [chapter()] });
+  const { body } = await call('/api/novel/series/novelid-tekaburu/chapter/tekaburu%2F1', envFor({ DB: client }));
+  assert.equal(body.data.content, PROSE);
 });
 
 test('chapter read returns stored content without calling any adapter', async () => {

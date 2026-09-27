@@ -2,15 +2,19 @@
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import { NovelReader } from '@/components/NovelReader';
-import { getNovelChapter, getNovelSeries } from '@/lib/api';
+import { getNovelChapter, getNovelSeries, isNotFound } from '@/lib/api';
 import { chapterNumberOf } from '@/lib/novelRoutes';
 
 export const prerender = false;
 
 // Async-first: the series title is small and KV-warm, the chapter body is the
 // slow part (a stale chapter triggers a re-scrape). Budget them apart so a cold
-// chapter never holds back the shell, and so a budget miss is never mistaken
-// for a 404.
+// chapter never holds back the shell.
+//
+// 404 policy, per [type]/[slug]/[chapterId].astro:59-60: do NOT 404 server-side
+// on a transport failure. Only an upstream that answered 404 sets 404. A Worker
+// outage must render the shell (which retries) — never "bab not found", and
+// never a 404 for a crawler.
 const SERIES_BUDGET_MS = 300;
 const CHAPTER_BUDGET_MS = 400;
 
@@ -24,11 +28,11 @@ const chapterId = Astro.params.chapter ?? '';
 const settled = await Promise.race([
   getNovelChapter(slug, chapterId)
     .then((c) => ({ ok: true as const, c }))
-    .catch(() => ({ ok: false as const })),
+    .catch((e: unknown) => ({ ok: false as const, e })),
   new Promise<null>((r) => setTimeout(() => r(null), CHAPTER_BUDGET_MS)),
 ]);
 
-const notFound = settled !== null && !settled.ok;
+const notFound = settled !== null && !settled.ok && isNotFound(settled.e);
 const chapter = settled?.ok ? settled.c : null;
 
 let seriesTitle = slug;

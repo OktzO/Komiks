@@ -3,15 +3,16 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import { NovelChapterList } from '@/components/NovelChapterList';
 import { CoverImage } from '@/components/CoverImage';
-import { getNovelSeries, type NovelChapter, type NovelSeries } from '@/lib/api';
+import { getNovelSeries, isNotFound, type NovelChapter, type NovelSeries } from '@/lib/api';
 import { chapterNumberOf, novelCatalogUrl, parseNovelGenres } from '@/lib/novelRoutes';
 
 export const prerender = false;
 
-// Async-first: the detail payload carries the series AND its first chapter page,
-// so one 300ms-budgeted call covers the whole page. Late → the chapter island
-// self-fetches; a throw is a real 404 (the route also rejects a slug that
-// decoded to a path separator, so there is no second series to guess at).
+// Async-first: the detail payload carries the series AND its first chapter
+// window, so one 300ms-budgeted call covers the whole page. A settled rejection
+// that is NOT an upstream 404 is an outage, not a missing series — see
+// [type]/[slug]/[chapterId].astro:59. Only a real 404 sets 404, so a Worker
+// outage can never tell a crawler the content does not exist.
 const BUDGET_MS = 300;
 
 const slug = Astro.params.slug ?? '';
@@ -19,11 +20,14 @@ const slug = Astro.params.slug ?? '';
 // Settled (not raced) so a rejected fetch can never surface as an unhandled
 // rejection once the timeout has already won the race.
 const settled = await Promise.race([
-  getNovelSeries(slug).then((s) => ({ ok: true as const, s })).catch(() => ({ ok: false as const })),
+  getNovelSeries(slug)
+    .then((s) => ({ ok: true as const, s }))
+    .catch((e: unknown) => ({ ok: false as const, e })),
   new Promise<null>((r) => setTimeout(() => r(null), BUDGET_MS)),
 ]);
 
-const notFound = settled !== null && !settled.ok;
+const notFound = settled !== null && !settled.ok && isNotFound(settled.e);
+const outage = settled !== null && !settled.ok && !notFound;
 const series: NovelSeries | null = settled?.ok ? settled.s : null;
 
 const chapters: NovelChapter[] | null = series ? (series.chapters ?? []) : null;
@@ -58,6 +62,12 @@ if (notFound) Astro.response.status = 404;
     <script type="application/ld+json" set:html={jsonLd} />
 
     <a href="/novel" class="text-secondary text-sm hover:text-accent mb-4 inline-block">← Katalog Novel</a>
+
+    {outage && (
+      <div class="mb-4 rounded-panel border border-border-default bg-card p-4 text-sm text-secondary" role="status">
+        Sumber novel sedang tidak bisa dihubungi. Halaman ini tetap ada — coba lagi sebentar.
+      </div>
+    )}
 
     {series ? (
       <>

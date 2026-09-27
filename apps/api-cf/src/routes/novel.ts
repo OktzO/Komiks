@@ -16,9 +16,10 @@ const MAX_LIMIT = 50;
 // (with a keyset cursor instead of OFFSET) when the library outgrows that.
 const MERGE_WINDOW = 100;
 const STALE_SEC = 86400;
-// ponytail: the detail payload embeds only the first page. Raise it, or drop the
-// field and make the web client page /novel/series/:slug/chapters, once real
-// series turn out to have chapter lists the reader must page through.
+// ponytail: the detail payload embeds only the first page of summaries. Raise
+// DETAIL_CHAPTERS, or drop the field and make the web client page
+// /novel/series/:slug/chapters, once real series turn out to have chapter lists
+// the reader must page through.
 const DETAIL_CHAPTERS = 50;
 
 const metadataAdapters = (): NovelSourceAdapter[] =>
@@ -101,7 +102,9 @@ router.get('/novel/series/:slug', async (c) => {
     const novel = novelDbFor(c.env, slug);
     const series = await novel.getSeriesBySlug(slug);
     if (!series) return null;
-    return { ...series, chapters: await novel.listChapters(slug, { limit: DETAIL_CHAPTERS, offset: 0 }) };
+    // Summaries, not rows: the embedded page is a navigation list, and shipping
+    // 50 chapter bodies with it would be ~1MB nobody reads.
+    return { ...series, chapters: await novel.listChapterSummaries(slug, { limit: DETAIL_CHAPTERS, offset: 0 }) };
   });
   if (!data) return json(c, { error: 'Series not found' }, 404);
 
@@ -126,7 +129,7 @@ router.get('/novel/series/:slug/chapters', async (c) => {
   const payload = await readThrough(c, `novel:chapters:${slug}:${page}:${limit}`, 600, async () => {
     const novel = novelDbFor(c.env, slug);
     const [data, total] = await Promise.all([
-      novel.listChapters(slug, { limit, offset }),
+      novel.listChapterSummaries(slug, { limit, offset }),
       novel.countChapters(slug),
     ]);
     return { data, total };

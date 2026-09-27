@@ -66,7 +66,42 @@ export const chapterNumberOf = (chapterId: string): number | null => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
-/** genre arrives as a JSON array string; a non-array is treated as one tag. */
+/** Row windows are ordered by `number`, so the neighbours are simply the rows either side. */
+export const neighbourChapters = <T extends { number: number }>(
+  chapters: T[],
+  number: number | null,
+): { prev: T | null; next: T | null } => {
+  if (number === null || chapters.length === 0) return { prev: null, next: null };
+  const ordered = [...chapters].sort((a, b) => a.number - b.number);
+  return {
+    prev: ordered.filter((c) => c.number < number).pop() ?? null,
+    next: ordered.find((c) => c.number > number) ?? null,
+  };
+};
+
+/**
+ * Whether to keep walking chapter pages while hunting for `chapterId`.
+ *
+ * The answer is read off the rows that came back, never off the chapter number:
+ * ingest drops every chapter whose body fetch failed or came back blank, so the
+ * numbering has guaranteed gaps and a list page is a row-offset window rather
+ * than a number range. `Math.ceil(number / limit)` therefore points at the
+ * wrong window for exactly the novels long enough to page.
+ */
+export const shouldFetchNextChapterPage = (
+  rows: { source_chapter_id: string }[],
+  chapterId: string,
+  limit: number,
+): boolean => {
+  const at = rows.findIndex((c) => c.source_chapter_id === chapterId);
+  // Not in this window. A short page is the end of the list, so the chapter is
+  // not stored; a full page means keep walking.
+  if (at === -1) return rows.length >= limit;
+  // Current chapter is the last row of this window: its successor is on the next.
+  return at === rows.length - 1;
+};
+
+/** genre arrives as a JSON array string; anything else is not a tag list, so `[]`. */
 export const parseNovelGenres = (genre: string | null | undefined): string[] => {
   if (!genre) return [];
   try {

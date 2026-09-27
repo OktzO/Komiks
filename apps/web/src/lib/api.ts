@@ -123,6 +123,21 @@ export interface Chapter {
   pages?: { proxyUrl: string; imgUrl?: string | null; b2Url?: string | null }[];
 }
 
+// Carries the HTTP status so a caller can tell "the upstream says this does not
+// exist" (404) from "the transport failed" (network error, 5xx, all origins
+// circuit-open). Only the novel module branches on it today; a manga caller that
+// still reads `err.message` is unaffected.
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+// True only for an upstream that answered and said 404. Everything else — a
+// 5xx, a timeout, a DNS failure — is an outage, and must not become a 404.
+export const isNotFound = (e: unknown): boolean => e instanceof ApiError && e.status === 404;
+
 // 12s timeout prevents Cloudflare Pages Function timeout (30s) from
 // triggering a 502 when the Worker API is slow on cold KV cache.
 async function api<T>(path: string): Promise<T> {
@@ -134,7 +149,7 @@ async function api<T>(path: string): Promise<T> {
   if (!res.ok) {
     let body = '';
     try { body = (await res.clone().text()).slice(0, 160); } catch {}
-    throw new Error(`API ${path} → ${res.status} ${body}`);
+    throw new ApiError(`API ${path} → ${res.status} ${body}`, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -221,6 +236,17 @@ export interface NovelChapter {
   source_chapter_id: string;
   number: number;
   title: string | null;
+  // Only the single-chapter read carries these; the list routes answer with
+  // summaries (a 50-chapter window of prose is ~1MB that no caller reads).
+  content?: string;
+  scraped_at?: number;
+}
+
+// The one read that always has the body, so `content` is required here.
+export interface NovelChapterBody {
+  id: string;
+  number: number;
+  title: string | null;
   content: string;
   scraped_at: number;
 }
@@ -257,7 +283,7 @@ export const getNovelChapters = (slug: string, opts: { page?: number; limit?: nu
 };
 
 export const getNovelChapter = (slug: string, chapterId: string) =>
-  apiWithFailover<{ data: Pick<NovelChapter, 'id' | 'number' | 'title' | 'content' | 'scraped_at'> }>(
+  apiWithFailover<{ data: NovelChapterBody }>(
     `/api/novel/series/${encodeURIComponent(slug)}/chapter/${encodeURIComponent(chapterId)}`,
   ).then((r) => r.data);
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getNovelChapter, getNovelChapters, type NovelChapter } from '@/lib/api';
-import { chapterNumberOf, novelChapterUrl, sanitizeNovelHtml } from '@/lib/novelRoutes';
+import { getNovelChapter, getNovelChapters, type NovelChapter, type NovelChapterBody } from '@/lib/api';
+import { chapterNumberOf, neighbourChapters, novelChapterUrl, sanitizeNovelHtml, shouldFetchNextChapterPage } from '@/lib/novelRoutes';
 
 // Text reader for prose. Deliberately not a variant of Reader.tsx: that one
 // reserves image aspect ratios to fight CLS, which is meaningless here — the
@@ -11,9 +11,15 @@ const LINE_HEIGHTS: readonly number[] = [1.5, 1.7, 1.9, 2.1];
 const PREFS_KEY = 'oktz_novel_prefs';
 const PROGRESS_KEY = 'oktz_novel_progress';
 const SAVE_EVERY_MS = 1000;
+const LIMIT = 50;
+// Chapter pages the neighbour walk will read before giving up (250 rows).
+const NEIGHBOUR_PAGES = 5;
 
 type Prefs = { fontSize: number; lineHeight: number };
 type Progress = Record<string, { at: number; ratio: number }>;
+// What the reader actually uses from a chapter. The API's NovelChapterBody is a
+// superset (id, scraped_at), so a page can hand its fetch straight through.
+type Body = Pick<NovelChapterBody, 'number' | 'title' | 'content'>;
 
 const readJson = <T,>(key: string, fallback: T): T => {
   try {
@@ -50,9 +56,9 @@ export function NovelReader({
   chapterNumber: number | null;
   chapterTitle: string | null;
   seriesTitle: string;
-  initial: { number: number; title: string | null; content: string } | null;
+  initial: Body | null;
 }) {
-  const [body, setBody] = useState(initial);
+  const [body, setBody] = useState<Body | null>(initial);
   const [failed, setFailed] = useState(false);
   const [siblings, setSiblings] = useState<NovelChapter[]>([]);
   const [prefs, setPrefs] = useState<Prefs>({ fontSize: 17, lineHeight: 1.7 });
@@ -82,36 +88,33 @@ export function NovelReader({
     return () => { alive = false; };
   }, [initial, slug, chapterId]);
 
-  // Neighbours come from the chapter list. Only the first page is fetched, so a
-  // chapter past it needs its own page — the list is ordered by number, so the
-  // page holding it is derivable instead of scanning. The lookup uses the
-  // page-supplied number, which is final for the lifetime of the props: waiting
-  // on `body` here would re-fire the request once the chapter body lands.
+  // Prev/next are read off the stored rows, never computed from the chapter
+  // number. Ingest drops every chapter whose body fetch failed, so numbering has
+  // gaps and a list page is a row-offset window: for a novel with chapters
+  // 1-10 and 101-200, chapter 150 sits on page 2, while ceil(150 / 50) says 3.
+  // The walk is bounded — past NEIGHBOUR_PAGES the links stay off rather than
+  // risk pointing at the wrong chapter, and the series page remains the way in.
   useEffect(() => {
     let alive = true;
-    const LIMIT = 50;
-    const num = chapterNumberProp;
-    getNovelChapters(slug, { page: 1, limit: LIMIT }).then((res) => {
-      const first = res.data ?? [];
-      if (alive) setSiblings(first);
-      if (num === null || first.some((c) => c.source_chapter_id === chapterId)) return;
-      const page = Math.ceil(num / LIMIT);
-      if (page < 2) return;
-      getNovelChapters(slug, { page, limit: LIMIT })
-        .then((more) => { if (alive) setSiblings((prev) => [...prev, ...(more.data ?? [])]); })
-        .catch(() => {});
-    }).catch(() => {});
+    const collected: NovelChapter[] = [];
+    (async () => {
+      for (let page = 1; page <= NEIGHBOUR_PAGES; page++) {
+        const res = await getNovelChapters(slug, { page, limit: LIMIT }).catch(() => null);
+        if (!alive || !res) return;
+        const rows = res.data ?? [];
+        if (rows.length === 0) return;
+        collected.push(...rows);
+        setSiblings([...collected]);
+        if (!shouldFetchNextChapterPage(rows, chapterId, LIMIT)) return;
+      }
+    })();
     return () => { alive = false; };
-  }, [slug, chapterId, chapterNumberProp]);
+  }, [slug, chapterId]);
 
-  const { prev, next } = useMemo(() => {
-    if (chapterNumber === null || siblings.length === 0) return { prev: null, next: null };
-    const ordered = [...siblings].sort((a, b) => a.number - b.number);
-    return {
-      prev: ordered.filter((c) => c.number < chapterNumber).pop() ?? null,
-      next: ordered.find((c) => c.number > chapterNumber) ?? null,
-    };
-  }, [siblings, chapterNumber]);
+  const { prev, next } = useMemo(
+    () => neighbourChapters(siblings, body?.number ?? chapterNumberProp ?? chapterNumberOf(chapterId)),
+    [siblings, body?.number, chapterNumberProp, chapterId],
+  );
 
   const saveProgress = (ratio: number, force = false) => {
     ratioRef.current = ratio;

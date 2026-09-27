@@ -53,6 +53,9 @@ export function NovelCatalog({
   }
 
   const lastPage = catalogLastPage(data.total, data.limit || CATALOG_PAGE_SIZE);
+  // A hand-typed /novel?page=99 must land on the last real page, not on the
+  // empty state the merge ceiling produces out there.
+  const current = Math.min(Math.max(1, page), lastPage);
   const series = data.data ?? [];
 
   return (
@@ -79,11 +82,11 @@ export function NovelCatalog({
 
       {lastPage > 1 && (
         <nav className="mt-8 flex items-center justify-center gap-2" aria-label="Halaman katalog novel">
-          <PagerLink page={page - 1} genre={genre} disabled={page <= 1} label="← Sebelumnya" />
+          <PagerLink page={current - 1} genre={genre} disabled={current <= 1} label="← Sebelumnya" />
           <span className="px-2 font-mono text-[11px] text-muted">
-            Halaman {page} / {lastPage}
+            Halaman {current} / {lastPage}
           </span>
-          <PagerLink page={page + 1} genre={genre} disabled={page >= lastPage} label="Berikutnya →" />
+          <PagerLink page={current + 1} genre={genre} disabled={current >= lastPage} label="Berikutnya →" />
         </nav>
       )}
     </div>

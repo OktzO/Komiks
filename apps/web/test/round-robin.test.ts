@@ -1,5 +1,6 @@
 // Round-robin SSR fix test - verifies apiWithFailover distribution:
 //  T1 server: ~uniform spread across origins (no 100%-to-one-origin skew)
+//  T1b gate: /api/novel/ is allowlisted, a private path is not
 //  T2 client: sessionStorage cursor rotation unchanged (no regression)
 //  T3 server: circuit-open origin is skipped BEFORE random selection
 //  T4 server: all origins open -> falls back to main API, no hard error
@@ -17,6 +18,7 @@ if (N_ORIGINS < 3) {
 }
 const ORIGINS = Array.from({ length: N_ORIGINS }, (_, i) => `https://w${i}.test`);
 const hits: Record<string, number> = {};
+let mainHits = 0;
 const injectedFails: Record<string, number> = {}; // origin -> remaining 500s to inject
 
 (globalThis as any).fetch = async (input: any) => {
@@ -27,6 +29,7 @@ const injectedFails: Record<string, number> = {}; // origin -> remaining 500s to
   const origin = ORIGINS.find((o) => url.startsWith(o));
   if (!origin) {
     // main API fallback (separate host, always healthy)
+    mainHits++;
     return new Response(JSON.stringify({ data: { ok: true } }), { status: 200 });
   }
   hits[origin] = (hits[origin] ?? 0) + 1;
@@ -60,6 +63,32 @@ const t1 = report('T1 server all-healthy (200 req)', hits);
 assert.ok(t1.min > 0, 'T1 FAIL: some origin got zero requests');
 assert.ok(t1.max / t1.min < 2.5, `T1 FAIL: skew too high (max/min=${t1.max}/${t1.min})`);
 console.log('T1 PASS - server requests spread across all origins\n');
+
+// T1b: the ORIGIN_PATH_ALLOWLIST gate. A novel path must be admitted to
+// round-robin, and a private path must not be. A typo on the single
+// '/api/novel/' line would otherwise pin every novel fetch to the main API and
+// no other test would fail — that is exactly the regression this pins.
+const NOVEL_PATH = '/api/novel/catalog?page=1&limit=24';
+const PRIVATE_PATH = '/api/source-status';
+const beforeOrigins = { ...hits };
+const beforeMain = mainHits;
+for (let i = 0; i < 60; i++) await apiWithFailover(NOVEL_PATH);
+const novelSpread = ORIGINS.map((o) => (hits[o] ?? 0) - (beforeOrigins[o] ?? 0));
+for (const [i, n] of novelSpread.entries()) {
+  assert.ok(n > 0, `T1b FAIL: ${NOVEL_PATH} never reached origin ${ORIGINS[i]} — is '/api/novel/' still allowlisted?`);
+}
+const midMain = mainHits - beforeMain;
+const originsAfterNovel = { ...hits };
+const beforePrivate = mainHits;
+for (let i = 0; i < 60; i++) await apiWithFailover(PRIVATE_PATH);
+for (const o of ORIGINS) {
+  assert.equal(hits[o], originsAfterNovel[o], `T1b FAIL: ${PRIVATE_PATH} leaked to ${o} — it must stay on the main API`);
+}
+assert.equal(mainHits - beforePrivate, 60, 'T1b FAIL: a non-allowlisted path must not fan out');
+console.log(
+  `T1b PASS - allowlist gate: novel spread=${novelSpread.join('/')}, main-hits-during-novel=${midMain}, ` +
+  `private path fanned out to 0 origins\n`,
+);
 
 // T2: client cursor regression - sessionStorage rotation unchanged
 const storage = new Map<string, string>();

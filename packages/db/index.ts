@@ -1077,10 +1077,18 @@ export interface NovelChapterRow {
   content_hash: string; source_url: string | null; scraped_at: number;
 }
 
+// The listing shape. `content` is excluded on purpose: a list window of 50
+// chapters at ~20KB of prose each is ~1MB of payload that no caller reads — the
+// chapter bodies come from getChapter, one at a time.
+export type NovelChapterSummaryRow = Pick<
+  NovelChapterRow, 'id' | 'series_id' | 'source_chapter_id' | 'number' | 'title'
+>;
+
 const NOVEL_SERIES_COLUMNS =
   'id, source_series_id, source, title, author, genre, status, cover_ref, cover_fallback, synopsis, created_at, updated_at';
 const NOVEL_CHAPTER_COLUMNS =
   'id, series_id, source_chapter_id, number, title, content, content_hash, source_url, scraped_at';
+const NOVEL_CHAPTER_SUMMARY_COLUMNS = 'id, series_id, source_chapter_id, number, title';
 const NOVEL_GAP_COLUMNS = ['cover_fallback', 'synopsis', 'author'] as const;
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -1273,6 +1281,16 @@ export class NovelDb {
       .bind(seriesId, clampLimit(opts.limit), clampOffset(opts.offset))
       .all<Row>();
     return (results ?? []) as unknown as NovelChapterRow[];
+  }
+
+  // Same window as listChapters, without the prose. The list routes use this;
+  // listChapters stays for a caller that genuinely needs the bodies.
+  async listChapterSummaries(seriesId: string, opts: { limit: number; offset: number }): Promise<NovelChapterSummaryRow[]> {
+    const { results } = await this.d1
+      .prepare(`SELECT ${NOVEL_CHAPTER_SUMMARY_COLUMNS} FROM novel_chapters WHERE series_id = ?1 ORDER BY number ASC LIMIT ?2 OFFSET ?3`)
+      .bind(seriesId, clampLimit(opts.limit), clampOffset(opts.offset))
+      .all<Row>();
+    return (results ?? []) as unknown as NovelChapterSummaryRow[];
   }
 
   async countChapters(seriesId: string): Promise<number> {

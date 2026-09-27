@@ -207,6 +207,33 @@ test('listChapters orders by number ASC and clamps its limit', async () => {
   assert.equal(trace[0].args[1], 100);
 });
 
+// The list routes answer with summaries: a 50-row window of chapter bodies is
+// ~1MB that no list caller reads. Only getChapter may carry the prose.
+test('listChapterSummaries selects no prose columns', async () => {
+  const { client, trace } = makeStub({ rows: [{ id: 's:s/1', source_chapter_id: 's/1', number: 1, title: 'Bab 1' }] });
+  const rows = await novelDb(client).listChapterSummaries('novelid/tekaburu', { limit: 50, offset: 0 });
+  const select = trace[0].sql.slice(trace[0].sql.indexOf('SELECT') + 6, trace[0].sql.indexOf('FROM'));
+  assert.equal(select.trim(), 'id, series_id, source_chapter_id, number, title');
+  assert.doesNotMatch(trace[0].sql, /content_hash|content|source_url|scraped_at/);
+  assert.match(trace[0].sql, /ORDER BY number ASC/);
+  assert.deepEqual(trace[0].args, ['novelid/tekaburu', 50, 0]);
+  assert.ok(rows.length > 0);
+});
+
+test('listChapterSummaries clamps its window exactly like listChapters', async () => {
+  const { client, trace } = makeStub();
+  await novelDb(client).listChapterSummaries('s', { limit: 9999, offset: -5 });
+  assert.equal(trace[0].args[1], 100, 'limit clamped to the db ceiling');
+  assert.equal(trace[0].args[2], 0, 'negative offset clamped to 0');
+});
+
+test('getChapter still selects the full column set', async () => {
+  const { client, trace } = makeStub();
+  await novelDb(client).getChapter('s', 's/1');
+  assert.match(trace[0].sql, /content_hash/);
+  assert.match(trace[0].sql, /WHERE series_id = \?1 AND source_chapter_id = \?2/);
+});
+
 test('fillSeriesGaps writes only the columns present in its patch', async () => {
   const { client, trace } = makeStub();
   await novelDb(client).fillSeriesGaps('novelid/tekaburu', { synopsis: 'filled' });
