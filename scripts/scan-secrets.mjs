@@ -8,11 +8,28 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'test-results']);
+// Explicit deny list. `.github` is deliberately absent: a workflow file is
+// tracked source and a secret committed there is a real leak, so dot-entries
+// cannot be skipped by prefix. `.worktrees` holds sibling checkouts of this repo,
+// where findings would gate on another agent's uncommitted work.
+const SKIP_NAMES = new Set([
+  'node_modules',
+  'dist',
+  'test-results',
+  '.git',
+  '.astro',
+  '.wrangler',
+  '.playwright-mcp',
+  '.superpowers',
+  '.worktrees',
+  '.dev.vars',
+]);
 
-// Any name starting with "." is skipped, which covers .git, .astro, .wrangler,
-// .playwright-mcp and .superpowers, plus the gitignored .env / .env.deploy at
-// the repo root. Those hold real secrets and must never be read into findings.
+// The dotenv family holds real credentials and is gitignored: .env, .env.deploy,
+// .env.local, .env.production. An explicit deny rather than a "starts with ."
+// rule, which would also have hidden .github/ from the gate.
+const SKIP_DOTENV = /^\.env(\.|$)/;
+
 const RULES = [
   {
     // Cloudflare API tokens are exactly 40 chars of base64url and only count as
@@ -27,11 +44,12 @@ const RULES = [
     re: /GOCSPX-[A-Za-z0-9_-]{20,}/g,
   },
   {
-    // ponytail: covers legacy sk-<48> and sk-proj-…. Ceiling is one vendor's
-    // key family per entry; widen only when one lands here, since allowing
-    // hyphens below 32 chars starts matching prose slugs.
+    // ponytail: covers legacy sk-<48> and sk-proj-…. The lookbehind must exclude
+    // '-' as well as alnum, or a hyphenated slug like risk-sk-<32> matches.
+    // Ceiling is one vendor's key family per entry; widen only when one lands
+    // here, since permitting hyphens below 32 chars matches prose slugs.
     name: 'sk-key',
-    re: /(?<![A-Za-z0-9_])sk-(?:proj-)?[A-Za-z0-9_-]{32,}/g,
+    re: /(?<![A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{32,}/g,
   },
   {
     name: 'private-key-block',
@@ -66,33 +84,42 @@ export function scan(text, file = '') {
   return findings;
 }
 
-// ponytail: skipping every dot-entry also means .github/ is never scanned, since
-// that is what keeps the root .env / .env.deploy out of findings. Ceiling: a
-// secret committed under .github/ slips through. Upgrade path — enumerate
-// `git ls-files` via node:child_process instead of walking, once that blind spot
-// matters more than the zero-dependency rule.
 function* walkFiles(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name.startsWith('.')) continue;
+    if (SKIP_NAMES.has(entry.name) || SKIP_DOTENV.test(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) yield* walkFiles(full);
+      yield* walkFiles(full);
     } else if (entry.isFile()) {
       yield full;
     }
   }
 }
 
-function main(argv) {
-  const root = resolve(argv[2] ?? '.');
+/**
+ * @param {string} root directory to walk
+ * @returns {{findings: Array<object>, scanned: number}}
+ */
+export function scanTree(root) {
   const findings = [];
   let scanned = 0;
   for (const file of walkFiles(root)) {
-    const text = readFileSync(file, 'utf8');
-    if (text.includes('\0')) continue; // binary asset, not source
+    let text;
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch (err) {
+      console.error(`scan-secrets: unreadable, skipped: ${relative(root, file)} (${err.code})`);
+      continue;
+    }
+    if (text.includes('\0')) continue; // binary asset (png/jpeg), not source
     scanned++;
     findings.push(...scan(text, relative(root, file)));
   }
+  return { findings, scanned };
+}
+
+function main(argv) {
+  const { findings, scanned } = scanTree(resolve(argv[2] ?? '.'));
 
   if (findings.length === 0) {
     console.log(`scan-secrets: clean — ${scanned} files, 0 findings`);
