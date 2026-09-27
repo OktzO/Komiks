@@ -4,7 +4,7 @@
 // public chapter endpoint exists, so this adapter deliberately implements no
 // `getChapterContent` and no `listChapters`. It is a catalogue fallback: enough
 // to back-fill and match series, never enough to serve a chapter.
-import { withNovelRetry } from '../novel.js';
+import { novelFailure, withNovelRetry } from '../novel.js';
 import type { NovelChapterSummary, NovelSeries } from '../novel.js';
 import { GOODDREAMER_PATHS, fetchJson, normalizeMediaUrl } from './client.js';
 
@@ -66,7 +66,9 @@ export const gooddreamerAdapter = () => {
         trimmed,
         'search'
       );
-      return (payload.data ?? []).map(mapNovel);
+      // `page` only lands on the right record at exact multiples of `limit`, so
+      // the remainder of a partial window is applied here.
+      return (payload.data ?? []).slice(offset % Math.max(limit, 1)).map(mapNovel);
     },
 
     async getSeries(sourceId: string): Promise<NovelSeries> {
@@ -78,7 +80,7 @@ export const gooddreamerAdapter = () => {
         'getSeries'
       );
       const raw = payload.data;
-      if (!raw) throw new Error(`gooddreamer getSeries: empty payload for ${id}`);
+      if (!raw) throw novelFailure('gooddreamer', id, 'getSeries', 'empty payload');
       return mapNovel(raw);
     },
 

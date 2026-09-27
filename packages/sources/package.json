@@ -9,7 +9,8 @@
     "./komiku": "./komiku/index.ts",
     "./bacakomik": "./bacakomik/index.ts",
     "./thrive": "./thrive/index.ts",
-    "./manhwaindo": "./manhwaindo/index.ts"
+    "./manhwaindo": "./manhwaindo/index.ts",
+    "./novel": "./novel.ts"
   },
   "scripts": {
     "test": "tsx test/thrive.test.mjs && tsx test/bacakomik.test.mjs && tsx test/manhwaindo.test.mjs && tsx test/webtoon.test.mjs && tsx test/novelid.test.mjs && tsx test/novel-metadata.test.mjs"

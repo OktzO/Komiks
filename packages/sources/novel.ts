@@ -81,3 +81,22 @@ export const withNovelRetry = async <T>(
   console.error(JSON.stringify({ ...meta, error: String(last) }));
   throw last;
 };
+
+/**
+ * Log-and-throw for failures raised *after* a successful fetch — a missing
+ * title, a chapter body that turned into a login wall, an upstream redesign.
+ * `withNovelRetry` only sees errors from inside its closure, so without this a
+ * silent 200-with-no-prose would never appear in Worker logs.
+ *
+ * Returns the Error so call sites read `throw novelFailure(...)`.
+ */
+export const novelFailure = (
+  source: NovelSourceKey,
+  entityId: string,
+  stage: string,
+  detail: string
+): Error => {
+  const error = `${source} ${stage}: ${detail}`;
+  console.error(JSON.stringify({ source, entityId, stage, error }));
+  return new Error(error);
+};

@@ -7,8 +7,13 @@ import { NOVELID_BASE } from './client.js';
 export const NOVELID_PATHS = {
   series: (slug: string): string => `/novel/${slug}/`,
   chapter: (slug: string, n: number | string): string => `/novel/${slug}/bab/${n}/`,
-  search: (q: string): string => `/?s=${encodeURIComponent(q)}`,
+  // Upstream search paginates by path, 18 cards per page, verified against
+  // /page/2/?s=a returning a disjoint result set.
+  search: (q: string, page = 1): string =>
+    page <= 1 ? `/?s=${encodeURIComponent(q)}` : `/page/${page}/?s=${encodeURIComponent(q)}`,
 } as const;
+
+export const NOVELID_SEARCH_PAGE_SIZE = 18;
 
 export const NOVELID_PATTERNS = {
   babNumber: /\/bab\/(\d+)\/?/,
@@ -67,15 +72,23 @@ export const extractContainer = (html: string, className: string): string | null
   const start = m.index + m[0].length;
   let depth = 1;
   let pos = start;
+  let closingLength = 0;
   while (depth > 0) {
     const next = /<\/?div\b[^>]*>/gi;
     next.lastIndex = pos;
     const tag = next.exec(html);
     if (!tag) return null;
-    depth += tag[0][1] === '/' ? -1 : 1;
+    if (tag[0][1] === '/') {
+      depth -= 1;
+      // Measured, not assumed: `</div >` and `</div\n>` are legal and a
+      // hardcoded 6 would leave a literal `<` glued to the prose.
+      if (depth === 0) closingLength = tag[0].length;
+    } else {
+      depth += 1;
+    }
     pos = tag.index + tag[0].length;
   }
-  return html.slice(start, pos - 6);
+  return html.slice(start, pos - closingLength);
 };
 
 export const parseChapterHtml = (html: string): string | null => {
@@ -90,8 +103,22 @@ export const buildSeriesUrl = (slug: string): string => NOVELID_BASE + NOVELID_P
 export const buildChapterUrl = (slug: string, n: number | string): string =>
   NOVELID_BASE + NOVELID_PATHS.chapter(slug, n);
 
-/** Bab number out of a chapter URL — the upstream chapter key. */
-export const buildChapterSourceId = (url: string): string | null => NOVELID_PATTERNS.babNumber.exec(url)?.[1] ?? null;
+/**
+ * `sourceChapterId` for a chapter URL: `{slug}/{bab}`.
+ *
+ * Both halves are required to address the page — `/novel/{slug}/bab/{n}/` has no
+ * slug-less form, so a bare bab number is not a usable id. This is the value
+ * `listChapters` emits and `getChapterContent` consumes; `buildBabNumber` is the
+ * separate, raw upstream key.
+ */
+export const buildChapterSourceId = (url: string): string | null => {
+  const slug = /\/novel\/([^/?#]+)/.exec(url)?.[1];
+  const bab = buildBabNumber(url);
+  return slug && bab ? `${slug}/${bab}` : null;
+};
+
+/** Raw upstream chapter key — the `bab` number, without the series slug. */
+export const buildBabNumber = (url: string): string | null => NOVELID_PATTERNS.babNumber.exec(url)?.[1] ?? null;
 
 /** `?resize=139,184` thumbnails collapse portrait art; the bare path serves full art. */
 export const stripCoverQuery = (url: string | null | undefined): string | null => {
@@ -135,6 +162,15 @@ export const parseSearchHtml = (html: string): ParsedNovelidSearchItem[] => {
   return items;
 };
 
+const tagsFromHtml = (html: string): string[] => {
+  const tags: string[] = [];
+  for (const m of html.matchAll(NOVELID_CARDS.tag)) {
+    const tag = cardText(/<span[^>]*>\s*([^<]*)<\/span>/i, m[1]);
+    if (tag) tags.push(tag);
+  }
+  return tags;
+};
+
 export interface ParsedNovelidSeries {
   slug: string;
   title: string;
@@ -147,14 +183,10 @@ export interface ParsedNovelidSeries {
 }
 
 export const parseSeriesHtml = (html: string, slug: string): ParsedNovelidSeries => {
-  const tags: string[] = [];
-  for (const m of html.matchAll(NOVELID_CARDS.tag)) {
-    const tag = cardText(/<span[^>]*>\s*([^<]*)<\/span>/i, m[1]);
-    if (tag) tags.push(tag);
-  }
   const authorRaw = text(NOVELID_PATTERNS.detailAuthor.exec(html)?.[1]);
   const synopsisRaw = text(NOVELID_PATTERNS.detailSynopsis.exec(html)?.[1]);
   const coverRaw = NOVELID_PATTERNS.detailCover.exec(html)?.[1]?.trim().replace(/^['"]|['"]$/g, '') ?? '';
+  const tags = tagsFromHtml(html);
   return {
     slug,
     title: text(NOVELID_PATTERNS.detailTitle.exec(html)?.[2]),
@@ -164,8 +196,14 @@ export const parseSeriesHtml = (html: string, slug: string): ParsedNovelidSeries
     synopsis: synopsisRaw ? synopsisRaw.split(/Karya ini diterbitkan atas izin/i)[0].trim() || null : null,
     coverUrl: coverRaw ? stripCoverQuery(absolute(coverRaw)) : null,
     genres: tags,
-    status: tags.some((t) => NOVELID_PATTERNS.finishedMarker.test(t)) ? 'completed' : 'ongoing',
-    chapterCount: null,
+    // A missing tag block means the selector drifted, not that the series is
+    // ongoing. `null` keeps a redesign out of D1 as a stored fact.
+    status: tags.length === 0
+      ? null
+      : tags.some((t) => NOVELID_PATTERNS.finishedMarker.test(t))
+        ? 'completed'
+        : 'ongoing',
+    chapterCount: parseChapterListHtml(html).length || null,
   };
 };
 
@@ -179,8 +217,12 @@ export const parseChapterListHtml = (html: string): ParsedNovelidEpisode[] => {
   const episodes: ParsedNovelidEpisode[] = [];
   for (const m of html.matchAll(NOVELID_CARDS.episode)) {
     const href = attrHref(m[0]);
-    const number = Number(buildChapterSourceId(href));
-    if (!href || !Number.isFinite(number)) continue;
+    const bab = buildBabNumber(href);
+    if (!href || bab === null) continue;
+    // `Number(null)` is 0, so the guard has to be on the raw value. Bab numbers
+    // are 1-based, so anything ≤ 0 is a selector miss, not chapter zero.
+    const number = Number(bab);
+    if (!Number.isInteger(number) || number <= 0) continue;
     episodes.push({
       number,
       title: cardText(NOVELID_PATTERNS.episodeItemTitle, m[1]) || null,
