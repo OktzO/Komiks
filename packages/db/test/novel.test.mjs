@@ -33,6 +33,34 @@ const makeStub = ({ rows = [] } = {}) => {
 
 const sqls = (trace) => trace.map((r) => r.sql);
 
+// Splits on top-level commas only, so a function-valued SET item such as
+// COALESCE(a, b) stays one item.
+const splitTopLevel = (s) => {
+  const out = [];
+  let depth = 0;
+  let quoted = false;
+  let cur = '';
+  for (const ch of s) {
+    if (ch === "'") quoted = !quoted;
+    if (!quoted) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (ch === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+    }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
+  return out.map((x) => x.trim());
+};
+
+// Handles both shapes: an upsert `... DO UPDATE SET a = 1 WHERE ...` and a
+// plain `UPDATE t SET a = 1 WHERE ...`.
+const setClause = (sql) => {
+  const after = sql.includes('DO UPDATE SET') ? sql.split('DO UPDATE SET')[1] : sql.split(' SET ')[1];
+  return splitTopLevel(after.split(' WHERE ')[0]);
+};
+const setColumn = (item) => item.split('=')[0].trim();
+
 const SERIES = {
   id: 'novelid/tekaburu',
   source_series_id: 'tekaburu',
@@ -74,10 +102,7 @@ test('upsertSeries conflicts on the natural key, not the surrogate id', async ()
 test('upsertSeries refreshes every mutable column on a re-scrape, and only those', async () => {
   const { client, trace } = makeStub();
   await novelDb(client).upsertSeries(SERIES);
-  const updated = trace[0].sql
-    .split('DO UPDATE SET')[1]
-    .split(',')
-    .map((s) => s.trim().split(' =')[0]);
+  const updated = setClause(trace[0].sql).map(setColumn);
   assert.deepEqual(
     updated,
     ['title', 'author', 'genre', 'status', 'cover_ref', 'cover_fallback', 'synopsis', 'updated_at'],
@@ -185,7 +210,7 @@ test('listChapters orders by number ASC and clamps its limit', async () => {
 test('fillSeriesGaps writes only the columns present in its patch', async () => {
   const { client, trace } = makeStub();
   await novelDb(client).fillSeriesGaps('novelid/tekaburu', { synopsis: 'filled' });
-  assert.match(trace[0].sql, /UPDATE novel_series SET synopsis = \?1/);
+  assert.deepEqual(setClause(trace[0].sql).map(setColumn), ['synopsis']);
   assert.doesNotMatch(trace[0].sql, /author|cover_fallback/);
   assert.equal(trace[0].args.at(-1), 'novelid/tekaburu');
 });
@@ -197,7 +222,11 @@ test('fillSeriesGaps with every key writes all three gap columns', async () => {
     synopsis: 'syn',
     author: 'Anon',
   });
-  assert.match(trace[0].sql, /cover_fallback = \?1, synopsis = \?2, author = \?3/);
+  assert.deepEqual(
+    setClause(trace[0].sql).map(setColumn),
+    ['cover_fallback', 'synopsis', 'author'],
+  );
+  assert.deepEqual(trace[0].args, ['https://example.test/c.jpg', 'syn', 'Anon', 's']);
 });
 
 test('fillSeriesGaps never overwrites a populated column', async () => {
@@ -209,11 +238,26 @@ test('fillSeriesGaps never overwrites a populated column', async () => {
   });
   for (const col of ['cover_fallback', 'synopsis', 'author']) {
     assert.ok(
-      trace[0].sql.includes(`(${col} IS NULL OR ${col} = '')`),
+      trace[0].sql.includes(`${col} = COALESCE(NULLIF(${col}, ''), ?`),
       `${col} must only be written while it is still empty`,
     );
   }
   assert.doesNotMatch(trace[0].sql, /updated_at/, 'a metadata fill must not reset the staleness clock');
+  assert.doesNotMatch(trace[0].sql, /IS NULL OR/, 'a row-wide guard would couple the columns together');
+});
+
+// A WHERE-level guard is row-wide: one populated sibling suppresses the whole
+// update, silently skipping the empty columns in the same patch.
+test('fillSeriesGaps fills the empty column even when a sibling is populated', async () => {
+  const { client, trace } = makeStub();
+  await novelDb(client).fillSeriesGaps('s', { synopsis: 'from tier 2', author: 'Anon' });
+  const [synopsis, author] = setClause(trace[0].sql);
+  assert.equal(setColumn(synopsis), 'synopsis');
+  assert.equal(setColumn(author), 'author', 'both columns are assigned, not filtered out of the SET list');
+  assert.match(synopsis, /COALESCE\(NULLIF\(synopsis, ''\), \?1\)/);
+  assert.match(author, /COALESCE\(NULLIF\(author, ''\), \?2\)/);
+  assert.match(trace[0].sql, /WHERE id = \?3$/, 'the only WHERE condition is the row id');
+  assert.deepEqual(trace[0].args, ['from tier 2', 'Anon', 's']);
 });
 
 test('fillSeriesGaps with an empty patch issues no write at all', async () => {

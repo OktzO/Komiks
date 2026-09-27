@@ -1175,20 +1175,19 @@ export class NovelDb {
     patch: { cover_fallback?: string; synopsis?: string; author?: string },
   ): Promise<void> {
     const sets: string[] = [];
-    const guards: string[] = [];
     const args: string[] = [];
     for (const col of NOVEL_GAP_COLUMNS) {
       if (patch[col] !== undefined) {
-        sets.push(`${col} = ?${args.length + 1}`);
-        // The gap fill must never clobber a value a primary source already has,
-        // so the caller cannot be the only thing enforcing that.
-        guards.push(`(${col} IS NULL OR ${col} = '')`);
+        // The guard belongs in the SET list, not the WHERE: a WHERE guard is
+        // row-wide, so one already-populated sibling would suppress the fill
+        // of every other column in the same patch.
+        sets.push(`${col} = COALESCE(NULLIF(${col}, ''), ?${args.length + 1})`);
         args.push(patch[col] as string);
       }
     }
     if (sets.length === 0) return;
     await this.d1
-      .prepare(`UPDATE novel_series SET ${sets.join(', ')} WHERE id = ?${args.length + 1} AND ${guards.join(' AND ')}`)
+      .prepare(`UPDATE novel_series SET ${sets.join(', ')} WHERE id = ?${args.length + 1}`)
       .bind(...args, id)
       .run();
   }
