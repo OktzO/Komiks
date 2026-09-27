@@ -185,6 +185,25 @@ const slugForShard = (want, prefix = 'novel') => {
   throw new Error(`no slug for shard ${want}`);
 };
 
+// A hand-typed ?genre= is bound, so there is no injection, but unclamped it
+// becomes a multi-kilobyte LIKE pattern against every row. The web already
+// clamps to 40; the API has to, because the API is what a curl reaches.
+test('genre is trimmed and length-clamped before it becomes a LIKE pattern', async () => {
+  const { client, trace } = stubD1({ series: [SERIES] });
+  const long = 'x'.repeat(5000);
+  await call(`/api/novel/catalog?genre=${encodeURIComponent(`  ${long}  `)}`, envFor({ DB: client }));
+  const listed = trace.find((r) => r.sql.includes('ORDER BY'));
+  const pattern = listed.args.find((a) => typeof a === 'string' && a.startsWith('%'));
+  assert.ok(pattern, 'the genre reaches D1 as a bound LIKE pattern');
+  assert.equal(pattern, `%"${'x'.repeat(40)}"%`, '40 chars of genre, trimmed, inside the db layer element matcher');
+
+  // A short genre survives untouched, and quotes in it stay data (escaped by
+  // the db layer, never interpolated).
+  const { client: c2, trace: t2 } = stubD1({ series: [SERIES] });
+  await call(`/api/novel/catalog?genre=${encodeURIComponent('Fantasi')}`, envFor({ DB: c2 }));
+  assert.ok(t2.find((r) => r.sql.includes('ORDER BY')).args.includes('%"Fantasi"%'));
+});
+
 test('catalog clamps limit to 50 and defaults page to 1', async () => {
   const { client, trace } = stubD1({ series: [SERIES] });
   const { res, body, fetchLog } = await call('/api/novel/catalog?limit=5000', envFor({ DB: client }));
@@ -462,8 +481,26 @@ test('a chapter read writes no KV entry at all', async () => {
 
 test('the router is mounted on the real app under /api/novel', async () => {
   const { client } = stubD1({ series: [SERIES] });
-  const { res, body } = await call('/api/novel/catalog?limit=9999', envFor({ DB: client }), { app: apiApp });
+  const { res, body } = await call('/api/novel/catalog?limit=9999', envFor({ DB: stubD1({ series: [SERIES] }).client }), { app: apiApp });
   assert.equal(res.status, 200);
   assert.equal(body.limit, 50);
   assert.equal(body.data.length, 1);
+});
+
+// `data` is deduped by id across the shard windows; `total` used to be a raw sum
+// of per-shard COUNT(*). After a PEER_URLS change re-partitions the ring the
+// same series sits on two shards, so the list showed it once and the count
+// counted it twice — and the derived page count is what the pager renders.
+test('total counts what the merged list can actually reach, never a double count', async () => {
+  const shared = series('novelid-shared', { updated_at: 500 });
+  const { client } = stubD1({ series: [shared] });
+  const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '0' });
+  // w1 still holds the row from before the re-partition; every shard reports the
+  // same count the stub derives from its own rows.
+  const { res, body } = await call('/api/novel/catalog', env, {
+    fetchImpl: peerForward({ 'https://w1.test': { novel_series: [shared] } }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(body.data.length, 1, 'the duplicated row is deduped out of the list');
+  assert.equal(body.total, 1, 'and counted once, not once per shard holding it');
 });

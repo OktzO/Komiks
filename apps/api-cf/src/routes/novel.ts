@@ -43,6 +43,12 @@ const pageOf = (raw: string | undefined, fallback: number): number =>
 const limitOf = (raw: string | undefined): number =>
   Math.min(MAX_LIMIT, Math.max(1, Math.floor(Number(raw) || MAX_LIMIT)));
 
+// A hand-typed ?genre= is bound, so there is no injection, but unclamped it
+// becomes a multi-kilobyte LIKE pattern evaluated against every row. The web
+// clamps to 40 already; the API has to, because the API is what a curl reaches.
+const GENRE_MAX = 40;
+const genreOf = (raw: string | undefined): string | undefined => raw?.trim().slice(0, GENRE_MAX) || undefined;
+
 const readThrough = async <T>(
   c: Context,
   cacheKey: string,
@@ -86,7 +92,7 @@ const byNewest = (a: NovelSeriesRow, b: NovelSeriesRow): number =>
   b.updated_at - a.updated_at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
 router.get('/novel/catalog', async (c) => {
-  const genre = c.req.query('genre') ?? undefined;
+  const genre = genreOf(c.req.query('genre'));
   const page = pageOf(c.req.query('page'), 1);
   const limit = limitOf(c.req.query('limit'));
   const offset = (page - 1) * limit;
@@ -104,11 +110,24 @@ router.get('/novel/catalog', async (c) => {
     const merged = rows.flat().filter((s) => (seen.has(s.id) ? false : (seen.add(s.id), true)));
     merged.sort(byNewest);
     const onPage = merged.slice(offset, offset + limit);
+    // The raw per-shard sum is not the catalogue size: after a PEER_URLS change a
+    // series sits on two shards, so the list above shows it once while the sum
+    // counts it twice and the derived page count is wrong. While every shard
+    // answered with a short window the merge saw the whole catalogue, so the
+    // deduped id set is the exact size. A saturated window cannot see the
+    // duplicates outside it, so there the sum is the best available estimate —
+    // clamped to what the merge can actually return.
+    const counted = new Set<string>();
+    for (const shardRows of rows) for (const s of shardRows) counted.add(s.id);
+    const saturated = rows.some((shardRows) => shardRows.length >= window);
+    const total = saturated
+      ? Math.min(counts.reduce((sum, n) => sum + n, 0), shards.length * window)
+      : counted.size;
     return {
       data: await Promise.all(onPage.map(async (s) => ({ ...s, cover_url: await coverUrlFor(c.env, s) }))),
       page,
       limit,
-      total: counts.reduce((sum, n) => sum + n, 0),
+      total,
     };
   });
   c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
