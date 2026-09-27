@@ -10,6 +10,7 @@ import { router as homepageRouter } from './routes/homepage';
 import { router as mangaRouter } from './routes/manga';
 import { router as sourceStatusRouter } from './routes/sourceStatus';
 import { router as originsRouter } from './routes/origins';
+import { router as novelRouter } from './routes/novel';
 import { router as identifyRouter } from './routes/identify';
 import { router as lbAdminRouter } from './routes/admin/lb';
 import { router as monitoringAdminRouter } from './routes/admin/monitoring';
@@ -25,6 +26,7 @@ import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
 import { evictStaleStorage, cleanupTempObjects } from './lib/storageEviction';
+import { refreshStaleSeries } from './lib/novelIngest';
 import { getB2Usage } from './lib/b2Usage';
 import { writeWithFallback, flushOutbox } from './lib/dbWrite';
 import { fetchHomepageFromSources } from './routes/homepage';
@@ -110,6 +112,7 @@ app.route('/api', homepageRouter);
 app.route('/api', mangaRouter);
 app.route('/api', sourceStatusRouter);
 app.route('/api', originsRouter);
+app.route('/api', novelRouter);
 app.route('/api/admin/lb', lbAdminRouter);
 app.route('/api/admin/merge', mergeAdminRouter);
 app.route('/api/admin', inventoryAdminRouter);
@@ -154,6 +157,15 @@ export default {
     const run = async () => {
       const outbox = await flushOutbox(env as Env).catch(() => ({ flushed: 0, pending: -1 }));
       console.log(`[cron] outbox flushed: ${outbox.flushed} (pending ${outbox.pending})`);
+      // Novel chapter refresh runs on every worker, ahead of the EVICTION_OWNER
+      // gate below: each shard owns a slice of the catalogue, so gating it on a
+      // single owner would starve the other three.
+      try {
+        const refreshed = await refreshStaleSeries(env as Env, 86400, 20);
+        console.log(`[cron] novel series refreshed: ${refreshed}`);
+      } catch (e) {
+        console.error('[cron] novel refresh failed:', e);
+      }
       if (env.EVICTION_OWNER !== '1') return;
       const kv = env.CACHE_KV;
       const lock = await kv.get('eviction:lock').catch(() => null);
