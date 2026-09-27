@@ -95,6 +95,33 @@ for (const [table, sql] of [
   });
 }
 
+test('db/exec accepts a novel_series write so the crawler can reach a peer owner', async () => {
+  // The catalogue crawl runs on one worker (novel:catalog is owner-gated), so
+  // the three quarters this shard does not own have to reach their owner's D1
+  // over this endpoint instead of being dropped.
+  const execCtx = { waitUntil: () => {}, passThroughOnException: () => {} };
+  const env = stubEnv();
+  const res = await app.request('/api/_internal/db/exec', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-db-forward-key': 'sekret' },
+    body: JSON.stringify({
+      sql: 'INSERT INTO novel_series (id, source_series_id, source, title) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(source, source_series_id) DO UPDATE SET title = excluded.title',
+      params: ['novelid-x', 'x', 'novelid', 'X'],
+      table: 'novel_series',
+    }),
+  }, env, execCtx);
+  assert.equal(res.status, 200, `the write must be accepted, got ${await res.clone().text()}`);
+  assert.ok(env.DB, 'and it landed in the local D1');
+  // …and still only for novel_series: the allowlist is not widened by proxy.
+  const other = await app.request('/api/_internal/db/exec', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-db-forward-key': 'sekret' },
+    body: JSON.stringify({ sql: 'INSERT INTO novel_paragraphs (id) VALUES (?1)', params: ['x'], table: 'novel_paragraphs' }),
+  }, stubEnv(), execCtx);
+  assert.equal(other.status, 403);
+});
+
+
 test('the novel allowlist entries do not open up writes or other tables', async () => {
   const post = (sql, table) => app.request('/api/_internal/db/query', {
     method: 'POST',

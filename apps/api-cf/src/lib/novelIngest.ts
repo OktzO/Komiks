@@ -4,7 +4,8 @@ import { NOVEL_SOURCES, getNovelAdapter } from '@manga-platform/sources/novel';
 import type { NovelAdapterEnv, NovelSeries, NovelSourceAdapter } from '@manga-platform/sources/novel';
 import type { Env } from './context';
 import { sha256Hex } from './context';
-import { ownerFor } from './peers';
+import { internalExec, ownerFor } from './peers';
+import { enqueueOutbox } from './dbWrite';
 import { uploadNovelCover } from './novelCover';
 import { retryUpstream } from './retry';
 
@@ -328,6 +329,44 @@ export interface SyncCatalogResult {
   skipped: number;
 }
 
+/**
+ * Where the discovery crawl runs. One worker, chosen by the same ring every
+ * other shard decision uses, so exactly one of the four pays the upstream
+ * requests the catalogue costs. The writes are fanned out by series owner
+ * (see `writeOwned`), so the other three D1s still get their quarter.
+ */
+export const CATALOG_CRAWL_KEY = 'novel:catalog:crawl';
+
+export const isCatalogCrawler = (env: Env): boolean => ownerFor(env, CATALOG_CRAWL_KEY).self;
+
+/** A novel_series write into the D1 that owns the row. A local owner writes
+ *  directly; a peer's owner is reached over /api/_internal/db/exec, with the
+ *  outbox as the retry path — the same sharded-write shape reader.ts uses for
+ *  chapter page LRU touches. */
+const writeOwned = async (env: Env, sql: string, params: unknown[]): Promise<boolean> => {
+  const owner = ownerFor(env, String(params[0]));
+  if (owner.self) {
+    const stmt = env.DB.prepare(sql);
+    const res = await (params.length > 0 ? stmt.bind(...params) : stmt).run().catch(() => null);
+    return res === null ? false : res.success;
+  }
+  if (await internalExec(env, owner.url, { sql, params, table: 'novel_series' }).catch(() => false)) return true;
+  // A failed forward is not a failed write: the outbox is the retry path.
+  return enqueueOutbox(env, owner.url, 'novel_series', sql, params);
+};
+
+const UPSERT_SERIES_SQL =
+  'INSERT INTO novel_series (id, source_series_id, source, title, author, genre, status, cover_ref, cover_fallback, synopsis, created_at, updated_at)'
+  + ' VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)'
+  + ' ON CONFLICT(source, source_series_id) DO UPDATE SET'
+  + ' title = excluded.title, author = excluded.author, genre = excluded.genre, status = excluded.status,'
+  + ' cover_ref = excluded.cover_ref, cover_fallback = excluded.cover_fallback, synopsis = excluded.synopsis,'
+  + ' updated_at = excluded.updated_at';
+
+const FILL_GAPS_SQL = (cols: DetailColumn[]): string =>
+  `UPDATE novel_series SET ${cols.map((c, i) => `${c} = COALESCE(NULLIF(${c}, ''), ?${i + 1})`).join(', ')}`
+  + ` WHERE id = ?${cols.length + 1}`;
+
 /** The tier-1 series page. Best-effort: a series whose detail page is down is
  *  still worth storing from the search card it was discovered on. */
 const fetchDetail = async (
@@ -346,9 +385,10 @@ const fetchDetail = async (
  *
  * Discovery only: `search`, `getSeries` and `upsertSeries`, never
  * `getChapterContent` — a catalogue crawl that also fetched bodies would pull
- * thousands of chapter requests per run. Only series this shard owns are
- * written, so the four D1s partition the catalogue instead of each holding all
- * of it.
+ * thousands of chapter requests per run. The crawl is owner-gated (see
+ * `isCatalogCrawler`) so one worker pays the upstream requests, and every row is
+ * written into the D1 that owns it (see `writeOwned`), so the four D1s still
+ * partition the catalogue instead of one holding all of it.
  *
  * `getSeries` is what makes the rows worth rendering. A novelid search card
  * carries only title, one genre and a 120x160 thumbnail, and no tier-2 source
@@ -371,7 +411,6 @@ export const syncCatalog = async (
   const seeds = opts.seeds ?? CATALOG_SEEDS;
   const pages = Math.max(1, opts.pagesPerSeed ?? SEARCH_PAGES_PER_SEED);
   const resolve = opts.resolve ?? getNovelAdapter;
-  const novel = novelDb(env.DB);
   const out: SyncCatalogResult = { inserted: 0, filled: 0, skipped: 0 };
 
   for (const key of NOVEL_SOURCES) {
@@ -394,11 +433,10 @@ export const syncCatalog = async (
             out.skipped++;
             continue;
           }
-          if (!ownerFor(env, id).self) {
-            out.skipped++;
-            continue;
-          }
-          const existing = await novel.getSeriesBySlug(id);
+          const owner = ownerFor(env, id);
+          // Whether the row already exists is the owner's business, not this
+          // shard's: only the owner D1 can answer, so a forwarded write asks it.
+          const existing = owner.self ? await novelDb(env.DB).getSeriesBySlug(id) : null;
           if (existing) {
             // The search card is the weaker source, so it only fills what the
             // series page did not supply.
@@ -406,8 +444,8 @@ export const syncCatalog = async (
               ...patchFrom(hit),
               ...patchFrom(needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null),
             };
-            if (Object.keys(patch).length > 0) {
-              await novel.fillSeriesGaps(id, patch);
+            const cols = (Object.keys(patch) as DetailColumn[]).filter((c) => patch[c] !== undefined);
+            if (cols.length > 0 && await writeOwned(env, FILL_GAPS_SQL(cols), [...cols.map((c) => patch[c] as string), id])) {
               out.filled++;
             }
             continue;
@@ -418,23 +456,24 @@ export const syncCatalog = async (
           // novelid being up. cover_fallback stays as the pre-upload URL.
           const coverRef = await uploadNovelCover(env, id, detail?.coverUrl ?? hit.coverUrl);
           const now = nowSec();
-          await novel.upsertSeries({
+          const written = await writeOwned(env, UPSERT_SERIES_SQL, [
             id,
-            source_series_id: hit.sourceSeriesId,
-            source: key,
-            title: hit.title,
-            author: detail?.author ?? hit.author ?? null,
-            genre: detail?.genres?.length ? JSON.stringify(detail.genres) : (hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null),
-            status: detail?.status ?? hit.status ?? null,
-            cover_ref: coverRef,
+            hit.sourceSeriesId,
+            key,
+            hit.title,
+            detail?.author ?? hit.author ?? null,
+            detail?.genres?.length ? JSON.stringify(detail.genres) : (hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null),
+            detail?.status ?? hit.status ?? null,
+            coverRef,
             // cover_fallback is the upstream URL the reader falls back to when
             // there is no stored object (no B2 account, or the upload failed).
-            cover_fallback: detail?.coverUrl ?? hit.coverUrl ?? null,
-            synopsis: detail?.synopsis ?? hit.synopsis ?? null,
-            created_at: now,
-            updated_at: now,
-          });
-          out.inserted++;
+            detail?.coverUrl ?? hit.coverUrl ?? null,
+            detail?.synopsis ?? hit.synopsis ?? null,
+            now,
+            now,
+          ]);
+          if (written) out.inserted++;
+          else out.skipped++;
         }
         if (hits.length < SEARCH_PAGE) break;
       }

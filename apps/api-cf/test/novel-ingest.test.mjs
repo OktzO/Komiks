@@ -8,6 +8,7 @@ import { murmur3_32 } from '@manga-platform/shared/r2-routing';
 import { sha256Hex } from '../src/lib/context.ts';
 import {
   fillMetadataGaps,
+  isCatalogCrawler,
   REFRESH_WINDOW,
   refreshSeries,
   refreshStaleSeries,
@@ -687,27 +688,113 @@ test('syncCatalog pages through the search window and stops on a short page', as
   assert.equal(res.inserted, 19, '18 unique, then 1 from the short page that ends the walk');
 });
 
-test('syncCatalog only writes the series this shard owns', async () => {
-  // source_series_id, so the stored id is `novelid-<this>` — the hash key is the
-  // stored id, not the upstream one.
+// The 12h discovery crawl is owner-gated, so only one worker pays the upstream
+// requests. The three quarters of the catalogue it does not own therefore have
+// to reach their owner's D1 over /api/_internal/db/exec instead of being
+// dropped — which is what the old per-worker owner gate did.
+const capturingExec = () => {
+  const forwarded = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const url = String(input?.url ?? input);
+    if (url.includes('/api/_internal/db/exec')) {
+      forwarded.push({ url, body: JSON.parse(init.body) });
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }));
+    }
+    return Promise.reject(new Error(`network disabled in tests: ${url}`));
+  };
+  return { forwarded, restore: () => { globalThis.fetch = original; } };
+};
+
+const shardOf = (sourceSeriesId) => {
+  for (let i = 0; i < 4000; i++) {
+    const id = `${sourceSeriesId}-${i}`;
+    if (murmur3_32(`novelid-${id}`) % 4 !== 0) return id;
+  }
+  throw new Error('no id for a non-zero shard');
+};
+
+test('the ring elects exactly one catalogue crawler, and it is the same one every time', () => {
+  const elected = [0, 1, 2, 3].filter((i) => isCatalogCrawler({ ...fourPeers(), PEER_INDEX: String(i) }));
+  assert.equal(elected.length, 1, `exactly one of four may crawl, got ${JSON.stringify(elected)}`);
+  // Re-resolving must not move the election, or every tick would crawl a
+  // different quarter of the ring.
+  for (let i = 0; i < 5; i++) {
+    assert.equal(isCatalogCrawler({ ...fourPeers(), PEER_INDEX: String(elected[0]) }), true);
+  }
+  // Single-peer deployment: there is no ring to elect from, and the one worker
+  // owns everything, so it crawls.
+  assert.equal(isCatalogCrawler(onePeer()), true);
+});
+
+test('a series another shard owns is forwarded to its owner, not dropped', async () => {
+  const elsewhere = shardOf('not-mine');
+  assert.notEqual(murmur3_32(`novelid-${elsewhere}`) % 4, 0, 'the id belongs to a peer');
+  const ownerIndex = murmur3_32(`novelid-${elsewhere}`) % 4;
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: elsewhere })] });
+  const { forwarded, restore } = capturingExec();
+  try {
+    const res = await syncCatalog({
+      ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret',
+    }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+    assert.equal(res.inserted, 1, 'the row was written, just not here');
+    assert.equal(res.skipped, 0);
+    assert.equal(forwarded.length, 1, 'one forward, to the owner');
+    assert.ok(forwarded[0].url.startsWith(`https://w${ownerIndex}.test/`), 'forwarded to the owner, not a neighbour');
+    assert.equal(forwarded[0].body.table, 'novel_series');
+    assert.equal(forwarded[0].body.params[0], `novelid-${elsewhere}`, 'the id is bound, not interpolated');
+    assert.ok(forwarded[0].body.sql.startsWith('INSERT INTO novel_series'));
+    assert.ok(!forwarded[0].body.sql.includes(elsewhere), 'no user input in the SQL text');
+    assert.equal(trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).length, 0, 'and nothing local');
+  } finally {
+    restore();
+  }
+});
+
+test('a forward that fails is queued in the outbox rather than lost', async () => {
+  const elsewhere = shardOf('not-mine');
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: elsewhere })] });
+  const original = globalThis.fetch;
+  globalThis.fetch = () => Promise.reject(new Error('owner unreachable'));
+  try {
+    const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+    assert.equal(res.inserted, 1);
+    const queued = trace.find((r) => r.sql.includes('INSERT INTO _outbox'));
+    assert.ok(queued, 'the write is retried by the next cron flush');
+    // _outbox binds (owner_url, table_name, sql, params, created_at).
+    assert.equal(queued.args[1], 'novel_series');
+    assert.ok(String(queued.args[2]).startsWith('INSERT INTO novel_series'));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a series this shard owns still goes straight to the local D1', async () => {
   const mine = [];
   for (let i = 0; mine.length < 2; i++) {
     if (murmur3_32(`novelid-own-${i}`) % 4 === 0) mine.push(`own-${i}`);
   }
-  const hits = [
-    ...mine.map((id) => catalogHit({ sourceSeriesId: id })),
-    catalogHit({ sourceSeriesId: 'not-mine' }),
-  ];
   const { client, trace } = stubD1();
-  const { adapter } = catalogAdapter({ 0: hits });
-  const res = await syncCatalog({ ...fourPeers(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
-  assert.equal(res.inserted, mine.length, 'two of the three belong to shard 0');
-  assert.deepEqual(
-    trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).map((r) => r.args[0]),
-    mine.map((id) => `novelid-${id}`),
-    'the four D1s partition the catalogue'
-  );
-  assert.equal(murmur3_32('novelid-not-mine') % 4 !== 0, true, 'the third id is owned elsewhere');
+  const { adapter } = catalogAdapter({ 0: mine.map((id) => catalogHit({ sourceSeriesId: id })) });
+  const { forwarded, restore } = capturingExec();
+  try {
+    const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+    assert.equal(res.inserted, mine.length);
+    assert.deepEqual(
+      trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).map((r) => r.args[0]),
+      mine.map((id) => `novelid-${id}`),
+      'the four D1s partition the catalogue'
+    );
+    assert.deepEqual(forwarded, [], 'an owned series never leaves the shard');
+  } finally {
+    restore();
+  }
 });
 
 test('a re-sync gap-fills an existing series instead of overwriting it', async () => {

@@ -181,15 +181,17 @@ export const writeLocal = async (
   }
 };
 
+/** Returns whether the retry row landed, so a caller that has no other way to
+ *  know can tell "queued" from "dropped". Callers that do not care ignore it. */
 export const enqueueOutbox = async (
   env: Env,
   ownerUrl: string,
   table: string,
   sql: string,
   params: unknown[]
-): Promise<void> => {
+): Promise<boolean> => {
   try {
-    if (!getPeers(env).some((p) => p.url === ownerUrl)) return;
+    if (!getPeers(env).some((p) => p.url === ownerUrl)) return false;
     const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare('DELETE FROM _outbox WHERE created_at < ?1')
       .bind(now - OUTBOX_TTL_DAYS * 86400).run().catch(() => {});
@@ -200,7 +202,10 @@ export const enqueueOutbox = async (
     await env.DB.prepare(
       'INSERT INTO _outbox (owner_url, table_name, sql, params, created_at) VALUES (?1, ?2, ?3, ?4, ?5)'
     ).bind(ownerUrl, table, sql, JSON.stringify(params), now).run();
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 export const flushOutbox = async (env: Env, limit = 50): Promise<{ flushed: number; pending: number }> => {

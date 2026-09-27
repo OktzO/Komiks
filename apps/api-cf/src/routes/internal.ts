@@ -60,6 +60,11 @@ const ALLOWED_TABLES = new Set([
   'db_usage_snapshot',
   'b2_usage',
   'b2_temp_objects',
+  // The novel discovery crawl is owner-gated, so the crawler writes the series
+  // it does not own into their owner's D1. Public catalogue rows, same as the
+  // read allowlist below; only the exact novel_series writes the ingest emits
+  // can get here, and /db/exec is still a no-stacked-statements allowlist.
+  'novel_series',
 ]);
 
 const QUERY_ALLOWED_TABLES = new Set([
