@@ -1089,7 +1089,7 @@ const NOVEL_SERIES_COLUMNS =
 const NOVEL_CHAPTER_COLUMNS =
   'id, series_id, source_chapter_id, number, title, content, content_hash, source_url, scraped_at';
 const NOVEL_CHAPTER_SUMMARY_COLUMNS = 'id, series_id, source_chapter_id, number, title';
-const NOVEL_GAP_COLUMNS = ['cover_fallback', 'synopsis', 'author'] as const;
+const NOVEL_GAP_COLUMNS = ['cover_fallback', 'synopsis', 'author', 'status'] as const;
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
 
@@ -1180,7 +1180,7 @@ export class NovelDb {
 
   async fillSeriesGaps(
     id: string,
-    patch: { cover_fallback?: string; synopsis?: string; author?: string },
+    patch: { cover_fallback?: string; synopsis?: string; author?: string; status?: string },
   ): Promise<void> {
     const sets: string[] = [];
     const args: string[] = [];

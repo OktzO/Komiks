@@ -43,18 +43,40 @@ const normTitle = (title: string): string =>
 export const seriesIdFor = (source: string, sourceSeriesId: string): string =>
   `${source}-${sourceSeriesId}`;
 
+/** What tier-2 is allowed to fill — the three columns spec §6.2 names. */
 type GapColumn = 'cover_fallback' | 'synopsis' | 'author';
+/** The tier-1 series page also carries `status`, which no search card and no
+ *  tier-2 source has. */
+type DetailColumn = GapColumn | 'status';
 
 /** A blank tier-1 column is the only thing tier-2 is allowed to fill. The
  *  cover is a gap only when neither cover_ref nor cover_fallback is set —
  *  fillSeriesGaps cannot populate cover_ref, so a second write would be a no-op
- *  round trip. */
+ *  round trip. `status` is absent by design: tier-2 cannot supply it. */
 const gapColumns = (series: NovelSeriesRow): GapColumn[] => {
   const cols: GapColumn[] = [];
   if (isBlank(series.cover_ref) && isBlank(series.cover_fallback)) cols.push('cover_fallback');
   if (isBlank(series.synopsis)) cols.push('synopsis');
   if (isBlank(series.author)) cols.push('author');
   return cols;
+};
+
+/** Whether the tier-1 series page still has something to say. A row that is
+ *  already complete is never re-fetched, so the detail read is a one-off per
+ *  series rather than a per-tick cost. */
+const needsDetail = (series: NovelSeriesRow): boolean =>
+  isBlank(series.author) || isBlank(series.synopsis) || isBlank(series.status)
+  || (isBlank(series.cover_ref) && isBlank(series.cover_fallback));
+
+/** Non-blank fields only, so `fillSeriesGaps`' COALESCE guard decides what lands. */
+const patchFrom = (series: NovelSeries | null | undefined): Partial<Record<DetailColumn, string>> => {
+  const patch: Partial<Record<DetailColumn, string>> = {};
+  if (!series) return patch;
+  if (series.coverUrl?.trim()) patch.cover_fallback = series.coverUrl;
+  if (series.synopsis?.trim()) patch.synopsis = series.synopsis;
+  if (series.author?.trim()) patch.author = series.author;
+  if (series.status?.trim()) patch.status = series.status;
+  return patch;
 };
 
 export const hasMetadataGap = (series: NovelSeriesRow): boolean => gapColumns(series).length > 0;
@@ -305,13 +327,34 @@ export interface SyncCatalogResult {
   skipped: number;
 }
 
+/** The tier-1 series page. Best-effort: a series whose detail page is down is
+ *  still worth storing from the search card it was discovered on. */
+const fetchDetail = async (
+  adapter: NovelSourceAdapter,
+  sourceSeriesId: string
+): Promise<NovelSeries | undefined> => {
+  try {
+    return await upstream(() => adapter.getSeries(sourceSeriesId));
+  } catch (e) {
+    console.error(`[novel] getSeries failed for ${sourceSeriesId}: ${e}`);
+    return undefined;
+  }
+};
+
 /**
  * Discovers series and writes them, so the catalog is not born empty.
  *
- * Discovery only: `search` and `upsertSeries`, never `getChapterContent` — a
- * catalogue crawl that also fetched bodies would pull thousands of chapter
- * requests per run. Only series this shard owns are written, so the four D1s
- * partition the catalogue instead of each holding all of it.
+ * Discovery only: `search`, `getSeries` and `upsertSeries`, never
+ * `getChapterContent` — a catalogue crawl that also fetched bodies would pull
+ * thousands of chapter requests per run. Only series this shard owns are
+ * written, so the four D1s partition the catalogue instead of each holding all
+ * of it.
+ *
+ * `getSeries` is what makes the rows worth rendering. A novelid search card
+ * carries only title, one genre and a 120x160 thumbnail, and no tier-2 source
+ * carries the same novels, so without the series page every synced row kept a
+ * null author, a null status and no synopsis for good. It is called once per row
+ * that is still missing them, never on a row that is already complete.
  *
  * An existing row is only ever gap-filled, never re-upserted: `upsertSeries`
  * overwrites author/synopsis/cover_fallback on conflict, so re-syncing from a
@@ -357,30 +400,33 @@ export const syncCatalog = async (
           }
           const existing = await novel.getSeriesBySlug(id);
           if (existing) {
-            const patch: Partial<Record<GapColumn, string>> = {};
-            if (hit.coverUrl?.trim()) patch.cover_fallback = hit.coverUrl;
-            if (hit.synopsis?.trim()) patch.synopsis = hit.synopsis;
-            if (hit.author?.trim()) patch.author = hit.author;
+            // The search card is the weaker source, so it only fills what the
+            // series page did not supply.
+            const patch: Partial<Record<DetailColumn, string>> = {
+              ...patchFrom(hit),
+              ...patchFrom(needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null),
+            };
             if (Object.keys(patch).length > 0) {
               await novel.fillSeriesGaps(id, patch);
               out.filled++;
             }
             continue;
           }
+          const detail = await fetchDetail(adapter, hit.sourceSeriesId);
           const now = nowSec();
           await novel.upsertSeries({
             id,
             source_series_id: hit.sourceSeriesId,
             source: key,
             title: hit.title,
-            author: hit.author ?? null,
-            genre: hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null,
-            status: hit.status ?? null,
+            author: detail?.author ?? hit.author ?? null,
+            genre: detail?.genres?.length ? JSON.stringify(detail.genres) : (hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null),
+            status: detail?.status ?? hit.status ?? null,
             // No cover object yet: the cover pipeline owns cover_ref, and
             // cover_fallback is the upstream URL the reader falls back to.
             cover_ref: null,
-            cover_fallback: hit.coverUrl ?? null,
-            synopsis: hit.synopsis ?? null,
+            cover_fallback: detail?.coverUrl ?? hit.coverUrl ?? null,
+            synopsis: detail?.synopsis ?? hit.synopsis ?? null,
             created_at: now,
             updated_at: now,
           });

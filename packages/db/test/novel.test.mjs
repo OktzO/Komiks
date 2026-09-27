@@ -242,18 +242,21 @@ test('fillSeriesGaps writes only the columns present in its patch', async () => 
   assert.equal(trace[0].args.at(-1), 'novelid/tekaburu');
 });
 
-test('fillSeriesGaps with every key writes all three gap columns', async () => {
+test('fillSeriesGaps with every key writes all four gap columns', async () => {
   const { client, trace } = makeStub();
   await novelDb(client).fillSeriesGaps('s', {
     cover_fallback: 'https://example.test/c.jpg',
     synopsis: 'syn',
     author: 'Anon',
+    // novelid's search cards carry no status and neither tier-2 source does, so
+    // the tier-1 detail page is the only thing that can ever set it.
+    status: 'Ongoing',
   });
   assert.deepEqual(
     setClause(trace[0].sql).map(setColumn),
-    ['cover_fallback', 'synopsis', 'author'],
+    ['cover_fallback', 'synopsis', 'author', 'status'],
   );
-  assert.deepEqual(trace[0].args, ['https://example.test/c.jpg', 'syn', 'Anon', 's']);
+  assert.deepEqual(trace[0].args, ['https://example.test/c.jpg', 'syn', 'Anon', 'Ongoing', 's']);
 });
 
 test('fillSeriesGaps never overwrites a populated column', async () => {
@@ -262,8 +265,9 @@ test('fillSeriesGaps never overwrites a populated column', async () => {
     cover_fallback: 'https://example.test/c.jpg',
     synopsis: 'syn',
     author: 'Anon',
+    status: 'Ongoing',
   });
-  for (const col of ['cover_fallback', 'synopsis', 'author']) {
+  for (const col of ['cover_fallback', 'synopsis', 'author', 'status']) {
     assert.ok(
       trace[0].sql.includes(`${col} = COALESCE(NULLIF(${col}, ''), ?`),
       `${col} must only be written while it is still empty`,

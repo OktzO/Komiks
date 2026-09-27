@@ -493,12 +493,13 @@ const catalogHit = (over = {}) => ({
 });
 
 // Search is paged by offset, so the responder counts calls per seed.
-const catalogAdapter = (pages) => {
+const catalogAdapter = (pages, over = {}) => {
   const calls = [];
   const adapter = stubAdapter({
     sourceKey: 'novelid',
     capability: 'chapter',
     getChapterContent: () => { throw new Error('the catalog sync must not fetch chapters'); },
+    ...over,
   });
   adapter.search = async (params) => {
     calls.push(params);
@@ -517,6 +518,100 @@ const fourPeers = (over = {}) => ({
   PEER_INDEX: '0',
   ...over,
 });
+
+// Search cards carry title, one genre and a thumbnail — no author, no synopsis,
+// no status. The series page has all three, so a row synced from search alone
+// shipped a blank author and an empty synopsis forever: tier-2 cannot rescue it
+// because gooddreamer and noveltoon do not carry the same novels.
+const detailFor = (hit, over = {}) => ({
+  sourceSeriesId: hit.sourceSeriesId,
+  source: 'novelid',
+  title: hit.title,
+  slug: hit.slug,
+  author: 'Pengarang',
+  genres: ['Fantasi', 'Romance', 'Aksi'],
+  status: 'Ongoing',
+  coverUrl: 'https://img.test/halal-full.jpg',
+  synopsis: 'Seorang frigorista bangun di dunia fantasi.',
+  ...over,
+});
+
+const detailSync = (over = {}) =>
+  catalogAdapter({ 0: [catalogHit()] }, { seriesResult: detailFor(catalogHit(), over) });
+
+test('a newly inserted series is written with the detail page, not the search card', async () => {
+  const { client, trace } = stubD1();
+  const { adapter } = detailSync();
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+
+  assert.equal(res.inserted, 1);
+  assert.deepEqual(
+    adapter.calls.filter(([m]) => m === 'getSeries'),
+    [['getSeries', 'halal-tapi-asing']],
+    'one getSeries for the upstream id, once',
+  );
+  const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
+  assert.equal(row.args[4], 'Pengarang', 'author, which the search card never carries');
+  assert.equal(row.args[6], 'Ongoing', 'status, which neither the search card nor tier-2 carries');
+  assert.equal(row.args[8], 'https://img.test/halal-full.jpg', 'the detail page cover, not the 120x160 thumbnail');
+  assert.equal(row.args[9], 'Seorang frigorista bangun di dunia fantasi.');
+  assert.equal(row.args[5], '["Fantasi","Romance","Aksi"]', 'genres come from the detail page too');
+});
+
+test('a series whose detail is still missing is filled from getSeries', async () => {
+  const stored = {
+    ...SERIES,
+    id: 'novelid-halal-tapi-asing',
+    source_series_id: 'halal-tapi-asing',
+    author: null,
+    synopsis: null,
+    status: null,
+    cover_ref: null,
+    cover_fallback: null,
+  };
+  const { client, trace } = stubD1({ existing: stored });
+  const { adapter } = detailSync();
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+
+  assert.equal(res.inserted, 0, 'the row already exists');
+  assert.equal(res.filled, 1);
+  assert.equal(adapter.calls.filter(([m]) => m === 'getSeries').length, 1);
+  const update = trace.find((r) => r.sql.startsWith('UPDATE novel_series SET cover_fallback'));
+  assert.ok(update, 'the fill goes through fillSeriesGaps');
+  assert.match(update.sql, /synopsis = COALESCE/);
+  assert.match(update.sql, /author = COALESCE/);
+  assert.match(update.sql, /status = COALESCE/);
+  assert.deepEqual(
+    update.args,
+    [
+      'https://img.test/halal-full.jpg',
+      'Seorang frigorista bangun di dunia fantasi.',
+      'Pengarang',
+      'Ongoing',
+      stored.id,
+    ],
+    'the columns are bound in the order fillSeriesGaps emits them',
+  );
+});
+
+test('a complete series is not re-fetched on a later tick', async () => {
+  const { client, trace } = stubD1({ existing: { ...SERIES, id: 'novelid-halal-tapi-asing', source_series_id: 'halal-tapi-asing' } });
+  const { adapter } = detailSync();
+  await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  assert.deepEqual(adapter.calls.filter(([m]) => m === 'getSeries'), [], 'nothing is missing, so no detail fetch');
+  const update = trace.find((r) => r.sql.startsWith('UPDATE novel_series SET cover_fallback'));
+  assert.doesNotMatch(update?.sql ?? '', /author = |status = |synopsis = /, 'only the cover column the card still has');
+});
+
+test('a failing getSeries still inserts the series from the search card', async () => {
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ author: 'Dari Kartu' })] }, { seriesThrows: new Error('novelid getSeries: 500') });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  assert.equal(res.inserted, 1, 'a dead detail page must not lose the series');
+  const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
+  assert.equal(row.args[4], 'Dari Kartu', 'whatever the search card did carry is kept');
+});
+
 
 test('syncCatalog creates series with single-segment ids and never fetches chapters', async () => {
   const { client, trace } = stubD1();
