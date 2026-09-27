@@ -1,6 +1,8 @@
 // Web-novel source adapter contract. Kept separate from the manga `SourceAdapter`
 // in ./index.ts: novel chapters are prose (single html blob), not image pages.
 import { novelidAdapter } from './novelid/index.js';
+import { gooddreamerAdapter } from './gooddreamer/index.js';
+import { noveltoonAdapter } from './noveltoon/index.js';
 
 export type NovelSourceKey = 'novelid' | 'gooddreamer' | 'noveltoon';
 export type NovelCapability = 'chapter' | 'metadata';
@@ -41,10 +43,12 @@ export interface NovelSourceAdapter {
   getChapterContent?(sourceChapterId: string): Promise<NovelChapterContent>;
 }
 
-export const NOVEL_SOURCES: NovelSourceKey[] = ['novelid'];
+export const NOVEL_SOURCES: NovelSourceKey[] = ['novelid', 'gooddreamer', 'noveltoon'];
 
 const novelAdapters: Partial<Record<NovelSourceKey, () => NovelSourceAdapter>> = {
   novelid: () => novelidAdapter() as unknown as NovelSourceAdapter,
+  gooddreamer: () => gooddreamerAdapter() as unknown as NovelSourceAdapter,
+  noveltoon: () => noveltoonAdapter() as unknown as NovelSourceAdapter,
 };
 
 export const getNovelAdapter = (key: string): NovelSourceAdapter | null => {
