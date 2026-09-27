@@ -488,7 +488,9 @@ export const syncCatalog = async (
 ): Promise<SyncCatalogResult> => {
   const seeds = opts.seeds ?? CATALOG_SEEDS;
   const pages = Math.max(1, opts.pagesPerSeed ?? SEARCH_PAGES_PER_SEED);
-  const resolve = opts.resolve ?? getNovelAdapter;
+  // The registry takes (key, env?); resolving it bare meant env was undefined
+  // and the adapter's robots.txt KV cache never engaged on this path.
+  const resolve = opts.resolve ?? ((k: string) => getNovelAdapter(k, novelAdapterEnv(env)));
   const out: SyncCatalogResult = { inserted: 0, filled: 0, skipped: 0 };
 
   for (const key of NOVEL_SOURCES) {

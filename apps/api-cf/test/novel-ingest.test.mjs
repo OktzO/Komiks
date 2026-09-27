@@ -2,6 +2,7 @@
 // stubs, so what is asserted is the patch that reaches fillSeriesGaps, the
 // chapter rows that reach upsertChapters, and which adapter methods get called
 // at all. Those are the parts that silently corrupt stored content.
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { murmur3_32 } from '@manga-platform/shared/r2-routing';
@@ -1193,6 +1194,38 @@ test('an upsert that does reach a shard holding the row still cannot null a popu
       `${col} must not be overwritten with the incoming null`,
     );
   }
+});
+
+// The refresh path resolves its adapter with novelAdapterEnv, so the robots KV
+// cache engages there. syncCatalog defaulted to the bare registry function,
+// which takes (key, env?) — called with one argument, env was undefined and the
+// cache never engaged, so every search page paid its own robots.txt request.
+test('the catalog sync resolves its adapter with env, so the robots cache engages', async () => {
+  const searchFixture = readFileSync(
+    new URL('../../../packages/sources/test/fixtures/novelid-search.html', import.meta.url),
+    'utf8',
+  );
+  const robotsRequests = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/robots.txt')) {
+      robotsRequests.push(u);
+      return new Response('User-agent: *\nDisallow: /includes/\n', { status: 200 });
+    }
+    // The series page is irrelevant here and only adds noise to the count.
+    if (u.includes('/novel/')) return new Response('gone', { status: 500 });
+    return new Response(searchFixture, { status: 200 });
+  };
+  const { client } = stubD1();
+  const { env } = envFor(client);
+  try {
+    const res = await syncCatalog({ ...onePeer(), DB: client, CACHE_KV: env.CACHE_KV }, { seeds: ['a', 'b'], pagesPerSeed: 1 });
+    assert.ok(res.inserted > 0, 'the walk really happened, so the count means something');
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.equal(robotsRequests.length, 1, 'robots.txt is read once for the whole catalogue walk, not once per page');
 });
 
 test('a metadata source is never crawled for the catalogue', async () => {
