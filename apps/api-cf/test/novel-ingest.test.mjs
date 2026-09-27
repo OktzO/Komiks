@@ -138,6 +138,7 @@ const stubD1 = ({ listStale, existing = null } = {}) => {
 
 const envFor = (client, over = {}) => {
   const kv = new Map();
+  const kvKeys = { deleted: [] };
   const env = {
     DB: client,
     CACHE_KV: {
@@ -147,11 +148,11 @@ const envFor = (client, over = {}) => {
         return raw === undefined ? null : (asJson === 'json' ? JSON.parse(raw) : raw);
       },
       async put(key, value) { kv.set(key, value); },
-      async delete(key) { kv.delete(key); },
+      async delete(key) { kvKeys.deleted.push(key); kv.delete(key); },
     },
     ...over,
   };
-  return { env, cursor: (id) => JSON.parse(kv.get(`novel:refresh:${id}`) ?? 'null')?.offset ?? null };
+  return { env, kvKeys, cursor: (id) => JSON.parse(kv.get(`novel:refresh:${id}`) ?? 'null')?.offset ?? null };
 };
 
 // The chapter line is the only thing that separates a complete refresh from a
@@ -236,6 +237,25 @@ test('a failed tier-2 lookup does not throw', async () => {
   const adapter = stubAdapter({ searchThrows: new Error('upstream down') });
   await fillMetadataGaps(envFor(client).env, { ...SERIES, synopsis: null }, [adapter]);
   assert.equal(trace.length, 0);
+});
+
+// The series payload is KV-cached for 600s, so a fill that does not drop that
+// key is invisible for 10 minutes and every request in between re-detects the
+// same gap and re-runs the two tier-2 searches.
+test('a gap fill invalidates the cached series payload', async () => {
+  const { client } = stubD1();
+  const { env, kvKeys } = envFor(client);
+  const adapter = stubAdapter({ searchResult: [candidate()] });
+  await fillMetadataGaps(env, { ...SERIES, synopsis: null }, [adapter]);
+  assert.deepEqual(kvKeys.deleted, ['novel:series:tekaburu'], 'the reader sees the fill on the next request');
+});
+
+test('no gap means no tier-2 call and no cache invalidation', async () => {
+  const { client } = stubD1();
+  const { env, kvKeys } = envFor(client);
+  const adapter = stubAdapter({ searchResult: [candidate()] });
+  await fillMetadataGaps(env, SERIES, [adapter]);
+  assert.deepEqual(kvKeys.deleted, [], 'a full row is not re-fetched or re-cached');
 });
 
 test('refreshSeries stores the composite chapter id and a sha256 content hash', async () => {

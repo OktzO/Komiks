@@ -120,6 +120,12 @@ export const fillMetadataGaps = async (
   }
 
   await novelDb(env.DB).fillSeriesGaps(series.id, patch);
+  // The series payload is KV-cached by the read route, so without this the fill
+  // is invisible for the rest of the TTL and every request in between
+  // re-detects the same gap and re-runs the tier-2 searches.
+  if (Object.keys(patch).length > 0) {
+    await env.CACHE_KV.delete(`novel:series:${series.id}`).catch(() => {});
+  }
 };
 
 /**
