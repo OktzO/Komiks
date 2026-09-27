@@ -27,7 +27,7 @@ import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
 import { evictStaleStorage, cleanupTempObjects } from './lib/storageEviction';
-import { isCatalogCrawler, refreshStaleSeries, syncCatalog } from './lib/novelIngest';
+import { isCatalogCrawler, isCatalogWalkComplete, refreshStaleSeries, syncCatalog } from './lib/novelIngest';
 import { getB2Usage } from './lib/b2Usage';
 import { writeWithFallback, flushOutbox } from './lib/dbWrite';
 import { fetchHomepageFromSources } from './routes/homepage';
@@ -166,12 +166,21 @@ export default {
       // Discovery is the opposite — it is one crawl whose results are fanned out
       // by series owner, so exactly one worker pays the upstream requests.
       try {
-        // 12h catalogue sync. The KV timestamp guard alone is per-worker
-        // (CACHE_KV is a distinct namespace per account), which is why the crawl
-        // itself is owner-gated rather than relying on the guard to elect one.
+        // 12h catalogue guard. The KV timestamp alone is per-worker (CACHE_KV is
+        // a distinct namespace per account), which is why the crawl itself is
+        // owner-gated rather than relying on the guard to elect one.
+        //
+        // The guard rate-limits re-walking a *complete* catalogue, which is
+        // what it was for. It must not also throttle an unfinished one: a pass
+        // is now bounded by the subrequest budget and resumable from a cursor,
+        // so holding it to 12h would advance the walk by one listing page every
+        // half day and take weeks to finish a 181-series listing. An in-flight
+        // walk therefore continues every tick and only a finished one waits
+        // the guard out.
         const lastSync = await env.CACHE_KV.get('novel:catalog:last_sync').catch(() => null);
         const lastSyncMs = lastSync ? parseInt(lastSync, 10) : 0;
-        if (isCatalogCrawler(env) && Date.now() - lastSyncMs > 12 * 60 * 60 * 1000) {
+        const guardOpen = Date.now() - lastSyncMs > 12 * 60 * 60 * 1000;
+        if (isCatalogCrawler(env) && (guardOpen || !(await isCatalogWalkComplete(env)))) {
           const res = await syncCatalog(env);
           console.log(
             `[cron] novel catalog synced: ${res.inserted} new, ${res.filled} gap-filled, ${res.skipped} skipped`

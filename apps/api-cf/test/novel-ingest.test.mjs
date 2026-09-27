@@ -11,6 +11,7 @@ import { sha256Hex } from '../src/lib/context.ts';
 import {
   fillMetadataGaps,
   isCatalogCrawler,
+  isCatalogWalkComplete,
   refreshSeries,
   refreshStaleSeries,
   refreshVisitsFor,
@@ -1695,4 +1696,26 @@ test('re-walking a complete catalogue writes nothing and re-fetches no page', as
   assert.equal(res.filled, 0);
   assert.equal(res.complete, true, 'the listing is still walked end to end, so a new novel is noticed');
   assert.deepEqual(adapter.calls.filter(([m]) => m === 'getSeries'), [], 'no detail refetch for a complete row');
+});
+
+test('an unfinished walk is distinguishable from a finished one, so the guard only throttles a finished walk', async () => {
+  // The 12h guard rate-limits re-walking a complete catalogue. It must not also
+  // throttle an unfinished one: a pass is budget-bounded and resumable, so a
+  // 12h hold would advance the walk by one listing page per half day.
+  const { client } = stubD1();
+  const full = Array.from({ length: 18 }, (_, i) => catalogHit({ sourceSeriesId: `s${i}` }));
+  const { adapter } = catalogAdapter({ 0: full, 1: full, 2: full, 3: full, 4: full });
+  const { env } = envFor(client);
+  const resolve = onlyNovelId(adapter);
+  const peer = { ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client };
+
+  assert.equal(await isCatalogWalkComplete(peer), true, 'a cursor that has never been written reads as finished');
+
+  const partial = await syncCatalog(peer, { budget: 10, resolve });
+  assert.equal(partial.complete, false);
+  assert.equal(await isCatalogWalkComplete(peer), false, 'a stopped pass leaves work to do');
+
+  const finished = await syncCatalog(peer, { budget: 500, resolve });
+  assert.equal(finished.complete, true);
+  assert.equal(await isCatalogWalkComplete(peer), true, 'and the rewind puts it back to finished');
 });

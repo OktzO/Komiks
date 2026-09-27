@@ -410,6 +410,14 @@ const writeCatalogCursor = async (env: Env, offset: number): Promise<void> => {
 };
 
 /**
+ * Whether the walk still has listing pages to reach. A missing cursor means the
+ * walk either finished and rewound, or never started — the caller cannot tell
+ * those apart from the key alone, and does not need to: both want a pass.
+ */
+export const isCatalogWalkComplete = async (env: Env): Promise<boolean> =>
+  (await readCatalogCursor(env)) === 0;
+
+/**
  * Where the discovery crawl runs. One worker, chosen by the same ring every
  * other shard decision uses, so exactly one of the four pays the upstream
  * requests the catalogue costs. The writes are fanned out by series owner
