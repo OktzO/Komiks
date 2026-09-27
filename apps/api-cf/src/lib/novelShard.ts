@@ -30,7 +30,10 @@ const D1_META = {
 } as const;
 
 /** Reads through the owner peer, falling back to the local D1 if the forward
- *  fails — a peer being down must not turn a stored series into a 404. */
+ *  fails. The fallback is a safety net, not a replica: syncCatalog's owner gate
+ *  means a peer's series is absent here, so a down owner 404s that series
+ *  rather than serving a guess. The net earns its keep after a PEER_URLS change
+ *  re-partitions the ring, where the former owner still holds the row. */
 const peerReadD1 = (env: Env, peerUrl: string): D1Database => {
   const local = <T>(sql: string, args: unknown[]) => {
     const stmt = env.DB.prepare(sql);

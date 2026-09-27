@@ -355,13 +355,32 @@ test('the forward names the owning shard and binds the series id', async () => {
   assert.ok(forwards.every((u) => u.startsWith('https://w0.test')), 'forwarded to the owner, not to a neighbour');
 });
 
-test('a peer that cannot answer falls back to the local D1', async () => {
+// The local-D1 fallback in novelShard.ts is a safety net, not a replica. sync
+// Catalog's owner gate means a series another shard owns is *not* in this D1, so
+// with that owner down the read finds nothing and the route 404s. The net only
+// answers when the row really is local, which is the post-re-partition case.
+test('an owner that cannot answer 404s a series this shard never held', async () => {
   const slug = slugForShard(0);
+  const { client, trace } = stubD1({ series: [], chapters: [] });
+  const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '1' });
+  assert.equal(ownerFor(env, slug).index, 0, 'the series belongs to shard 0');
+
+  // No forward responder: the peer 500s. The local D1 is empty because the owner
+  // gate never wrote this series here, so the fallback has nothing to answer.
+  const { res, fetchLog } = await call(`/api/novel/series/${slug}`, env);
+  assert.equal(res.status, 404, 'a stored series is unreachable while its owner is down');
+  assert.ok(fetchLog.some((u) => u.includes('/api/_internal/db/query')), 'the owner was tried first');
+  assert.ok(trace.some((r) => r.sql.includes('FROM novel_series')), 'and the local D1 was the fallback');
+});
+
+test('a series left behind by a re-partition still reads from the local D1', async () => {
+  const slug = slugForShard(0);
+  // PEER_URLS now routes the slug elsewhere, but the row this shard wrote before
+  // the change is still in its own D1 — the only state the fallback serves.
   const { client } = stubD1({ series: [series(slug)] });
   const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '1' });
-  // No forward responder: the peer 500s and the read must still succeed locally.
   const { res, body } = await call(`/api/novel/series/${slug}`, env);
-  assert.equal(res.status, 200, 'a dead peer must not turn a stored series into a 404');
+  assert.equal(res.status, 200, 'a row this shard really holds is not thrown away by a dead peer');
   assert.equal(body.data.id, slug);
 });
 
