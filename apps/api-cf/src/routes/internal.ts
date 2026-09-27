@@ -5,6 +5,7 @@ import { getDb } from '../lib/context';
 import { collectPeerInventory } from '../lib/adminInventory';
 import { getTopology } from '../lib/peers';
 import { writeLocal } from '../lib/dbWrite';
+import { FILL_GAPS_SQL, NOVEL_DETAIL_COLUMNS, UPSERT_SERIES_SQL, type DetailColumn } from '../lib/novelIngest';
 import { constantTimeEqualStr } from '../lib/auth';
 
 // Internal endpoint for cross-account D1 write forwarding.
@@ -62,8 +63,8 @@ const ALLOWED_TABLES = new Set([
   'b2_temp_objects',
   // The novel discovery crawl is owner-gated, so the crawler writes the series
   // it does not own into their owner's D1. Public catalogue rows, same as the
-  // read allowlist below; only the exact novel_series writes the ingest emits
-  // can get here, and /db/exec is still a no-stacked-statements allowlist.
+  // read allowlist below. Only the statements the ingest emits are accepted —
+  // see NOVEL_SERIES_EXEC_ALLOW.
   'novel_series',
 ]);
 
@@ -97,6 +98,38 @@ const SESSIONS_EXEC_ALLOW = [
   /^UPDATE\s+sessions\s+SET\s+revoked_at\s*=\s*\?1\s+WHERE\s+user_id\s*=\s*\?2\s+AND\s+revoked_at\s+IS\s+NULL\s+AND\s+sid\s*!=\s*\?3$/i,
   /^UPDATE\s+sessions\s+SET\s+revoked_at\s*=\s*\?1\s+WHERE\s+user_id\s*=\s*\?2\s+AND\s+revoked_at\s+IS\s+NULL$/i,
 ];
+
+/** A statement as exact text, whitespace-insensitive. The novel allowlist is
+ *  matched literally rather than by shape so that "which writes may cross this
+ *  boundary" is answered by the writer's own source instead of by a regex
+ *  someone has to keep in step with it. */
+const literalStatement = (sql: string): RegExp =>
+  new RegExp(`^${sql.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}$`, 'i');
+
+/** Every non-empty subset, in order. The gap fill is built from whichever of the
+ *  four columns is still blank, so all 15 are statements it can emit. */
+const columnSets = (columns: readonly string[]): string[][] =>
+  columns.flatMap((col, i) => [[col], ...columnSets(columns.slice(i + 1)).map((rest) => [col, ...rest])]);
+
+// novel_series was allowlisted for /db/exec so the catalogue crawl could reach a
+// peer owner, but the table had no statement allowlist of its own — a holder of
+// DB_FORWARD_KEY could send any single write against it, DELETE included. Built
+// from lib/novelIngest's own constants, so it is exactly the ingest's two shapes:
+// the upsert, and a gap fill over some subset of the four gap columns. A third
+// write shape in the ingest is then refused (and caught by a test) instead of
+// silently widening this boundary.
+const NOVEL_SERIES_EXEC_ALLOW = [
+  literalStatement(UPSERT_SERIES_SQL),
+  ...columnSets(NOVEL_DETAIL_COLUMNS).map((cols) => literalStatement(FILL_GAPS_SQL(cols as DetailColumn[]))),
+];
+
+/** Tables whose writes are restricted to a fixed set of statements, not merely
+ *  to the allowlisted-table check. */
+const TABLE_EXEC_ALLOW: Record<string, RegExp[]> = {
+  users: USERS_EXEC_ALLOW,
+  sessions: SESSIONS_EXEC_ALLOW,
+  novel_series: NOVEL_SERIES_EXEC_ALLOW,
+};
 
 const hasStackedStatements = (sql: string): boolean => {
   if (/--|\/\*/.test(sql)) return true;
@@ -230,11 +263,9 @@ router.post('/db/exec', async (c: Context) => {
   if (!fromOk) {
     return c.json({ error: 'table mismatch' }, 403);
   }
-  if (table === 'users' && !USERS_EXEC_ALLOW.some((re) => re.test(sql.trim()))) {
-    return c.json({ error: 'forbidden users statement' }, 403);
-  }
-  if (table === 'sessions' && !SESSIONS_EXEC_ALLOW.some((re) => re.test(sql.trim()))) {
-    return c.json({ error: 'forbidden sessions statement' }, 403);
+  const statementAllow = TABLE_EXEC_ALLOW[table];
+  if (statementAllow && !statementAllow.some((re) => re.test(sql.trim()))) {
+    return c.json({ error: `forbidden ${table} statement` }, 403);
   }
 
   // Pass the isMirror flag through to writeLocal via header on internal Request —

@@ -3,8 +3,14 @@ import assert from 'node:assert/strict';
 import { Hono } from 'hono';
 import { PeerInventorySchema } from '@manga-platform/shared/types';
 import { router } from '../src/routes/internal.ts';
+import { FILL_GAPS_SQL, NOVEL_DETAIL_COLUMNS, UPSERT_SERIES_SQL } from '../src/lib/novelIngest.ts';
 import { getTopology } from '../src/lib/peers.ts';
 import { peerInventoryFixture } from './helpers/inventory-fixture.mjs';
+
+/** Every non-empty subset, in order — the gap fill is built from whichever of the
+ *  four columns is still blank, so all 15 are shapes it can take. */
+const subsetsOf = (columns) =>
+  columns.flatMap((col, i) => [[col], ...subsetsOf(columns.slice(i + 1)).map((rest) => [col, ...rest])]);
 
 function stubEnv(over = {}) {
   const stmt = {
@@ -95,29 +101,55 @@ for (const [table, sql] of [
   });
 }
 
-test('db/exec accepts a novel_series write so the crawler can reach a peer owner', async () => {
-  // The catalogue crawl runs on one worker (novel:catalog is owner-gated), so
-  // the three quarters this shard does not own have to reach their owner's D1
-  // over this endpoint instead of being dropped.
-  const execCtx = { waitUntil: () => {}, passThroughOnException: () => {} };
-  const env = stubEnv();
-  const res = await app.request('/api/_internal/db/exec', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-db-forward-key': 'sekret' },
-    body: JSON.stringify({
-      sql: 'INSERT INTO novel_series (id, source_series_id, source, title) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(source, source_series_id) DO UPDATE SET title = excluded.title',
-      params: ['novelid-x', 'x', 'novelid', 'X'],
-      table: 'novel_series',
-    }),
-  }, env, execCtx);
+const execCtx = { waitUntil: () => {}, passThroughOnException: () => {} };
+const exec = (sql, table, over = {}) => app.request('/api/_internal/db/exec', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'x-db-forward-key': 'sekret' },
+  body: JSON.stringify({ sql, params: [], table, ...over }),
+}, stubEnv(), execCtx);
+
+// novel_series is allowlisted for /db/exec so the owner-gated catalogue crawl
+// can reach a peer owner. That needs the ingest's statements to get through, and
+// nothing else: the table had no statement allowlist of its own, so a holder of
+// DB_FORWARD_KEY could send any single write against it. The statements are
+// taken from lib/novelIngest rather than copied, so this cannot drift from what
+// the crawl actually emits.
+test('db/exec accepts exactly the novel_series statements the ingest forwards', async () => {
+  const accepted = [
+    ['the upsert', UPSERT_SERIES_SQL, 12],
+    ...subsetsOf([...NOVEL_DETAIL_COLUMNS]).map(
+      (cols) => [`a fill of ${cols.join(' + ')}`, FILL_GAPS_SQL(cols), cols.length + 1]
+    ),
+  ];
+  for (const [label, sql, paramCount] of accepted) {
+    const res = await exec(sql, 'novel_series', { params: Array.from({ length: paramCount }, (_, i) => `p${i + 1}`) });
+    assert.equal(res.status, 200, `${label} must be forwardable, got ${await res.clone().text()}`);
+  }
+});
+
+test('db/exec rejects every other write against novel_series', async () => {
+  for (const sql of [
+    'DELETE FROM novel_series',
+    'DELETE FROM novel_series WHERE id = ?1',
+    // A gap fill that also sets a column tier-2 may not touch.
+    'UPDATE novel_series SET author = COALESCE(NULLIF(author, \'\'), ?1), cover_ref = ?2 WHERE id = ?3',
+    // A fill whose WHERE is not the series id the shard is chosen by.
+    'UPDATE novel_series SET author = COALESCE(NULLIF(author, \'\'), ?1) WHERE source_series_id = ?2',
+    // The upsert without its conflict target, so a duplicate row could be made.
+    'INSERT INTO novel_series (id, source_series_id, source, title) VALUES (?1, ?2, ?3, ?4)',
+    // Column values are never interpolated, and neither is anything else.
+    'UPDATE novel_series SET author = ?1 WHERE id = "novelid-x"',
+  ]) {
+    const res = await exec(sql, 'novel_series', { params: ['x', 'y', 'z'] });
+    assert.equal(res.status, 403, `must be rejected: ${sql}`);
+  }
+});
+
+// A table nobody allowlisted for /db/exec is untouched by the novel entries.
+test('db/exec still accepts a novel_series write but refuses a table it was never given', async () => {
+  const res = await exec(UPSERT_SERIES_SQL, 'novel_series', { params: Array.from({ length: 12 }, (_, i) => `p${i + 1}`) });
   assert.equal(res.status, 200, `the write must be accepted, got ${await res.clone().text()}`);
-  assert.ok(env.DB, 'and it landed in the local D1');
-  // …and still only for novel_series: the allowlist is not widened by proxy.
-  const other = await app.request('/api/_internal/db/exec', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-db-forward-key': 'sekret' },
-    body: JSON.stringify({ sql: 'INSERT INTO novel_paragraphs (id) VALUES (?1)', params: ['x'], table: 'novel_paragraphs' }),
-  }, stubEnv(), execCtx);
+  const other = await exec('INSERT INTO novel_paragraphs (id) VALUES (?1)', 'novel_paragraphs', { params: ['x'] });
   assert.equal(other.status, 403);
 });
 
