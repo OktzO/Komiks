@@ -1095,6 +1095,11 @@ const clampOffset = (offset: number): number => {
   return Number.isFinite(n) && n > 0 ? n : 0;
 };
 
+// genre is stored as a JSON array, so a whole-element LIKE match is the filter.
+// Without ESCAPE, a genre containing _ or % would match a different one.
+const novelGenreLike = (genre: string): string =>
+  '%"' + genre.replace(/[\\%_]/g, (m) => `\\${m}`) + '"%';
+
 export class NovelDb {
   constructor(private readonly d1: D1Database) {}
 
@@ -1147,8 +1152,8 @@ export class NovelDb {
     const order = 'ORDER BY updated_at DESC, id DESC';
     const { results } = opts.genre
       ? await this.d1
-          .prepare(`${base} WHERE genre LIKE ?3 ${order} LIMIT ?1 OFFSET ?2`)
-          .bind(limit, offset, `%"${opts.genre}"%`)
+          .prepare(`${base} WHERE genre LIKE ?3 ESCAPE '\\' ${order} LIMIT ?1 OFFSET ?2`)
+          .bind(limit, offset, novelGenreLike(opts.genre))
           .all<Row>()
       : await this.d1
           .prepare(`${base} ${order} LIMIT ?1 OFFSET ?2`)
@@ -1159,9 +1164,9 @@ export class NovelDb {
 
   async countSeries(genre?: string): Promise<number> {
     const stmt = this.d1.prepare(
-      `SELECT COUNT(*) AS c FROM novel_series${genre ? ' WHERE genre LIKE ?1' : ''}`
+      `SELECT COUNT(*) AS c FROM novel_series${genre ? " WHERE genre LIKE ?1 ESCAPE '\\'" : ''}`
     );
-    const row = genre ? await stmt.bind(`%"${genre}"%`).first<Row>() : await stmt.first<Row>();
+    const row = genre ? await stmt.bind(novelGenreLike(genre)).first<Row>() : await stmt.first<Row>();
     return Number(row?.c ?? 0);
   }
 
@@ -1170,18 +1175,21 @@ export class NovelDb {
     patch: { cover_fallback?: string; synopsis?: string; author?: string },
   ): Promise<void> {
     const sets: string[] = [];
+    const guards: string[] = [];
     const args: string[] = [];
     for (const col of NOVEL_GAP_COLUMNS) {
       if (patch[col] !== undefined) {
         sets.push(`${col} = ?${args.length + 1}`);
+        // The gap fill must never clobber a value a primary source already has,
+        // so the caller cannot be the only thing enforcing that.
+        guards.push(`(${col} IS NULL OR ${col} = '')`);
         args.push(patch[col] as string);
       }
     }
     if (sets.length === 0) return;
-    sets.push(`updated_at = ?${args.length + 1}`);
     await this.d1
-      .prepare(`UPDATE novel_series SET ${sets.join(', ')} WHERE id = ?${args.length + 2}`)
-      .bind(...args, nowSec(), id)
+      .prepare(`UPDATE novel_series SET ${sets.join(', ')} WHERE id = ?${args.length + 1} AND ${guards.join(' AND ')}`)
+      .bind(...args, id)
       .run();
   }
 
@@ -1194,7 +1202,13 @@ export class NovelDb {
 
     const incoming = new Map<string, NovelChapterRow>();
     for (const c of chapters) {
-      if (c && typeof c.source_chapter_id === 'string' && c.source_chapter_id.length > 0 && !incoming.has(c.source_chapter_id)) {
+      // A row with no hash compares unequal to the stored one and would be
+      // written — the exact write the content_hash guard exists to prevent.
+      if (c
+        && typeof c.source_chapter_id === 'string' && c.source_chapter_id.length > 0
+        && typeof c.content_hash === 'string' && c.content_hash.length > 0
+        && typeof c.content === 'string'
+        && !incoming.has(c.source_chapter_id)) {
         incoming.set(c.source_chapter_id, c);
       }
     }

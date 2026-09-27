@@ -48,9 +48,11 @@ const SERIES = {
   updated_at: 2000,
 };
 
-const chapter = (n, hash, body) => ({
-  id: `ch-${n}`,
-  series_id: 'novelid/tekaburu',
+// novel_chapters.id is a global PRIMARY KEY, so a chapter id must be scoped to
+// its series or the second series to ingest chapter 1 fails on the constraint.
+const chapter = (n, hash, body, series = 'novelid/tekaburu') => ({
+  id: `${series}/ch-${n}`,
+  series_id: series,
   source_chapter_id: `src-${n}`,
   number: n,
   title: `Chapter ${n}`,
@@ -67,6 +69,22 @@ test('upsertSeries conflicts on the natural key, not the surrogate id', async ()
   assert.match(trace[0].sql, /ON CONFLICT\(source, source_series_id\)/);
   assert.ok(trace[0].args.includes('tekaburu'), 'source_series_id is bound');
   assert.equal(trace[0].ran, 'run');
+});
+
+test('upsertSeries refreshes every mutable column on a re-scrape, and only those', async () => {
+  const { client, trace } = makeStub();
+  await novelDb(client).upsertSeries(SERIES);
+  const updated = trace[0].sql
+    .split('DO UPDATE SET')[1]
+    .split(',')
+    .map((s) => s.trim().split(' =')[0]);
+  assert.deepEqual(
+    updated,
+    ['title', 'author', 'genre', 'status', 'cover_ref', 'cover_fallback', 'synopsis', 'updated_at'],
+    'a column dropped here silently stops refreshing on every later re-scrape',
+  );
+  assert.ok(!updated.includes('id'), 'id is the routing key and must not move');
+  assert.ok(!updated.includes('created_at'), 'created_at is insert-only');
 });
 
 test('upsertSeries survives a re-scrape of the same upstream id', async () => {
@@ -112,19 +130,49 @@ test('countSeries counts the same genre filter listSeries applies', async () => 
   assert.ok(trace[0].args.includes('%"Fantasy"%'));
 });
 
-test('getSeriesBySourceId and getSeriesBySlug both resolve to a single row', async () => {
+test('genre wildcards are escaped so Sci_Fi cannot match SciXFi', async () => {
+  const { client, trace } = makeStub();
+  await novelDb(client).listSeries({ limit: 20, offset: 0, genre: 'Sci_Fi%' });
+  assert.match(trace[0].sql, /ESCAPE '\\'/);
+  assert.ok(trace[0].args.includes(String.raw`%"Sci\_Fi\%"%`), `unexpected pattern: ${JSON.stringify(trace[0].args)}`);
+
+  const counted = makeStub({ rows: [{ c: 0 }] });
+  await novelDb(counted.client).countSeries('Sci_Fi');
+  assert.match(counted.trace[0].sql, /ESCAPE '\\'/);
+  assert.ok(counted.trace[0].args.includes('%' + '"' + 'Sci\\_Fi' + '"' + '%'));
+});
+
+test('getSeriesBySourceId resolves on the natural key', async () => {
+  const { client, trace } = makeStub({ rows: [SERIES] });
+  assert.equal((await novelDb(client).getSeriesBySourceId('novelid', 'tekaburu'))?.title, 'Teka Buru');
+  assert.deepEqual(trace[0].args, ['novelid', 'tekaburu']);
+  assert.doesNotMatch(trace[0].sql, /FROM novel_series LIMIT 1/);
+});
+
+test('getSeriesBySlug filters on the slug, so an unknown slug cannot match row one', async () => {
   const { client, trace } = makeStub({ rows: [SERIES] });
   const novel = novelDb(client);
-  assert.equal((await novel.getSeriesBySourceId('novelid', 'tekaburu'))?.title, 'Teka Buru');
-  assert.equal((await novel.getSeriesBySlug('novelid/tekaburu'))?.title, 'Teka Buru');
-  assert.deepEqual(trace[0].args, ['novelid', 'tekaburu']);
-  assert.match(trace[0].sql, /FROM novel_series WHERE source = \?1 AND source_series_id = \?2/);
-  assert.deepEqual(trace[1].args, ['novelid/tekaburu']);
+  await novel.getSeriesBySlug('novelid/tekaburu');
+  assert.match(trace[0].sql, /FROM novel_series WHERE id = \?1/);
+  assert.deepEqual(trace[0].args, ['novelid/tekaburu']);
+
+  const other = makeStub();
+  await novelDb(other.client).getSeriesBySlug('novelid/other');
+  assert.deepEqual(other.trace[0].args, ['novelid/other']);
+  assert.notEqual(other.trace[0].args[0], trace[0].args[0]);
+  assert.match(other.trace[0].sql, /WHERE id = \?1/);
 });
 
 test('getSeriesBySlug returns null when the row is absent', async () => {
   const { client } = makeStub();
   assert.equal(await novelDb(client).getSeriesBySlug('nope'), null);
+});
+
+test('getSeriesBySourceId never degrades to an unfiltered first-row lookup', async () => {
+  const { client, trace } = makeStub({ rows: [SERIES] });
+  await novelDb(client).getSeriesBySourceId('novelid', 'tekaburu');
+  assert.match(trace[0].sql, /WHERE source = \?1 AND source_series_id = \?2/);
+  assert.doesNotMatch(trace[0].sql, /FROM novel_series LIMIT 1/);
 });
 
 test('listChapters orders by number ASC and clamps its limit', async () => {
@@ -150,6 +198,22 @@ test('fillSeriesGaps with every key writes all three gap columns', async () => {
     author: 'Anon',
   });
   assert.match(trace[0].sql, /cover_fallback = \?1, synopsis = \?2, author = \?3/);
+});
+
+test('fillSeriesGaps never overwrites a populated column', async () => {
+  const { client, trace } = makeStub();
+  await novelDb(client).fillSeriesGaps('s', {
+    cover_fallback: 'https://example.test/c.jpg',
+    synopsis: 'syn',
+    author: 'Anon',
+  });
+  for (const col of ['cover_fallback', 'synopsis', 'author']) {
+    assert.ok(
+      trace[0].sql.includes(`(${col} IS NULL OR ${col} = '')`),
+      `${col} must only be written while it is still empty`,
+    );
+  }
+  assert.doesNotMatch(trace[0].sql, /updated_at/, 'a metadata fill must not reset the staleness clock');
 });
 
 test('fillSeriesGaps with an empty patch issues no write at all', async () => {
@@ -231,6 +295,33 @@ test('getChapter and countChapters stay inside one series', async () => {
   const counted = makeStub({ rows: [{ c: 12 }] });
   assert.equal(await novelDb(counted.client).countChapters('s'), 12);
   assert.deepEqual(counted.trace[0].args, ['s']);
+});
+
+test('two series may hold the same chapter number without a primary key clash', async () => {
+  const { client, trace, batches } = makeStub({ rows: [] });
+  const novel = novelDb(client);
+  await novel.upsertChapters('novelid/tekaburu', [chapter(1, 'hash-a', 'body-a')]);
+  await novel.upsertChapters('noveltoon/tekaburu', [chapter(1, 'hash-b', 'body-b', 'noveltoon/tekaburu')]);
+  const inserts = trace.filter((r) => r.sql.includes('INSERT INTO novel_chapters'));
+  assert.equal(inserts.length, 2);
+  const [idA, idB] = inserts.map((r) => r.args[0]);
+  assert.notEqual(idA, idB, 'novel_chapters.id is a global primary key, so it must be series-scoped');
+  assert.deepEqual(inserts.map((r) => r.args[1]), ['novelid/tekaburu', 'noveltoon/tekaburu']);
+  assert.equal(batches.length, 2);
+});
+
+test('upsertChapters skips a row with no content_hash instead of writing it', async () => {
+  const { client, trace } = makeStub({
+    rows: [{ source_chapter_id: 'src-1', content_hash: 'hash-a' }],
+  });
+  const empty = { inserted: 0, updated: 0, unchanged: 0 };
+  const novel = novelDb(client);
+  assert.deepEqual(await novel.upsertChapters('s', [{ ...chapter(1, 'hash-a', 'b'), content_hash: undefined }]), empty);
+  assert.equal(trace.length, 0, 'a hashless row is dropped before the lookup, not written');
+  assert.deepEqual(await novel.upsertChapters('s', [{ ...chapter(1, 'hash-a', undefined), content: undefined }]), empty);
+  assert.equal(trace.length, 0, 'content is NOT NULL, so a row without it is dropped too');
+  assert.deepEqual(await novel.upsertChapters('s', [chapter(1, '', 'b')]), empty);
+  assert.equal(trace.length, 0, 'an empty hash compares unequal and would defeat the quota guard');
 });
 
 test('listStaleSeries derives its cutoff from a relative age', async () => {
