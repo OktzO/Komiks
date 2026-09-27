@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS novel_series (
   cover_ref        TEXT,
   cover_fallback   TEXT,
   synopsis         TEXT,
-  created_at       INTEGER NOT NULL,
-  updated_at       INTEGER NOT NULL,
+  created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at       INTEGER NOT NULL DEFAULT (unixepoch()),
   UNIQUE (source, source_series_id)
 );
 
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS novel_chapters (
   content           TEXT NOT NULL,
   content_hash      TEXT NOT NULL,
   source_url        TEXT,
-  scraped_at        INTEGER NOT NULL,
+  scraped_at        INTEGER NOT NULL DEFAULT (unixepoch()),
   UNIQUE (series_id, source_chapter_id)
 );
 

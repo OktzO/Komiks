@@ -98,6 +98,44 @@ test('the ledger write path stays best-effort', () => {
 });
 
 /* ----------------------------------------------------------------------- *
+ * schema.sql vs the migrations                                          *
+ * ----------------------------------------------------------------------- */
+
+// Both files build a novel table, and a database built from one must be
+// indistinguishable from a database built from the other. Today they disagree
+// on the timestamp defaults: NovelDb binds every column so nothing breaks, but
+// the first `INSERT INTO novel_series VALUES (...)` written by anything else
+// gets a default in a fresh schema.sql database and a NOT NULL failure in a
+// migrated one.
+const columnLines = (sql, table) => {
+  const m = new RegExp(`CREATE TABLE (?:IF NOT EXISTS )?${table}\\s*\\(([\\s\\S]*?)\\n\\);`).exec(sql);
+  if (!m) return null;
+  return m[1]
+    .split('\n')
+    .map((l) => l.replace(/,$/, '').trim().replace(/\s+/g, ' '))
+    .filter(Boolean)
+    .sort();
+};
+
+test('the novel tables are declared identically in schema.sql and in 0021', () => {
+  const schema = readFileSync(join(root, 'packages', 'db', 'schema.sql'), 'utf8');
+  const migration = readFileSync(join(root, 'packages', 'db', 'migrations', '0021_novel_module.sql'), 'utf8');
+  for (const table of ['novel_series', 'novel_chapters']) {
+    const fromSchema = columnLines(schema, table);
+    const fromMigration = columnLines(migration, table);
+    assert.ok(fromSchema, `${table} exists in schema.sql`);
+    assert.ok(fromMigration, `${table} exists in migration 0021`);
+    const onlySchema = fromSchema.filter((l) => !fromMigration.includes(l));
+    const onlyMigration = fromMigration.filter((l) => !fromSchema.includes(l));
+    assert.deepEqual(
+      { onlySchema, onlyMigration },
+      { onlySchema: [], onlyMigration: [] },
+      `${table}: a fresh schema.sql database and a migrated one must be the same shape`,
+    );
+  }
+});
+
+/* ----------------------------------------------------------------------- *
  * Behaviour: the guards must decide from the result set, never from echo,  *
  * and a failed migration must not exit 0. Mocked npx, no network, no D1.   *
  * ----------------------------------------------------------------------- */
