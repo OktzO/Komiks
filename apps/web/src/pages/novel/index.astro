@@ -1,0 +1,80 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { NovelCatalog, CATALOG_PAGE_SIZE } from '@/components/NovelCatalog';
+import { POPULAR_GENRES } from '@/components/GenrePills';
+import { getNovelCatalog, type NovelCatalogPage } from '@/lib/api';
+import { novelCatalogUrl } from '@/lib/novelRoutes';
+
+export const prerender = false;
+
+// Async-first: the catalog grid is the only slow part, so it gets a 300ms
+// budget. Late → the island fetches it itself and the page ships its skeleton.
+const BUDGET_MS = 300;
+
+const budget = <T,>(p: Promise<T>): Promise<T | null> =>
+  Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), BUDGET_MS))]);
+
+const q = Astro.url.searchParams;
+const page = Math.max(1, Math.floor(Number(q.get('page')) || 1));
+const genre = (q.get('genre') ?? '').trim().slice(0, 40);
+
+let catalog: NovelCatalogPage | null = null;
+try {
+  catalog = await budget(getNovelCatalog({ genre: genre || undefined, page, limit: CATALOG_PAGE_SIZE }));
+} catch {
+  catalog = null;
+}
+
+const desc = genre
+  ? `Baca novel bergenre ${genre} Bahasa Indonesia, Gratis di Oktz.`
+  : 'Baca novel web Bahasa Indonesia. Gratis, rapi, dan cepat.';
+
+const jsonLd = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: 'Katalog Novel',
+  description: desc,
+  inLanguage: 'id',
+}).replaceAll('<', '\\u003c');
+---
+
+<BaseLayout title="Novel" description={desc} canonical={novelCatalogUrl({ page, genre: genre || null })}>
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 pb-24 pt-8">
+    <script type="application/ld+json" set:html={jsonLd} />
+
+    <a href="/" class="text-secondary text-sm hover:text-accent mb-4 inline-block">← Beranda</a>
+
+    <header class="mb-6">
+      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Novel</h1>
+      <p class="mt-1.5 text-sm text-secondary">
+        Novel web Bahasa Indonesia, dibaca langsung di situs — satu bab sekaligus.{' '}
+        <a href="/novel" class="text-accent hover:underline">Mulai dari katalog</a>
+      </p>
+    </header>
+
+    <nav class="mb-6 flex gap-2 overflow-x-auto pb-1" aria-label="Filter genre novel">
+      <a
+        href={novelCatalogUrl({ page: 1 })}
+        class={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs transition-colors ${
+          genre === ''
+            ? 'border-accent-border bg-accent-soft text-accent'
+            : 'border-border-subtle bg-card/60 text-secondary hover:border-border-default hover:text-primary'
+        }`}
+      >Semua</a>
+      {POPULAR_GENRES.map((g) => (
+        <a
+          href={novelCatalogUrl({ page: 1, genre: g.name })}
+          class={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs transition-colors ${
+            genre === g.name
+              ? 'border-accent-border bg-accent-soft text-accent'
+              : 'border-border-subtle bg-card/60 text-secondary hover:border-border-default hover:text-primary'
+          }`}
+        >
+          {g.label}
+        </a>
+      ))}
+    </nav>
+
+    <NovelCatalog client:load page={page} genre={genre} initial={catalog} />
+  </main>
+</BaseLayout>

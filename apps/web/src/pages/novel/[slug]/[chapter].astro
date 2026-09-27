@@ -1,0 +1,61 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import NotFoundPage from '@/components/pages/NotFoundPage';
+import { NovelReader } from '@/components/NovelReader';
+import { getNovelChapter, getNovelSeries } from '@/lib/api';
+import { chapterNumberOf } from '@/lib/novelRoutes';
+
+export const prerender = false;
+
+// Async-first: the series title is small and KV-warm, the chapter body is the
+// slow part (a stale chapter triggers a re-scrape). Budget them apart so a cold
+// chapter never holds back the shell, and so a budget miss is never mistaken
+// for a 404.
+const SERIES_BUDGET_MS = 300;
+const CHAPTER_BUDGET_MS = 400;
+
+const budget = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+  Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+
+const slug = Astro.params.slug ?? '';
+// Composite "{seriesSlug}/{babNumber}" — bound whole as one encoded segment.
+const chapterId = Astro.params.chapter ?? '';
+
+const settled = await Promise.race([
+  getNovelChapter(slug, chapterId)
+    .then((c) => ({ ok: true as const, c }))
+    .catch(() => ({ ok: false as const })),
+  new Promise<null>((r) => setTimeout(() => r(null), CHAPTER_BUDGET_MS)),
+]);
+
+const notFound = settled !== null && !settled.ok;
+const chapter = settled?.ok ? settled.c : null;
+
+let seriesTitle = slug;
+if (!notFound) {
+  const s = await budget(getNovelSeries(slug).catch(() => null), SERIES_BUDGET_MS);
+  if (s?.title) seriesTitle = s.title;
+}
+
+const number = chapter?.number ?? chapterNumberOf(chapterId);
+
+if (notFound) Astro.response.status = 404;
+---
+
+{notFound ? (
+  <BaseLayout title="404 — Bab tidak ditemukan" noindex>
+    <NotFoundPage client:load />
+  </BaseLayout>
+) : (
+  <BaseLayout title={`${seriesTitle} — Bab ${number ?? '?'}`} noindex bare>
+    <NovelReader
+      client:load
+      slug={slug}
+      chapterId={chapterId}
+      chapterNumber={number}
+      chapterTitle={chapter?.title ?? null}
+      seriesTitle={seriesTitle}
+      initial={chapter}
+    />
+  </BaseLayout>
+)}

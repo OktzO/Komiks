@@ -1,0 +1,144 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import NotFoundPage from '@/components/pages/NotFoundPage';
+import { NovelChapterList } from '@/components/NovelChapterList';
+import { CoverImage } from '@/components/CoverImage';
+import { getNovelSeries, type NovelChapter, type NovelSeries } from '@/lib/api';
+import { chapterNumberOf, novelCatalogUrl, parseNovelGenres } from '@/lib/novelRoutes';
+
+export const prerender = false;
+
+// Async-first: the detail payload carries the series AND its first chapter page,
+// so one 300ms-budgeted call covers the whole page. Late → the chapter island
+// self-fetches; a throw is a real 404 (the route also rejects a slug that
+// decoded to a path separator, so there is no second series to guess at).
+const BUDGET_MS = 300;
+
+const slug = Astro.params.slug ?? '';
+
+// Settled (not raced) so a rejected fetch can never surface as an unhandled
+// rejection once the timeout has already won the race.
+const settled = await Promise.race([
+  getNovelSeries(slug).then((s) => ({ ok: true as const, s })).catch(() => ({ ok: false as const })),
+  new Promise<null>((r) => setTimeout(() => r(null), BUDGET_MS)),
+]);
+
+const notFound = settled !== null && !settled.ok;
+const series: NovelSeries | null = settled?.ok ? settled.s : null;
+
+const chapters: NovelChapter[] | null = series ? (series.chapters ?? []) : null;
+const startChapter = (chapters ?? []).reduce<NovelChapter | null>(
+  (min, c) => (min === null || c.number < min.number ? c : min),
+  null,
+);
+
+const genres = parseNovelGenres(series?.genre);
+const desc = (series?.synopsis ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
+  || (series ? `Baca ${series.title} Bahasa Indonesia, lengkap di Oktz.` : undefined);
+
+const jsonLd = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'Book',
+  name: series?.title,
+  author: series?.author ? { '@type': 'Person', name: series.author } : undefined,
+  genre: genres,
+  inLanguage: 'id',
+}).replaceAll('<', '\\u003c');
+
+if (notFound) Astro.response.status = 404;
+---
+
+{notFound ? (
+  <BaseLayout title="404 — Halaman tidak ditemukan" noindex>
+    <NotFoundPage client:load />
+  </BaseLayout>
+) : (
+  <BaseLayout title={series?.title ?? 'Novel'} description={desc} canonical={`/novel/${slug}`}>
+  <main class="max-w-2xl mx-auto px-4 pb-24 pt-8">
+    <script type="application/ld+json" set:html={jsonLd} />
+
+    <a href="/novel" class="text-secondary text-sm hover:text-accent mb-4 inline-block">← Katalog Novel</a>
+
+    {series ? (
+      <>
+        <div class="md:flex md:gap-6 md:items-start mb-5">
+          <div class="flex justify-center md:shrink-0 mb-4 md:mb-0">
+            <div class="w-32 md:w-36 aspect-[3/4] overflow-hidden rounded-xl border border-border-default bg-card">
+              <CoverImage src={series.cover_fallback} alt={series.title} title={series.title} className="h-full w-full" fit="cover" />
+            </div>
+          </div>
+
+          <div class="text-center md:text-left flex-1 min-w-0">
+            <h1 class="text-xl font-semibold text-primary leading-snug">{series.title}</h1>
+            {series.author && <p class="text-secondary text-sm mt-1">{series.author}</p>}
+
+            <div class="flex items-center justify-center md:justify-start flex-wrap gap-2 mt-2.5">
+              <span class="inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded border border-border-default text-secondary">
+                Novel
+              </span>
+              {series.status && series.status !== 'unknown' && (
+                <span class="inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded border border-border-default text-secondary">
+                  <span
+                    class={`inline-block h-1.5 w-1.5 rounded-full ${series.status === 'ongoing' ? 'bg-success animate-pulse' : series.status === 'completed' ? 'bg-error' : 'bg-muted'}`}
+                    aria-hidden="true"
+                  />
+                  {series.status === 'ongoing' ? 'Ongoing' : series.status === 'completed' ? 'End' : series.status}
+                </span>
+              )}
+            </div>
+
+            {genres.length > 0 && (
+              <div class="flex flex-wrap justify-center md:justify-start gap-1.5 mt-3">
+                {genres.map((g) => (
+                  <a
+                    href={novelCatalogUrl({ page: 1, genre: g })}
+                    class="rounded-md border border-border-subtle bg-card/70 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-secondary transition-colors hover:border-accent-border hover:text-accent"
+                  >
+                    {g}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {series.synopsis && (
+          <details class="mb-4 rounded-panel border border-border-default bg-card p-4">
+            <summary class="cursor-pointer font-mono text-[10px] font-black uppercase tracking-[0.2em] text-muted">Sinopsis</summary>
+            <p class="mt-2.5 text-sm leading-relaxed text-secondary whitespace-pre-line">{series.synopsis}</p>
+          </details>
+        )}
+
+        {startChapter && (
+          <div class="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+            <a
+              href={`/novel/${encodeURIComponent(slug)}/${encodeURIComponent(startChapter.source_chapter_id)}`}
+              class="inline-flex h-11 w-full max-w-md items-center justify-center gap-1.5 rounded-lg border border-white bg-white px-5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              Mulai Baca · Bab {chapterNumberOf(startChapter.source_chapter_id) ?? startChapter.number}
+            </a>
+          </div>
+        )}
+      </>
+    ) : (
+      <div class="mb-5" aria-busy="true" aria-label="Memuat detail novel">
+        <div class="flex gap-6 items-start">
+          <div class="skeleton w-32 h-44 shrink-0" />
+          <div class="flex-1 space-y-2 pt-2">
+            <div class="skeleton h-5 w-3/4" />
+            <div class="skeleton h-3 w-1/3" />
+            <div class="skeleton h-3 w-1/2" />
+          </div>
+        </div>
+      </div>
+    )}
+
+    <div class="border-t border-border-subtle my-5"></div>
+
+    <NovelChapterList client:load slug={slug} initialChapters={chapters} />
+  </main>
+  </BaseLayout>
+)}

@@ -198,6 +198,69 @@ export const getChapters = (source: string, sourceId: string, lang = 'id') =>
 export const getChapter = (source: string, chapterId: string) =>
   apiWithFailover<{ data: Chapter }>(`/api/reader/${source}/chapter/${chapterId}`).then((r) => r.data);
 
+// ---- Web novel (modul terpisah: /novel/*, bukan /[type]/*) ------------------
+// Series slug = primary key (single segment, no '/'). Chapter id = composite
+// "{seriesSlug}/{babNumber}" dan route param-nya wajib di-encode.
+export interface NovelSeries {
+  id: string;
+  source: string;
+  title: string;
+  author: string | null;
+  genre: string | null;
+  status: string | null;
+  cover_ref: string | null;
+  cover_fallback: string | null;
+  synopsis: string | null;
+  updated_at: number;
+  chapters?: NovelChapter[];
+}
+
+export interface NovelChapter {
+  id: string;
+  series_id: string;
+  source_chapter_id: string;
+  number: number;
+  title: string | null;
+  content: string;
+  scraped_at: number;
+}
+
+export interface NovelCatalogPage {
+  data: NovelSeries[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export const getNovelCatalog = (opts: { genre?: string; page?: number; limit?: number } = {}) => {
+  const q = new URLSearchParams();
+  if (opts.genre) q.set('genre', opts.genre);
+  if (opts.page) q.set('page', String(opts.page));
+  if (opts.limit) q.set('limit', String(opts.limit));
+  const qs = q.toString();
+  return apiWithFailover<NovelCatalogPage>(`/api/novel/catalog${qs ? `?${qs}` : ''}`);
+};
+
+export const getNovelSeries = (slug: string) =>
+  apiWithFailover<{ data: NovelSeries }>(
+    `/api/novel/series/${encodeURIComponent(slug)}`,
+  ).then((r) => r.data);
+
+export const getNovelChapters = (slug: string, opts: { page?: number; limit?: number } = {}) => {
+  const q = new URLSearchParams();
+  if (opts.page) q.set('page', String(opts.page));
+  if (opts.limit) q.set('limit', String(opts.limit));
+  const qs = q.toString();
+  return apiWithFailover<{ data: NovelChapter[]; total: number }>(
+    `/api/novel/series/${encodeURIComponent(slug)}/chapters${qs ? `?${qs}` : ''}`,
+  );
+};
+
+export const getNovelChapter = (slug: string, chapterId: string) =>
+  apiWithFailover<{ data: Pick<NovelChapter, 'id' | 'number' | 'title' | 'content' | 'scraped_at'> }>(
+    `/api/novel/series/${encodeURIComponent(slug)}/chapter/${encodeURIComponent(chapterId)}`,
+  ).then((r) => r.data);
+
 // ---- Data API (now merged into single manga-api Worker) ----------------------
 export interface MergedManga {
   slug: string;
@@ -248,6 +311,9 @@ const ORIGIN_PATH_ALLOWLIST = [
   '/api/homepage',
   '/api/health',
   '/api/resolve',
+  // Novel routes read from the owning shard through peer forwarding, so every
+  // worker can serve them — the same guarantee the reader routes rely on.
+  '/api/novel/',
 ];
 
 // Module-level cache (60s): SSR render (detail page) juga butuh daftar origins,
