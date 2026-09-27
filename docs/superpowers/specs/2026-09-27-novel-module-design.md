@@ -55,7 +55,11 @@ cover     /uploads/....jpg?resize=139,184                  (query stripped by sa
 
 - AI translation pipeline for foreign-language sources. Deferred; separate design pass.
 - Merging novel and manga into one schema. Separate module, connected by link.
-- Any change to D1 core schema, the consistent-hash load balancer, or AES-GCM token encryption. Flagged only.
+- Any change to the session signing keyring, the Cloudflare token encryption, D1 core schema, the consistent-hash load balancer, or sharding logic. Flagged only.
+
+  Two distinct protected mechanisms are commonly conflated here, and they are risky for different reasons:
+  - **Session signing** is **ECDSA P-256 with a `kid` keyring** (`apps/api-cf/src/lib/auth.ts`), used for cross-account asymmetric session verification. Its risk is key rotation across the four accounts, not cipher choice.
+  - **Cloudflare API tokens at rest** are **AES-GCM** encrypted via Web Crypto (`packages/lb/crypto.ts`). Its risk is the key derivation from the signing secret.
 - A second chapter source. None is available; re-probe before assuming this still holds.
 
 ## 5. Corrections to the original draft
@@ -216,7 +220,7 @@ Plus a shared-layer pass over `apps/api-cf/src/lib/` — the trunk, not just the
 
 **Low risk, fix in place:** selectors and base URLs moved into config; log shape unified; per-adapter timeouts made explicit.
 
-**High risk, backlog only — do not touch:** D1 core schema, the consistent-hash ring (`packages/shared/src/r2-routing.ts` is explicitly not wired; live routing stays `% N`), AES-GCM token encryption, sharding logic itself.
+**High risk, backlog only — do not touch:** D1 core schema, the consistent-hash ring (`packages/shared/src/r2-routing.ts` is explicitly not wired; live routing stays `% N`), the ECDSA P-256 session keyring (`apps/api-cf/src/lib/auth.ts`), the AES-GCM encryption of Cloudflare tokens at rest (`packages/lb/crypto.ts`), and sharding logic itself.
 
 Each low-risk fix is its own commit so any regression reverts in isolation.
 
