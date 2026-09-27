@@ -64,6 +64,11 @@ const accs = [1, 2, 3, 4].map((i) => ({
 // to end at a wp.com label, not merely contain those characters.
 const POISONED = "source = 'novelid' AND cover_fallback GLOB 'https://*.wp.com/*'";
 
+// A statement's answer is two things, and a non-SELECT only has one of them.
+// `results` carries rows and is absent for a write, so counting rows off an
+// UPDATE reports 0 no matter how many it cleared; `meta.changes` is the write's
+// row count (SQLite's sqlite3_total_changes), and it is the only place an UPDATE
+// reports its size. Both are returned so each caller reads the one it needs.
 const cfRaw = async (acc, sql, params = []) => {
   const res = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${acc.accountId}/d1/database/${acc.uuid}/raw`,
@@ -76,14 +81,18 @@ const cfRaw = async (acc, sql, params = []) => {
   );
   const j = await res.json();
   if (!j.success) throw new Error(`D1 akun-${acc.i}: ${JSON.stringify(j.errors)}`);
-  const r = j.result?.[0]?.results;
-  if (!r || !Array.isArray(r.rows)) return [];
-  return r.rows.map((row) => Object.fromEntries(r.columns.map((c, i) => [c, row[i]])));
+  const r = j.result?.[0];
+  if (!r) return { rows: [], changes: 0 };
+  const rows = Array.isArray(r.results?.rows) ? r.results.rows : [];
+  return {
+    rows: rows.map((row) => Object.fromEntries((r.results.columns ?? []).map((c, i) => [c, row[i]]))),
+    changes: Number(r.meta?.changes ?? 0),
+  };
 };
 
 let total = 0;
 for (const acc of accs) {
-  const rows = await cfRaw(
+  const { rows } = await cfRaw(
     acc,
     `SELECT id, title, cover_ref, cover_fallback FROM novel_series WHERE ${POISONED} ORDER BY id`,
   );
@@ -95,11 +104,11 @@ for (const acc of accs) {
     console.log(`    cover_fallback = ${JSON.stringify(r.cover_fallback)}`);
   }
   if (APPLY && rows.length > 0) {
-    const cleared = await cfRaw(
+    const { changes } = await cfRaw(
       acc,
       `UPDATE novel_series SET cover_ref = NULL, cover_fallback = NULL WHERE ${POISONED}`,
     );
-    console.log(`  cleared ${cleared.length} row(s)`);
+    console.log(`  cleared ${changes} row(s)`);
   }
 }
 

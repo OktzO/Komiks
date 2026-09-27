@@ -1373,3 +1373,217 @@ test('a failing search ends that seed without losing the rest', async () => {
   assert.deepEqual(attempted, ['a', 'a', 'b'], 'the failing seed is retried once, then the walk continues');
   assert.equal(res.inserted, 1, 'the second seed still landed');
 });
+// ── the chapterless exemption must be a bootstrap, not a standing rule ──────
+// listStaleSeries returns a chapterless row that has never been visited, so a
+// newly synced series gets its first fill immediately. The cost of that is a
+// series whose chapters can never be fetched: if a visit does not advance the
+// row, it still looks unvisited and the staleness query hands it back on every
+// tick, forever, at a full refresh budget each time. So the whole contract is
+// these two properties — every visit advances the row, whether or not it wrote
+// anything, and the retry therefore lands on the window's cadence rather than
+// the cron's.
+//
+// The predicate is transcribed from the SQL in packages/db/index.ts, because
+// stubD1 hands back a fixed list and cannot run a tick twice against it. The
+// query itself is pinned against real SQLite in packages/db/test/novel-stale.
+const stalenessClockD1 = (rows) => {
+  const state = new Map(rows.map((r) => [r.id, { ...r }]));
+  const trace = [];
+  const client = {
+    prepare(sql) {
+      const rec = { sql, args: [] };
+      trace.push(rec);
+      const stmt = {
+        rec,
+        bind(...args) { rec.args = args; return stmt; },
+        async all() {
+          // The stale listing's own SQL mentions novel_chapters too, so the
+          // upsert's prior-hash read is matched on its bound form.
+          if (sql.includes('FROM novel_chapters WHERE series_id = ?1')) return { results: [] };
+          const [cutoff, limit] = rec.args;
+          return {
+            results: [...state.values()]
+              .filter((r) => r.updated_at < cutoff || (r.updated_at === r.created_at && !chapters.has(r.id)))
+              .sort((a, b) => a.updated_at - b.updated_at)
+              .slice(0, limit),
+          };
+        },
+        async run() {
+          if (sql.startsWith('UPDATE novel_series SET updated_at')) {
+            state.get(String(rec.args[1])).updated_at = rec.args[0];
+          }
+          return { success: true, meta: { changes: 1 } };
+        },
+      };
+      return stmt;
+    },
+    async batch(stmts) {
+      for (const s of stmts) chapters.add(String(s.rec.args[1]));
+      return stmts.map(() => ({ success: true, meta: { changes: 1 } }));
+    },
+  };
+  const chapters = new Set();
+  // Time moves in one direction here, so "a window later" is every row ageing,
+  // which is what the query's own clock would have done to them. The extra
+  // minute is not slack for its own sake: the cutoff is a strict `<`, and a row
+  // bumped inside the same wall-clock second would sit exactly on it.
+  const elapse = (sec) => {
+    for (const r of state.values()) r.updated_at -= sec;
+  };
+  return { client, trace, elapse, state };
+};
+
+const WINDOW = 86400;
+
+// The shape the catalogue upsert writes for a series it has just discovered: one
+// clock value on both columns, so the row is unvisited and the exemption applies.
+const oneRow = (over = {}) => {
+  const now = Math.floor(Date.now() / 1000);
+  return { ...SERIES, created_at: now, updated_at: now, ...over };
+};
+
+// The same series a cron tick later, after a visit that wrote nothing. updated_at
+// has moved off created_at, which is the only record of the attempt there is —
+// and the hour of separation is not decoration: a visit inside the same
+// wall-clock second as the insert is indistinguishable from no visit at all, so
+// it would be exempt for one more tick. Bounded, never a loop, and the reason the
+// production path is two separate cron invocations.
+const visited = (over = {}) => oneRow({ created_at: Math.floor(Date.now() / 1000) - 3600, ...over });
+
+// A series whose chapters have never been fetchable. It is stale by age, not by
+// the exemption, which is the state the tick finds it in after a day of failing —
+// and the state the re-review probed hourly out to +720h.
+const stuckRow = (over = {}) => {
+  const now = Math.floor(Date.now() / 1000);
+  return visited({ created_at: now - 40 * WINDOW, updated_at: now - 2 * WINDOW, ...over });
+};
+
+// Upstream answers, and answers with nothing. The visit is a real visit — the
+// chapter list is fetched and every body is walked — so the only thing missing
+// is something to write. `asked` records which series was visited, one entry per
+// visit, so a tick that spends nothing shows up as an unchanged array.
+const sourceFor = (asked, body) => stubAdapter({
+  sourceKey: 'novelid',
+  capability: 'chapter',
+  chaptersFor: (seriesId) => {
+    asked.push(seriesId);
+    return summaries.map((s) => ({ ...s, sourceChapterId: `${seriesId}/${s.number}` }));
+  },
+  getChapterContent: (chapterId) => ({ html: body === '' ? '' : `<p>${chapterId}</p>` }),
+});
+
+const unfillable = (asked) => sourceFor(asked, '');
+const fillable = (asked) => sourceFor(asked, 'prose');
+
+test('a visit that wrote nothing is still a visit, so it advances updated_at', async () => {
+  const { client, trace } = stubD1();
+  await refreshSeries(envFor(client).env, SERIES, chapterAdapter({ 'tekaburu/1': { html: '' } }));
+  assert.equal(inserted(trace).length, 0, 'it still writes no chapter');
+  const touch = trace.find((r) => r.sql.startsWith('UPDATE novel_series SET updated_at'));
+  assert.ok(
+    touch,
+    'a row the visit could not fill is left looking never-visited, so it is re-fetched on every tick forever',
+  );
+  assert.deepEqual(touch.args.slice(1), [SERIES.id], 'and the id stays bound, not interpolated');
+});
+
+test('the touch follows the chapter write, so a failed write is retried', async () => {
+  const { client, trace } = stubD1();
+  // The write lands in batch(), so a failure there is the one that must not
+  // mark the row visited: nothing was stored, and the next tick has to try.
+  const broken = { ...client, batch: async () => { throw new Error('d1 unavailable'); } };
+  await assert.rejects(
+    () => refreshSeries(envFor(broken).env, SERIES, chapterAdapter({ 'tekaburu/1': { html: '<p>one</p>' } })),
+    /d1 unavailable/,
+  );
+  assert.equal(
+    trace.filter((r) => r.sql.startsWith('UPDATE novel_series SET updated_at')).length,
+    0,
+    'the touch is after the write, so a row that stored nothing keeps its exemption',
+  );
+});
+
+test('a series the catalogue has just discovered is still visited on its first tick', async () => {
+  const { client } = stalenessClockD1([oneRow()]);
+  const { env } = envFor(client);
+  const asked = [];
+  const first = await refreshStaleSeries(env, WINDOW, 20, () => unfillable(asked));
+  assert.equal(first.refreshed, 1, 'created_at = updated_at, so the exemption applies and the fill is not a day away');
+  assert.deepEqual(asked, ['tekaburu']);
+});
+
+test('a series whose chapters cannot be fetched is not returned on the next tick', async () => {
+  const { client, elapse } = stalenessClockD1([stuckRow()]);
+  const { env } = envFor(client);
+  const asked = [];
+  const resolve = () => unfillable(asked);
+
+  const first = await refreshStaleSeries(env, WINDOW, 20, resolve);
+  assert.equal(first.refreshed, 1, 'the first tick fills it, or tries to');
+  assert.deepEqual(asked, ['tekaburu'], 'the chapter list really was fetched, so this is a zero-chapter visit');
+
+  const second = await refreshStaleSeries(env, WINDOW, 20, resolve);
+  assert.equal(second.refreshed, 0, 'the next tick does not re-fetch it — that is the whole fix');
+  assert.deepEqual(asked, ['tekaburu'], 'and no upstream call is spent on it either');
+
+  const third = await refreshStaleSeries(env, WINDOW, 20, resolve);
+  assert.equal(third.refreshed, 0, 'nor the tick after that');
+
+  elapse(WINDOW + 60);
+  assert.equal(
+    (await refreshStaleSeries(env, WINDOW, 20, resolve)).refreshed,
+    1,
+    'but it is retried once the window has passed, so the cadence is bounded, not never',
+  );
+});
+
+test('a series that was filled is not returned on the next tick either', async () => {
+  const { client, elapse } = stalenessClockD1([oneRow()]);
+  const { env } = envFor(client);
+  const asked = [];
+  const resolve = () => fillable(asked);
+
+  const first = await refreshStaleSeries(env, WINDOW, 20, resolve);
+  assert.equal(first.refreshed, 1);
+  assert.equal(first.complete, 1, 'a short list is a complete pass');
+  assert.deepEqual(asked, ['tekaburu']);
+
+  const second = await refreshStaleSeries(env, WINDOW, 20, resolve);
+  assert.equal(second.refreshed, 0, 'a filled series is not stale at any age inside the window');
+  assert.deepEqual(asked, ['tekaburu']);
+
+  elapse(WINDOW + 60);
+  assert.equal(
+    (await refreshStaleSeries(env, WINDOW, 20, resolve)).refreshed,
+    1,
+    'and it is revisited once it ages out, so the success path still refreshes',
+  );
+});
+
+test('a series that keeps failing stops occupying the head of the queue', async () => {
+  // Only one visit fits the budget at the default window, so which row the tick
+  // spends it on is decided by the ordering alone.
+  assert.equal(refreshVisitsFor(envFor({}).env), 1);
+  const { client, state } = stalenessClockD1([
+    stuckRow({ id: 'stuck', source_series_id: 'stuck' }),
+    oneRow({ id: 'later', source_series_id: 'later' }),
+  ]);
+  const { env } = envFor(client);
+  const asked = [];
+  const resolve = () => unfillable(asked);
+
+  await refreshStaleSeries(env, WINDOW, 20, resolve);
+  assert.deepEqual(asked, ['stuck'], 'the oldest row goes first');
+  assert.ok(
+    state.get('stuck').updated_at > state.get('later').updated_at - WINDOW,
+    'and the visit that wrote nothing advanced it, so it no longer sorts as the oldest row',
+  );
+
+  asked.length = 0;
+  await refreshStaleSeries(env, WINDOW, 20, resolve);
+  assert.deepEqual(
+    asked,
+    ['later'],
+    'so the next tick spends its single visit on the other series, not on the one that cannot be filled',
+  );
+});

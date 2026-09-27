@@ -303,11 +303,17 @@ export const refreshSeries = async (
     + (nextOffset === null ? ' (series complete)' : ` (truncated, resume at ${nextOffset})`)
   );
 
-  if (rows.length === 0) return { fetched: 0, missing, budget, exhausted, nextOffset };
-
-  await novelDb(env.DB).upsertChapters(series.id, rows);
-  // listStaleSeries orders by updated_at, so a refresh that never touches the
-  // series row would hand back the same N rows every hour forever.
+  // The touch runs even when the window yielded nothing, and that is the whole
+  // fix. listStaleSeries exempts a chapterless row from the age test only while
+  // updated_at still equals created_at, so a visit that advanced nothing would
+  // leave the row looking never-visited: still exempt, still returned, a full
+  // refresh budget per hour against a series whose chapters cannot be fetched at
+  // all, for as long as the row lives. One visit is all the exemption is for.
+  //
+  // Order matters. The touch follows the write, so a failed upsert propagates
+  // and the row keeps its exemption — it stays "never visited" and is retried on
+  // the next tick rather than being marked visited with nothing stored.
+  if (rows.length > 0) await novelDb(env.DB).upsertChapters(series.id, rows);
   await env.DB
     .prepare('UPDATE novel_series SET updated_at = ?1 WHERE id = ?2')
     .bind(nowSec(), series.id)

@@ -43,13 +43,17 @@ const fresh = () => {
   return db;
 };
 
-const series = (db, id, updatedAt) =>
+// created_at defaults to updated_at because that is the shape the catalogue
+// upsert writes: one clock value bound to both columns, on insert. A visited row
+// is one whose updated_at has since moved past created_at, which is what
+// refreshSeries' touch does whether or not the visit wrote any chapters.
+const series = (db, id, updatedAt, createdAt = updatedAt) =>
   db
     .query(
       `INSERT INTO novel_series (id, source_series_id, source, title, created_at, updated_at)
-       VALUES (?1, ?2, 'novelid', ?3, ?4, ?4)`,
+       VALUES (?1, ?2, 'novelid', ?3, ?4, ?5)`,
     )
-    .run(id, id.replace('novelid-', ''), id, updatedAt);
+    .run(id, id.replace('novelid-', ''), id, createdAt, updatedAt);
 
 const chapter = (db, seriesId, n) =>
   db
@@ -84,29 +88,44 @@ test('a fresh series that already has chapters is not stale', async () => {
 });
 
 test('the chapterless exemption is a bootstrap, not a permanent re-fetch', async () => {
+  // Never visited, so created_at = updated_at: eligible at any age, which is what
+  // gets a series that has just been synced its first fill.
   const db = fresh();
-  // A series whose fill kept failing is never bumped by refreshSeries, so it ages
-  // out of the bootstrap window and the age test takes over: retried once per
-  // window, not once per cron tick.
-  series(db, 'novelid-failed-fill', NOW - 2 * DAY);
-  assert.deepEqual(await staleIds(db), ['novelid-failed-fill']);
+  series(db, 'novelid-never-visited', NOW);
+  assert.deepEqual(await staleIds(db), ['novelid-never-visited']);
 
-  // Inside the window a chapterless series is eligible, but it must not jump
-  // ahead of a row that really is stale: ORDER BY updated_at ASC is what stops a
-  // cron from spending its whole visit budget on the series it just inserted.
+  // Visited, and the visit wrote no chapters — upstream listed them and every
+  // body came back empty. The row is chapterless but it is not unvisited, so the
+  // exemption does not apply and the age test governs. This is the case the
+  // re-review probed hourly: before the fix it stayed stale out to +720h, and
+  // every one of those ticks cost a full refresh budget against upstream.
   const db2 = fresh();
-  series(db2, 'novelid-bootstrapping', NOW);
-  series(db2, 'novelid-genuinely-old', NOW - 30 * DAY);
-  assert.deepEqual(await staleIds(db2), ['novelid-genuinely-old', 'novelid-bootstrapping']);
+  series(db2, 'novelid-visited-empty', NOW, NOW - 3 * DAY);
+  assert.deepEqual(await staleIds(db2), [], 'a visited series is not re-fetched on the very next tick');
+  assert.deepEqual(await staleIds(db2, DAY, 20), [], 'nor the one after that, nor any tick inside the window');
 
-  // The visit that fills it bumps updated_at and the exemption retires.
-  chapter(db2, 'novelid-bootstrapping', 1);
-  assert.deepEqual(await staleIds(db2), ['novelid-genuinely-old']);
+  // But it is not never: once the window has passed the age test picks it up
+  // again, so a series that starts publishing is still filled without a redeploy.
+  db2.query('UPDATE novel_series SET updated_at = ?1 WHERE id = ?2').run(NOW - DAY - 60, 'novelid-visited-empty');
+  assert.deepEqual(await staleIds(db2), ['novelid-visited-empty']);
+
+  // It must not jump ahead of a row that really is stale: ORDER BY updated_at
+  // ASC is what stops a cron spending its whole visit budget on a series it just
+  // inserted.
+  const db3 = fresh();
+  series(db3, 'novelid-bootstrapping', NOW);
+  series(db3, 'novelid-genuinely-old', NOW - 30 * DAY, NOW - 31 * DAY);
+  assert.deepEqual(await staleIds(db3), ['novelid-genuinely-old', 'novelid-bootstrapping']);
+
+  // The visit that fills it leaves a chapter row, and the exemption no longer
+  // applies at any age — however unvisited the row still looks.
+  chapter(db3, 'novelid-bootstrapping', 1);
+  assert.deepEqual(await staleIds(db3), ['novelid-genuinely-old']);
 });
 
 test('an old series with chapters is still stale, and the limit still bounds the pass', async () => {
   const db = fresh();
-  series(db, 'novelid-old-with-chapters', NOW - 3 * DAY);
+  series(db, 'novelid-old-with-chapters', NOW - 3 * DAY, NOW - 4 * DAY);
   chapter(db, 'novelid-old-with-chapters', 1);
   assert.deepEqual(await staleIds(db), ['novelid-old-with-chapters']);
 

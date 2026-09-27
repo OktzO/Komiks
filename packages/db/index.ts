@@ -1302,24 +1302,42 @@ export class NovelDb {
   }
 
   // A row is stale when it has aged out of the window, or when it has never been
-  // filled. The second clause is what stops a newly inserted series from waiting
-  // a full window for its first chapter fetch: it is inserted with updated_at =
-  // now, so the age test alone leaves a new deployment with a reader and nothing
-  // to read until the window expires.
+  // filled and has never been visited. The second clause is what stops a newly
+  // inserted series from waiting a full window for its first chapter fetch: the
+  // catalogue inserts it with created_at = updated_at = now, so the age test
+  // alone would leave a new deployment with a reader and nothing to read.
   //
-  // `updated_at >= cutoff` is what keeps the clause from becoming a re-fetch
-  // loop. A series the fill failed on is never bumped by refreshSeries, so it
-  // ages out of this exemption and falls back to the age test — retried once per
-  // window rather than once per cron tick — and the exemption cannot promote a
-  // permanently chapterless series into the head of the queue, because
-  // ORDER BY updated_at puts an un-bumped row behind every genuinely stale one.
+  // `updated_at = created_at` is the load-bearing part, and it is single-shot by
+  // construction rather than by a window. The catalogue upsert is the only
+  // writer of created_at, and refreshSeries' touch is the only writer of
+  // updated_at after it, so the two are equal exactly while no visit has ever
+  // happened — and every visit advances updated_at, whether or not it wrote
+  // anything. So the exemption covers one attempt and then retires, which is
+  // what a series whose chapters cannot be fetched needs: not every tick, and
+  // not never. It falls through to the age test and is retried once per window.
+  //
+  // An age-bounded clause cannot say this. Any window long enough that a series
+  // created just after a cron tick still gets its first fill is also long enough
+  // to cover the tick after it, so two consecutive ticks both return it; any
+  // window shorter than the tick interval drops the first fill on the floor and
+  // the series waits out the full age window after all.
+  //
+  // The clause cannot fire twice for a filled series either: NOT EXISTS rules it
+  // out at any age, whatever updated_at says.
+  //
+  // ponytail: reading "visited" off updated_at = created_at couples this to the
+  // catalog upsert binding both columns to one clock value. A future writer that
+  // touches updated_at outside a refresh visit would silently retire the
+  // exemption, costing a new series its immediate first fill (a 24h wait, not a
+  // loop). Upgrade path: a real column — `novel_series.chapter_attempts`, 0 vs
+  // not — when a second such writer is more likely than not.
   async listStaleSeries(olderThanSec: number, limit: number): Promise<NovelSeriesRow[]> {
     const cutoff = nowSec() - Math.max(0, Math.floor(Number(olderThanSec) || 0));
     const { results } = await this.d1
       .prepare(
         `SELECT ${NOVEL_SERIES_COLUMNS} FROM novel_series
          WHERE updated_at < ?1
-            OR (updated_at >= ?1
+            OR (updated_at = created_at
                 AND NOT EXISTS (SELECT 1 FROM novel_chapters WHERE series_id = novel_series.id))
          ORDER BY updated_at ASC LIMIT ?2`
       )

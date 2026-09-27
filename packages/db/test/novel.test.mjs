@@ -412,8 +412,12 @@ test('listStaleSeries derives its cutoff from a relative age', async () => {
     'the bound cutoff is a timestamp derived from the age, not the age itself',
   );
   assert.equal(trace[0].args[1], 50);
-  // The chapterless branch reuses the same cutoff rather than binding a second
-  // value, so a caller cannot widen the bootstrap window past the age window.
+  // The chapterless branch binds no second value: it is not a window a caller
+  // could widen, but "this row has never been visited", which is a fact about
+  // the row rather than a duration. Any window long enough to cover the gap
+  // between a cron tick and a series created just after it also covers the next
+  // tick, so it cannot promise a single-shot exemption.
   assert.equal(trace[0].args.length, 2);
+  assert.match(trace[0].sql, /updated_at = created_at/);
   assert.match(trace[0].sql, /NOT EXISTS \(SELECT 1 FROM novel_chapters WHERE series_id = novel_series\.id\)/);
 });
