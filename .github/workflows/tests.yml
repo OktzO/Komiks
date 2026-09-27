@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node20:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # packages/db's test script and apps/web's both shell out to bun, and
+      # setup-node does not provide it.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      # Every suite below goes through the package's own test script, i.e. tsx.
+      # Plain `node --test` cannot import the .ts sources these tests reach, and
+      # reports ERR_UNKNOWN_FILE_EXTENSION across the whole file — a wall of
+      # failures that is a runner mistake, not a regression.
+      - run: npm --prefix apps/api-cf test
+      - run: npm --prefix packages/db test
+      - run: npm --prefix packages/sources test
+      # packages/shared has tests but no test script and no tsx of its own;
+      # borrowing db's workspace copy is the shortest path that runs. Give it a
+      # devDependency when a lockfile bump is worth the churn.
+      - run: packages/db/node_modules/.bin/tsx --test packages/shared/test/*.test.mjs
+      # The scan itself stays in secrets.yml. Only its test runs here, so a
+      # rule set that has stopped matching anything cannot pass unnoticed.
+      - run: node --test scripts/scan-secrets.test.mjs
+
+  node22:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to the floor rather than latest 22.x, because 22.12 is the
+      # oldest version that astro accepts: an accidental use of a newer Node
+      # API then fails here instead of on a deploy machine.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      # astro refuses to start below 22.12 ("Node.js v20.x is not supported by
+      # Astro!"), so the web suite and build cannot share the Node 20 job.
+      - run: npm --prefix apps/web test
+      - run: npm --prefix apps/web run build
+      # astro check exits 1 for "there are errors" without saying which, so
+      # this cannot be a plain run. scripts/ci-baseline.mjs pins the one
+      # pre-existing error by position and fails on any other position — and
+      # also on this one disappearing, so the list cannot outlive its cause.
+      - run: |
+          npm --prefix apps/web run lint 2>&1 |
+            node scripts/ci-baseline.mjs "src/components/profile/PreferencesSection.tsx:111"
