@@ -9,7 +9,7 @@ import { TYPE_META, TypeBadge } from '@/components/TypeBadge';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import { loadCanonicalQuick } from '@/lib/loadCanonical';
 import { sanitizeCoverUrl } from '@manga-platform/shared/http';
-import { API_URL, statusLabel, statusKnown } from '@/lib/api';
+import { API_URL, statusLabel, statusKnown, isValidType } from '@/lib/api';
 
 export const prerender = false;
 
@@ -28,7 +28,11 @@ try {
 } catch {
   notFound = true;
 }
-if (loaded && loaded.resolved.type !== type) {
+// Route ini catch-all: /novel/... milik modul novel (static, menang atas
+// dynamic), jadi type tak dikenal harus 404 — bukan safeType() → 'manga' atau
+// 301 ke /manga/slug. Cek dulu, sebelum blok redirect.
+if (!isValidType(type!)) notFound = true;
+if (!notFound && loaded && loaded.resolved.type !== type) {
   // Wrong-type → redirect permanen ke route typed yang benar (301).
   return Astro.redirect(`/${loaded.resolved.type}/${encodeURIComponent(slug)}`, 301);
 }

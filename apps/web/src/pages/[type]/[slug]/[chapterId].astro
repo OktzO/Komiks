@@ -1,5 +1,5 @@
 ---
-import { API_URL, getResolve, getChapter, getSeries } from '@/lib/api';
+import { API_URL, getResolve, getChapter, getSeries, isValidType } from '@/lib/api';
 import { ClientRouter } from 'astro:transitions';
 import ReaderShell from '@/components/ReaderShell';
 import ThemeInit from '@/components/ThemeInit.astro';
@@ -24,7 +24,11 @@ try {
 } catch {
   notFound = true;
 }
-if (resolved && resolved.type !== type) {
+// Route ini catch-all: /novel/... milik modul novel (static, menang atas
+// dynamic), jadi type tak dikenal harus 404 — bukan safeType() → 'manga' atau
+// 301 ke /manga/slug/chapter. Cek dulu, sebelum blok redirect.
+if (!isValidType(type!)) notFound = true;
+if (!notFound && resolved && resolved.type !== type) {
   return Astro.redirect(`/${resolved.type}/${encodeURIComponent(slug!)}/${encodeURIComponent(chapterId!)}`, 301);
 }
 
