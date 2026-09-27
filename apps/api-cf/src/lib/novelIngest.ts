@@ -1,13 +1,24 @@
 import { novelDb } from '@manga-platform/db';
 import type { NovelChapterRow, NovelSeriesRow } from '@manga-platform/db';
 import { NOVEL_SOURCES, getNovelAdapter } from '@manga-platform/sources/novel';
-import type { NovelSeries, NovelSourceAdapter } from '@manga-platform/sources/novel';
+import type { NovelAdapterEnv, NovelSeries, NovelSourceAdapter } from '@manga-platform/sources/novel';
 import type { Env } from './context';
 import { sha256Hex } from './context';
 import { ownerFor } from './peers';
 import { retryUpstream } from './retry';
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+/**
+ * What a novel adapter needs from the Worker: the KV namespace the adapter
+ * caches robots.txt in. `getAdapter` bridges the same type pair for the manga
+ * adapters (`CACHE_KV` is typed from @cloudflare/workers-types here, while
+ * packages/sources reads the ambient KVNamespace), so the registry call does
+ * the same in one place instead of at every call site.
+ */
+export const novelAdapterEnv = (env: Env): NovelAdapterEnv => ({
+  KV: env.CACHE_KV as unknown as KVNamespace,
+});
 
 const isBlank = (value: string | null | undefined): boolean =>
   typeof value !== 'string' || value.trim().length === 0;
@@ -92,31 +103,106 @@ export const fillMetadataGaps = async (
  * verbatim — novelid's is the composite "{slug}/{bab}" and its fetcher rejects
  * anything else, so it is never split or renumbered.
  *
- * A chapter whose body comes back empty or missing is dropped: an empty write
- * would replace stored prose with nothing and the `content_hash` guard would
- * happily record the change.
+ * Bounded to one window. A novelid light novel runs 200-800 episodes and every
+ * chapter body costs a subrequest, so an uncapped walk exhausts the Worker
+ * budget partway through, writes a silent prefix, and the next cron re-walks the
+ * identical prefix. 50 is the cap the plan's Review Focus #5 set.
+ *
+ * `source_chapter_id` aside, a chapter whose body comes back empty or missing is
+ * dropped: an empty write would replace stored prose with nothing and the
+ * `content_hash` guard would happily record the change.
  */
+export const REFRESH_WINDOW = 50;
+// Long enough that a series which is not being read still advances across a few
+// daily crons, short enough that a cursor left by a deleted series ages out.
+const CURSOR_TTL_SEC = 30 * 86400;
+
+const cursorKey = (seriesId: string): string => `novel:refresh:${seriesId}`;
+
+export interface RefreshOutcome {
+  /** Chapter bodies written this visit. */
+  fetched: number;
+  /** Upstream answered, but with nothing usable. */
+  missing: number;
+  /** The Worker ran out of subrequests or CPU: the window stopped early and the
+   *  next visit must resume. Never conflated with `missing` — a budget stop
+   *  means "not reached", not "not there". */
+  budget: number;
+  /** The chapter list ended inside the window, so this visit saw the whole series. */
+  exhausted: boolean;
+  /** Where the next visit resumes, or null when there is nothing left. */
+  nextOffset: number | null;
+}
+
+const NO_WORK: RefreshOutcome = { fetched: 0, missing: 0, budget: 0, exhausted: true, nextOffset: null };
+
+// Worker budget exhaustion and aborted fetches both surface as a throw, and
+// neither means the chapter is missing.
+const isBudgetAbort = (e: unknown): boolean => {
+  const name = (e as { name?: string } | null)?.name ?? '';
+  const msg = String((e as { message?: string } | null)?.message ?? e).toLowerCase();
+  return name === 'AbortError' || name === 'TimeoutError'
+    || msg.includes('too many subrequests')
+    || msg.includes('subrequest limit')
+    || msg.includes('cpu time')
+    || msg.includes('duration limit');
+};
+
+const readCursor = async (env: Env, seriesId: string): Promise<number> => {
+  const raw = await env.CACHE_KV.get(cursorKey(seriesId), { type: 'json' }).catch(() => null) as { offset?: unknown } | null;
+  const n = Number(raw?.offset);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+};
+
+const writeCursor = async (env: Env, seriesId: string, offset: number | null): Promise<void> => {
+  const key = cursorKey(seriesId);
+  const done = offset === null
+    ? env.CACHE_KV.delete(key)
+    : env.CACHE_KV.put(key, JSON.stringify({ offset }), { expirationTtl: CURSOR_TTL_SEC });
+  await done.catch(() => {});
+};
+
 export const refreshSeries = async (
   env: Env,
   series: NovelSeriesRow,
-  adapter: NovelSourceAdapter
-): Promise<void> => {
+  adapter: NovelSourceAdapter,
+  opts: { offset?: number; window?: number } = {}
+): Promise<RefreshOutcome> => {
   const fetchContent = adapter.getChapterContent;
-  if (typeof fetchContent !== 'function') return;
+  if (typeof fetchContent !== 'function') return { ...NO_WORK };
 
-  const summaries = await upstream(() => adapter.listChapters(series.source_series_id));
+  const limit = Math.max(1, Math.floor(opts.window ?? REFRESH_WINDOW));
+  const offset = opts.offset === undefined
+    ? await readCursor(env, series.id)
+    : Math.max(0, Math.floor(opts.offset));
+
+  const summaries = await upstream(
+    () => adapter.listChapters(series.source_series_id, { limit, offset })
+  );
+  const window = summaries ?? [];
+
   const rows: NovelChapterRow[] = [];
-  for (const summary of summaries ?? []) {
+  let missing = 0;
+  let budget = 0;
+  let index = 0;
+  for (; index < window.length; index++) {
+    const summary = window[index];
     let fetched: { html: string } | undefined;
     try {
       fetched = await upstream(() => fetchContent.call(adapter, summary.sourceChapterId));
     } catch (e) {
+      if (isBudgetAbort(e)) {
+        budget++;
+        break;
+      }
       console.error(`[novel] chapter fetch failed for ${summary.sourceChapterId}: ${e}`);
+      missing++;
       continue;
     }
     const content = fetched?.html;
     if (typeof content !== 'string' || isBlank(content)) {
       console.error(`[novel] no chapter body for ${summary.sourceChapterId} — skipped`);
+      missing++;
       continue;
     }
     rows.push({
@@ -131,7 +217,20 @@ export const refreshSeries = async (
       scraped_at: nowSec(),
     });
   }
-  if (rows.length === 0) return;
+
+  // A short window means upstream's list ended inside it. A budget stop leaves
+  // the window unfinished, so the cursor points at the chapter that was never
+  // fetched and that chapter is retried, not skipped past.
+  const exhausted = budget === 0 && window.length < limit;
+  const nextOffset = exhausted ? null : offset + index;
+  await writeCursor(env, series.id, nextOffset);
+
+  console.log(
+    `[novel] ${series.id}: ${rows.length} chapters written, ${missing} missing, ${budget} budget-stopped`
+    + (nextOffset === null ? ' (series complete)' : ` (truncated, resume at ${nextOffset})`)
+  );
+
+  if (rows.length === 0) return { fetched: 0, missing, budget, exhausted, nextOffset };
 
   await novelDb(env.DB).upsertChapters(series.id, rows);
   // listStaleSeries orders by updated_at, so a refresh that never touches the
@@ -140,7 +239,19 @@ export const refreshSeries = async (
     .prepare('UPDATE novel_series SET updated_at = ?1 WHERE id = ?2')
     .bind(nowSec(), series.id)
     .run();
+  return { fetched: rows.length, missing, budget, exhausted, nextOffset };
 };
+
+export interface RefreshPassResult {
+  /** Rows visited, whether or not the visit completed. */
+  refreshed: number;
+  /** Visits that saw the whole chapter list. */
+  complete: number;
+  /** Visits that stopped at the window and left a cursor. */
+  truncated: number;
+  missing: number;
+  budget: number;
+}
 
 /**
  * Cron entry point. `resolve` is the adapter lookup so a test can drive it
@@ -150,10 +261,10 @@ export const refreshStaleSeries = async (
   env: Env,
   olderThanSec: number,
   limit: number,
-  resolve: (key: string) => NovelSourceAdapter | null = getNovelAdapter
-): Promise<number> => {
+  resolve: (key: string) => NovelSourceAdapter | null = (key) => getNovelAdapter(key, novelAdapterEnv(env))
+): Promise<RefreshPassResult> => {
   const rows = await novelDb(env.DB).listStaleSeries(olderThanSec, limit);
-  let refreshed = 0;
+  const pass: RefreshPassResult = { refreshed: 0, complete: 0, truncated: 0, missing: 0, budget: 0 };
   for (const row of rows) {
     const adapter = resolve(row.source);
     if (!adapter) {
@@ -161,13 +272,17 @@ export const refreshStaleSeries = async (
       continue;
     }
     try {
-      await refreshSeries(env, row, adapter);
-      refreshed++;
+      const outcome = await refreshSeries(env, row, adapter);
+      pass.refreshed++;
+      pass.complete += outcome.exhausted ? 1 : 0;
+      pass.truncated += outcome.exhausted ? 0 : 1;
+      pass.missing += outcome.missing;
+      pass.budget += outcome.budget;
     } catch (e) {
       console.error(`[novel] refresh failed for ${row.id}: ${e}`);
     }
   }
-  return refreshed;
+  return pass;
 };
 
 // Search terms the catalog is seeded from. The novel adapter contract has no

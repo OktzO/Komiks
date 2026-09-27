@@ -177,8 +177,15 @@ export default {
         console.error('[cron] novel catalog sync failed:', e);
       }
       try {
-        const refreshed = await refreshStaleSeries(env as Env, 86400, 20);
-        console.log(`[cron] novel series refreshed: ${refreshed}`);
+        const pass = await refreshStaleSeries(env as Env, 86400, 20);
+        // A truncated pass is not a completed one, so the two are never summed
+        // into the same number: without this a budget stop wrote a silent prefix
+        // and logged it as a full refresh.
+        console.log(
+          `[cron] novel series refreshed: ${pass.refreshed}`
+          + ` (${pass.complete} complete, ${pass.truncated} truncated at the window,`
+          + ` ${pass.missing} chapters missing, ${pass.budget} budget-stopped)`
+        );
       } catch (e) {
         console.error('[cron] novel refresh failed:', e);
       }

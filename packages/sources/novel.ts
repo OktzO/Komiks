@@ -45,15 +45,22 @@ export interface NovelSourceAdapter {
 
 export const NOVEL_SOURCES: NovelSourceKey[] = ['novelid', 'gooddreamer', 'noveltoon'];
 
-const novelAdapters: Partial<Record<NovelSourceKey, () => NovelSourceAdapter>> = {
-  novelid: () => novelidAdapter() as unknown as NovelSourceAdapter,
+/** What a novel adapter needs from the Worker. `KV` is the robots.txt cache —
+ *  without it every single page fetch re-requests robots.txt, which doubles the
+ *  subrequests a long chapter refresh spends. */
+export interface NovelAdapterEnv {
+  KV?: KVNamespace;
+}
+
+const novelAdapters: Partial<Record<NovelSourceKey, (env?: NovelAdapterEnv) => NovelSourceAdapter>> = {
+  novelid: (env) => novelidAdapter(env) as unknown as NovelSourceAdapter,
   gooddreamer: () => gooddreamerAdapter() as unknown as NovelSourceAdapter,
-  noveltoon: () => noveltoonAdapter() as unknown as NovelSourceAdapter,
+  noveltoon: (env) => noveltoonAdapter(env) as unknown as NovelSourceAdapter,
 };
 
-export const getNovelAdapter = (key: string): NovelSourceAdapter | null => {
+export const getNovelAdapter = (key: string, env?: NovelAdapterEnv): NovelSourceAdapter | null => {
   const factory = novelAdapters[key as NovelSourceKey];
-  return factory ? factory() : null;
+  return factory ? factory(env) : null;
 };
 
 /**

@@ -5,7 +5,7 @@ import type { NovelSourceAdapter } from '@manga-platform/sources/novel';
 import { Env, json } from '../lib/context';
 import type { Context } from '../lib/context';
 import { ownerFor } from '../lib/peers';
-import { fillMetadataGaps, hasMetadataGap, refreshSeries } from '../lib/novelIngest';
+import { fillMetadataGaps, hasMetadataGap, novelAdapterEnv, refreshSeries } from '../lib/novelIngest';
 import { novelDbFor, novelDbOn, peerUrls } from '../lib/novelShard';
 
 export const router = new Hono<{ Bindings: Env }>();
@@ -22,9 +22,9 @@ const STALE_SEC = 86400;
 // the reader must page through.
 const DETAIL_CHAPTERS = 50;
 
-const metadataAdapters = (): NovelSourceAdapter[] =>
+const metadataAdapters = (env: Env): NovelSourceAdapter[] =>
   NOVEL_SOURCES
-    .map((key) => getNovelAdapter(key))
+    .map((key) => getNovelAdapter(key, novelAdapterEnv(env)))
     .filter((a): a is NovelSourceAdapter => a !== null && a.capability === 'metadata');
 
 /**
@@ -111,7 +111,7 @@ router.get('/novel/series/:slug', async (c) => {
   // Gap fill writes to the local D1, so only the owning shard may run it.
   if (ownerFor(c.env, slug).self && hasMetadataGap(data)) {
     c.executionCtx.waitUntil(
-      fillMetadataGaps(c.env, data, metadataAdapters())
+      fillMetadataGaps(c.env, data, metadataAdapters(c.env))
         .catch((e) => console.error(`[novel] metadata gap fill failed for ${slug}: ${e}`))
     );
   }
@@ -166,7 +166,7 @@ router.get('/novel/series/:slug/chapter/:chapterId', async (c) => {
       (async () => {
         const series = await novel.getSeriesBySlug(slug);
         if (!series) return;
-        const adapter = getNovelAdapter(series.source);
+        const adapter = getNovelAdapter(series.source, novelAdapterEnv(c.env));
         if (adapter) await refreshSeries(c.env, series, adapter);
       })().catch((e) => console.error(`[novel] refresh failed for ${slug}/${chapterId}: ${e}`))
     );

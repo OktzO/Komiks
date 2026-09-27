@@ -16,6 +16,7 @@ import {
   stripCoverQuery,
 } from '../novelid/rules.ts';
 import { novelidAdapter } from '../novelid/index.ts';
+import { getNovelAdapter } from '../novel.ts';
 
 const read = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 const fixture = read('novelid-chapter.html');
@@ -268,4 +269,61 @@ test('stripCoverQuery drops the resize thumbnail params', () => {
   );
   assert.equal(stripCoverQuery('https://novelid.org/uploads/a.jpg'), 'https://novelid.org/uploads/a.jpg');
   assert.equal(stripCoverQuery(null), null);
+});
+
+// Robots is re-read before every page fetch unless the adapter is built with a
+// KV binding. The registry is what production builds adapters through, so the
+// binding has to survive that hop: without it a 200-chapter refresh pays 200
+// extra upstream requests and burns the Worker subrequest budget on robots.txt.
+const robotsCountingFetch = (robotsRequests) => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith("/robots.txt")) {
+      robotsRequests.push(u);
+      return new Response("User-agent: *\nDisallow: /includes/\n", { status: 200 });
+    }
+    return new Response(searchFixture, { status: 200 });
+  };
+  return () => { globalThis.fetch = original; };
+};
+
+const stubKv = () => {
+  const kv = new Map();
+  return {
+    async get(key, type) {
+      const raw = kv.get(key);
+      return raw === undefined ? null : (type === "json" ? JSON.parse(raw) : raw);
+    },
+    async put(key, value) { kv.set(key, value); },
+  };
+};
+
+test("the registry hands the KV binding to the novelid adapter", async () => {
+  const robotsRequests = [];
+  const restore = robotsCountingFetch(robotsRequests);
+  try {
+    const adapter = getNovelAdapter("novelid", { KV: stubKv() });
+    for (let i = 0; i < 5; i++) await adapter.search({ q: "a", limit: 3, offset: i * 3 });
+    assert.equal(robotsRequests.length, 1, "robots.txt is read once, not once per page");
+  } finally {
+    restore();
+  }
+});
+
+test("a directly built adapter behaves the same", async () => {
+  const robotsRequests = [];
+  const restore = robotsCountingFetch(robotsRequests);
+  try {
+    const adapter = novelidAdapter({ KV: stubKv() });
+    for (let i = 0; i < 5; i++) await adapter.search({ q: "a", limit: 3, offset: i * 3 });
+    assert.equal(robotsRequests.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test("getNovelAdapter still resolves without an env (the registry default)", () => {
+  assert.equal(getNovelAdapter("novelid")?.sourceKey, "novelid");
+  assert.equal(getNovelAdapter("nope"), null);
 });
