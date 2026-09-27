@@ -122,15 +122,22 @@ const stubD1 = ({ listStale, existing = null } = {}) => {
           return { results: listStale.slice(0, rec.args.at(-1)) };
         },
         async run() {
+          // D1 reports rows_written, and a forwarded /db/exec passes it back, so
+          // a write that reached a shard holding no such row is distinguishable
+          // from one that landed. An UPDATE filters on its trailing id.
+          const changed = sql.startsWith('UPDATE novel_series SET')
+            && !sql.startsWith('UPDATE novel_series SET updated_at')
+            ? (written.has(String(rec.args.at(-1))) ? 1 : 0)
+            : 1;
           if (sql.includes('INSERT INTO novel_series')) written.add(rec.args[0]);
-          return { success: true, meta: {} };
+          return { success: true, meta: { changes: changed, rows_written: changed } };
         },
       };
       return stmt;
     },
     async batch(stmts) {
       for (const st of stmts) if (st.rec.sql.includes('INSERT INTO novel_series')) written.add(st.rec.args[0]);
-      return stmts.map(() => ({ success: true, meta: {} }));
+      return stmts.map(() => ({ success: true, meta: { changes: 1, rows_written: 1 } }));
     },
   };
   return { client, trace };
@@ -712,19 +719,47 @@ test('syncCatalog pages through the search window and stops on a short page', as
 // requests. The three quarters of the catalogue it does not own therefore have
 // to reach their owner's D1 over /api/_internal/db/exec instead of being
 // dropped — which is what the old per-worker owner gate did.
-const capturingExec = () => {
+//
+// `ownerRows` are the rows the peer answers /api/_internal/db/query with, keyed
+// by series id, so a test can put a row on a shard this worker does not own.
+// `execChanges` is what the peer reports for a write, so "the write reached a
+// shard that holds no such row" is reproducible.
+const capturingPeers = ({ ownerRows = {}, execChanges = 1, serveCover = false } = {}) => {
   const forwarded = [];
+  const queries = [];
+  const coverUploads = [];
   const original = globalThis.fetch;
   globalThis.fetch = (input, init) => {
     const url = String(input?.url ?? input);
     if (url.includes('/api/_internal/db/exec')) {
       forwarded.push({ url, body: JSON.parse(init.body) });
-      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }));
+      return Promise.resolve(new Response(
+        JSON.stringify({ ok: true, target: 'local', changes: execChanges }),
+        { headers: { 'content-type': 'application/json' } },
+      ));
+    }
+    if (url.includes('/api/_internal/db/query')) {
+      const { params } = JSON.parse(init.body);
+      queries.push({ url, params });
+      const id = params?.[0];
+      return Promise.resolve(new Response(
+        JSON.stringify({ results: ownerRows[id] ? [ownerRows[id]] : [] }),
+        { headers: { 'content-type': 'application/json' } },
+      ));
+    }
+    if (url.includes('backblazeb2.com') && init?.method === 'PUT') {
+      coverUploads.push(url);
+      return Promise.resolve(new Response('', { status: 200 }));
+    }
+    if (serveCover && (url.includes('wp.com') || url.includes('novelid.org'))) {
+      return Promise.resolve(new Response('BYTES', { status: 200, headers: { 'content-type': 'image/webp' } }));
     }
     return Promise.reject(new Error(`network disabled in tests: ${url}`));
   };
-  return { forwarded, restore: () => { globalThis.fetch = original; } };
+  return { forwarded, queries, coverUploads, restore: () => { globalThis.fetch = original; } };
 };
+
+const capturingExec = () => capturingPeers();
 
 const shardOf = (sourceSeriesId) => {
   for (let i = 0; i < 4000; i++) {
@@ -732,6 +767,20 @@ const shardOf = (sourceSeriesId) => {
     if (murmur3_32(`novelid-${id}`) % 4 !== 0) return id;
   }
   throw new Error('no id for a non-zero shard');
+};
+
+// A value whose murmur3 lands on a *different* shard than the series id it would
+// be bound beside. writeOwned used to derive the owner from params[0], so a gap
+// fill — whose first bound parameter is the patch value, not the id — was
+// routed by this hash and the UPDATE matched nothing on the shard that holds
+// the row. `wanted` is the shard the fixture text must NOT hash to.
+const valueOnOtherShard = (id, prefix) => {
+  const want = murmur3_32(id) % 4;
+  for (let i = 0; i < 4000; i++) {
+    const v = `${prefix}-${i}`;
+    if (murmur3_32(v) % 4 !== want) return v;
+  }
+  throw new Error('no value for a different shard');
 };
 
 test('the ring elects exactly one catalogue crawler, and it is the same one every time', () => {
@@ -793,7 +842,43 @@ test('a forward that fails is queued in the outbox rather than lost', async () =
   }
 });
 
+// writeOwned used to read the owner out of params[0]. The upsert binds the
+// series id first, so that happened to work; the gap fill binds the patch value
+// first and the id last, so every tier-2 fill was forwarded to whichever shard
+// owns hash(authorText), matched zero rows there, and still counted as filled.
+//
+// Isolated on a series this shard already owns: the fill must be a local write,
+// and must not leave the shard because the value it binds first hashes elsewhere.
+test('a gap fill for a series this shard owns is never routed by the patch value', async () => {
+  const mine = [];
+  for (let i = 0; mine.length < 1; i++) {
+    if (murmur3_32(`novelid-fill-own-${i}`) % 4 === 0) mine.push(`fill-own-${i}`);
+  }
+  const id = `novelid-${mine[0]}`;
+  const card = valueOnOtherShard(id, 'https://img.test/halal');
+  assert.notEqual(murmur3_32(card) % 4, 0, 'the value bound first hashes to a peer');
+
+  const { client, trace } = stubD1({
+    existing: { ...SERIES, id, source_series_id: mine[0], source: 'novelid', cover_fallback: null },
+  });
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: mine[0] })] });
+  const { forwarded, restore } = capturingExec();
+  try {
+    const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+    assert.equal(res.filled, 1);
+    assert.deepEqual(forwarded, [], 'a row this shard owns is written here, whatever the first bound value hashes to');
+    const update = trace.find((r) => r.sql.startsWith('UPDATE novel_series SET'));
+    assert.ok(update, 'and the fill is a local UPDATE');
+    assert.equal(update.args.at(-1), id);
+  } finally {
+    restore();
+  }
+});
+
 test('a series this shard owns still goes straight to the local D1', async () => {
+
   const mine = [];
   for (let i = 0; mine.length < 2; i++) {
     if (murmur3_32(`novelid-own-${i}`) % 4 === 0) mine.push(`own-${i}`);

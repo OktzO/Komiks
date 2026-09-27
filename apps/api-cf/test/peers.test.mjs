@@ -141,12 +141,15 @@ test('internalExec POSTs to /api/_internal/db/exec with forward key', async () =
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url, init });
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    return new Response(JSON.stringify({ ok: true, changes: 3 }), { status: 200 });
   };
-  const ok = await internalExec(env(), 'https://b.example.com', {
+  const res = await internalExec(env(), 'https://b.example.com', {
     sql: 'INSERT INTO chapter_pages ...', params: [1], table: 'chapter_pages',
   });
-  assert.equal(ok, true);
+  assert.equal(res.ok, true);
+  // The owner's own row count, so a caller can tell a write that matched a row
+  // from one that reached the wrong shard and matched nothing.
+  assert.equal(res.changes, 3);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://b.example.com/api/_internal/db/exec');
   assert.equal(calls[0].init.method, 'POST');
@@ -156,9 +159,24 @@ test('internalExec POSTs to /api/_internal/db/exec with forward key', async () =
   delete globalThis.fetch;
 });
 
-test('internalExec returns false without key or peer', async () => {
-  assert.equal(await internalExec(env({ DB_FORWARD_KEY: undefined }), 'https://b.example.com', { sql: '', params: [], table: 'chapter_pages' }), false);
-  assert.equal(await internalExec(env(), '', { sql: '', params: [], table: 'chapter_pages' }), false);
+test('internalExec reports a 2xx write that changed nothing as ok with 0 changes', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, target: 'local', changes: 0 }), { status: 200 });
+  const res = await internalExec(env(), 'https://b.example.com', {
+    sql: 'UPDATE novel_series SET author = ?1 WHERE id = ?2', params: ['x', 'y'], table: 'novel_series',
+  });
+  assert.deepEqual(res, { ok: true, changes: 0 });
+  delete globalThis.fetch;
+});
+
+test('internalExec returns ok:false without key or peer', async () => {
+  assert.deepEqual(
+    await internalExec(env({ DB_FORWARD_KEY: undefined }), 'https://b.example.com', { sql: '', params: [], table: 'chapter_pages' }),
+    { ok: false, changes: 0 },
+  );
+  assert.deepEqual(
+    await internalExec(env(), '', { sql: '', params: [], table: 'chapter_pages' }),
+    { ok: false, changes: 0 },
+  );
 });
 
 test('internalQuery returns rows on 200', async () => {

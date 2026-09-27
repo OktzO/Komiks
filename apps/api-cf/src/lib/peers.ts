@@ -153,15 +153,18 @@ export const backupOwnerFor = (env: Env, key: string): PeerInfo => {
 
 const forwardKey = (env: Env): string | undefined => env.DB_FORWARD_KEY as string | undefined;
 
-// Write-forward to a peer worker's internal /db/exec. Returns false on
+// Write-forward to a peer worker's internal /db/exec. Reports false on
 // missing key, missing peer, or non-2xx (caller falls back to local).
+// `changes` is the owner's own row count: a forwarded UPDATE that matched
+// nothing on the owner still answers 2xx with ok:true, so without it a write
+// aimed at the wrong shard is indistinguishable from one that landed.
 export const internalExec = async (
   env: Env,
   peerUrl: string,
   payload: { sql: string; params: unknown[]; table: string }
-): Promise<boolean> => {
+): Promise<{ ok: boolean; changes: number }> => {
   const key = forwardKey(env);
-  if (!key || !peerUrl) return false;
+  if (!key || !peerUrl) return { ok: false, changes: 0 };
   try {
     const res = await fetch(`${peerUrl}/api/_internal/db/exec`, {
       method: 'POST',
@@ -169,9 +172,11 @@ export const internalExec = async (
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(8000),
     });
-    return res.ok;
+    if (!res.ok) return { ok: false, changes: 0 };
+    const body = await res.json().catch(() => null) as { changes?: number } | null;
+    return { ok: true, changes: Number(body?.changes) || 0 };
   } catch {
-    return false;
+    return { ok: false, changes: 0 };
   }
 };
 

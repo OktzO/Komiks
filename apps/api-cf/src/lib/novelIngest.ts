@@ -345,20 +345,39 @@ export const CATALOG_CRAWL_KEY = 'novel:catalog:crawl';
 
 export const isCatalogCrawler = (env: Env): boolean => ownerFor(env, CATALOG_CRAWL_KEY).self;
 
-/** A novel_series write into the D1 that owns the row. A local owner writes
- *  directly; a peer's owner is reached over /api/_internal/db/exec, with the
- *  outbox as the retry path — the same sharded-write shape reader.ts uses for
- *  chapter page LRU touches. */
-const writeOwned = async (env: Env, sql: string, params: unknown[]): Promise<boolean> => {
-  const owner = ownerFor(env, String(params[0]));
+/**
+ * A novel_series write into the D1 that owns the row.
+ *
+ * `ownerKey` is the series id and is passed explicitly. The two statements bind
+ * it at different positions — the upsert leads with it, the gap fill trails it
+ * behind the patch values — so inferring it from `params[0]` routes a fill to
+ * whichever shard owns hash(patchValue), the UPDATE matches no row there, and
+ * the caller still counts the write.
+ *
+ * A local owner writes directly; a peer's owner is reached over
+ * /api/_internal/db/exec, with the outbox as the retry path — the same
+ * sharded-write shape reader.ts uses for chapter page LRU touches. `changes` is
+ * the owner's own row count, so a caller that needs the write to have actually
+ * matched a row can tell.
+ */
+const writeOwned = async (
+  env: Env,
+  ownerKey: string,
+  sql: string,
+  params: unknown[]
+): Promise<{ ok: boolean; changes: number }> => {
+  const owner = ownerFor(env, ownerKey);
   if (owner.self) {
     const stmt = env.DB.prepare(sql);
     const res = await (params.length > 0 ? stmt.bind(...params) : stmt).run().catch(() => null);
-    return res === null ? false : res.success;
+    if (res === null) return { ok: false, changes: 0 };
+    return { ok: res.success, changes: res.meta?.changes ?? 0 };
   }
-  if (await internalExec(env, owner.url, { sql, params, table: 'novel_series' }).catch(() => false)) return true;
-  // A failed forward is not a failed write: the outbox is the retry path.
-  return enqueueOutbox(env, owner.url, 'novel_series', sql, params);
+  const forwarded = await internalExec(env, owner.url, { sql, params, table: 'novel_series' }).catch(() => null);
+  if (forwarded?.ok) return forwarded;
+  // A failed forward is not a failed write: the outbox is the retry path, so the
+  // row is expected to land even though no owner has confirmed a row count.
+  return enqueueOutbox(env, owner.url, 'novel_series', sql, params).then((ok) => ({ ok, changes: ok ? 1 : 0 }));
 };
 
 const UPSERT_SERIES_SQL =
@@ -451,7 +470,10 @@ export const syncCatalog = async (
               ...patchFrom(needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null),
             };
             const cols = (Object.keys(patch) as DetailColumn[]).filter((c) => patch[c] !== undefined);
-            if (cols.length > 0 && await writeOwned(env, FILL_GAPS_SQL(cols), [...cols.map((c) => patch[c] as string), id])) {
+            if (
+              cols.length > 0
+              && (await writeOwned(env, id, FILL_GAPS_SQL(cols), [...cols.map((c) => patch[c] as string), id])).changes > 0
+            ) {
               out.filled++;
             }
             continue;
@@ -462,7 +484,7 @@ export const syncCatalog = async (
           // novelid being up. cover_fallback stays as the pre-upload URL.
           const coverRef = await uploadNovelCover(env, id, detail?.coverUrl ?? hit.coverUrl);
           const now = nowSec();
-          const written = await writeOwned(env, UPSERT_SERIES_SQL, [
+          const written = await writeOwned(env, id, UPSERT_SERIES_SQL, [
             id,
             hit.sourceSeriesId,
             key,
@@ -478,7 +500,7 @@ export const syncCatalog = async (
             now,
             now,
           ]);
-          if (written) out.inserted++;
+          if (written.ok) out.inserted++;
           else out.skipped++;
         }
         if (hits.length < SEARCH_PAGE) break;
