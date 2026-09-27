@@ -137,13 +137,51 @@ export const fillMetadataGaps = async (
  * Bounded to one window. A novelid light novel runs 200-800 episodes and every
  * chapter body costs a subrequest, so an uncapped walk exhausts the Worker
  * budget partway through, writes a silent prefix, and the next cron re-walks the
- * identical prefix. 50 is the cap the plan's Review Focus #5 set.
+ * identical prefix.
  *
  * `source_chapter_id` aside, a chapter whose body comes back empty or missing is
  * dropped: an empty write would replace stored prose with nothing and the
  * `content_hash` guard would happily record the change.
  */
-export const REFRESH_WINDOW = 50;
+
+/** Subrequests the cron invocation may spend on chapter bodies.
+ *
+ *  The Workers free plan allows 50 per invocation and this pass shares one with
+ *  the outbox flush and the eviction sweep, so 44 is what is left. A paid plan
+ *  allows 1000 — raise NOVEL_REFRESH_BUDGET for it, not the window alone,
+ *  because the window is clamped to what one visit can spend inside the budget.
+ */
+export const REFRESH_SUBREQUEST_BUDGET = 44;
+
+/** What a visit costs outside the window: the cursor get and put, the chapter
+ *  list, the chapter upsert (a select plus a write) and the updated_at touch. */
+export const REFRESH_VISIT_COST = 6;
+
+const positiveInt = (raw: unknown, fallback: number, max: number): number => {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, max) : fallback;
+};
+
+const budgetFor = (env: Env): number =>
+  positiveInt(env.NOVEL_REFRESH_BUDGET, REFRESH_SUBREQUEST_BUDGET, 1000);
+
+/** Chapters one visit may fetch. Derived from the budget rather than
+ *  hardcoded, so no value of NOVEL_REFRESH_WINDOW can put the cron over the
+ *  plan's limit: 50 chapters plus the visit overhead is 56, over the free
+ *  plan's 50, which is exactly the bug this replaces. */
+export const refreshWindowFor = (env: Env): number => {
+  const ceiling = Math.max(1, budgetFor(env) - REFRESH_VISIT_COST);
+  return positiveInt(env.NOVEL_REFRESH_WINDOW, ceiling, ceiling);
+};
+
+/** Series visits one tick may make at this window. The window alone does not
+ *  bound the invocation: the cron walks every stale row inside one, so 20 rows
+ *  at a 38-chapter window is 880 subrequests. Rows past this count are not even
+ *  read — listStaleSeries returns the oldest first and a visited row has its
+ *  updated_at bumped, so they come back next tick instead of being dropped. */
+export const refreshVisitsFor = (env: Env): number =>
+  Math.max(1, Math.floor(budgetFor(env) / (REFRESH_VISIT_COST + refreshWindowFor(env))));
+
 // Long enough that a series which is not being read still advances across a few
 // daily crons, short enough that a cursor left by a deleted series ages out.
 const CURSOR_TTL_SEC = 30 * 86400;
@@ -202,7 +240,7 @@ export const refreshSeries = async (
   const fetchContent = adapter.getChapterContent;
   if (typeof fetchContent !== 'function') return { ...NO_WORK };
 
-  const limit = Math.max(1, Math.floor(opts.window ?? REFRESH_WINDOW));
+  const limit = Math.max(1, Math.floor(opts.window ?? refreshWindowFor(env)));
   const offset = opts.offset === undefined
     ? await readCursor(env, series.id)
     : Math.max(0, Math.floor(opts.offset));
@@ -294,7 +332,8 @@ export const refreshStaleSeries = async (
   limit: number,
   resolve: (key: string) => NovelSourceAdapter | null = (key) => getNovelAdapter(key, novelAdapterEnv(env))
 ): Promise<RefreshPassResult> => {
-  const rows = await novelDb(env.DB).listStaleSeries(olderThanSec, limit);
+  const visits = Math.max(1, Math.min(limit, refreshVisitsFor(env)));
+  const rows = await novelDb(env.DB).listStaleSeries(olderThanSec, visits);
   const pass: RefreshPassResult = { refreshed: 0, complete: 0, truncated: 0, missing: 0, budget: 0 };
   for (const row of rows) {
     const adapter = resolve(row.source);

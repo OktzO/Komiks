@@ -44,6 +44,11 @@ export interface Env {
   DB_FORWARD_ENDPOINT?: string;
   DB_MIRROR_KEY?: string;
   DB_MIRROR_ENDPOINT?: string;
+  // Chapter-refresh budget. Absent → the free-plan-safe defaults in
+  // novelIngest.ts; set both together when moving the Workers to a paid plan
+  // (see refreshWindowFor for the arithmetic).
+  NOVEL_REFRESH_BUDGET?: string;
+  NOVEL_REFRESH_WINDOW?: string;
   [k: string]: unknown;
 }
 
