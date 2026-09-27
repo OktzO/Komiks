@@ -19,6 +19,9 @@ if (N_ORIGINS < 3) {
 const ORIGINS = Array.from({ length: N_ORIGINS }, (_, i) => `https://w${i}.test`);
 const hits: Record<string, number> = {};
 let mainHits = 0;
+// How the main API (the not-in-ORIGINS host) answers. T1b and T4 need it healthy;
+// T7 drives it to prove the 404-vs-outage boundary.
+let mainBehaviour: 'ok' | number | 'throw' = 'ok';
 const injectedFails: Record<string, number> = {}; // origin -> remaining 500s to inject
 
 (globalThis as any).fetch = async (input: any) => {
@@ -30,6 +33,8 @@ const injectedFails: Record<string, number> = {}; // origin -> remaining 500s to
   if (!origin) {
     // main API fallback (separate host, always healthy)
     mainHits++;
+    if (mainBehaviour === 'throw') throw new TypeError('fetch failed');
+    if (typeof mainBehaviour === 'number') return new Response('err', { status: mainBehaviour });
     return new Response(JSON.stringify({ data: { ok: true } }), { status: 200 });
   }
   hits[origin] = (hits[origin] ?? 0) + 1;
@@ -185,6 +190,50 @@ assert.ok(Math.min(...vals) / Math.max(...vals) > 0.3, 'T5 FAIL: distribution sk
 assert.equal(imgOriginFor('/img/komiku/ch-1/1'), imgOriginFor('/img/komiku/ch-1/1'), 'T5 FAIL: same path must map to same origin');
 assert.notEqual(imgOriginFor('/img/komiku/ch-1/1', 1), imgOriginFor('/img/komiku/ch-1/1', 0), 'T5 FAIL: retry should shift to another origin');
 console.log(`T5 PASS - imgOriginFor: ${N_ORIGINS} origins (main excluded), dist=${JSON.stringify(seen)}, retry shifts\n`);
-(globalThis as any).sessionStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+
+// T6: the 404-vs-outage boundary. isNotFound() is only as good as the boundary
+// that feeds it, and nothing pinned that boundary: reverting api() to a bare
+// Error left every other test green while turning an upstream outage into a
+// server-side 404 on the novel pages. T4 left every origin circuit-open, so
+// these requests fall straight through to the main API — which is exactly the
+// api() boundary under test.
+const { ApiError, isNotFound } = await import('../src/lib/api');
+const NOVEL_CHAPTER_PATH = '/api/novel/series/novelid-x/chapter/novelid-x%2F1';
+const probe = async (behaviour: 'ok' | number | 'throw') => {
+  mainBehaviour = behaviour;
+  try {
+    await apiWithFailover(NOVEL_CHAPTER_PATH);
+    return { threw: false as const };
+  } catch (e) {
+    return { threw: true as const, e };
+  }
+};
+// 1. A 404 answer must arrive as ApiError(404), so the page can 404 on it.
+const miss = await probe(404);
+assert.ok(miss.threw, 'T6 FAIL: a 404 must reject, not resolve with an empty chapter');
+assert.ok(miss.e instanceof ApiError, `T6 FAIL: 404 must throw ApiError, got ${miss.e?.constructor?.name}`);
+assert.equal((miss.e as { status?: number }).status, 404, 'T6 FAIL: the status must survive to the caller');
+assert.equal(isNotFound(miss.e), true, 'T6 FAIL: isNotFound must accept a real 404');
+
+// 2. An outage must NOT look like a 404, or every novel page 404s during one.
+const boom = await probe(500);
+assert.ok(boom.threw, 'T6 FAIL: a 500 must reject');
+assert.ok(boom.e instanceof ApiError);
+assert.equal(isNotFound(boom.e), false, 'T6 FAIL: a 500 must not read as a not-found');
+
+const throttled = await probe(429);
+assert.equal(isNotFound(throttled.e), false, 'T6 FAIL: a 429 must not read as a not-found');
+
+// 3. A transport failure is not an ApiError at all, and must not 404 either.
+const dead = await probe('throw');
+assert.ok(dead.threw, 'T6 FAIL: a network failure must reject');
+assert.equal(dead.e instanceof ApiError, false, 'T6 FAIL: a network failure is not an ApiError');
+assert.equal(isNotFound(dead.e), false, 'T6 FAIL: a network failure must not read as a not-found');
+
+// 4. And the happy path still resolves, or the probe proves nothing.
+const ok = await probe('ok');
+assert.equal(ok.threw, false, 'T6 FAIL: a healthy novel chapter must resolve');
+mainBehaviour = 'ok';
+console.log('T6 PASS - 404 → ApiError(404) → isNotFound; 500/429/network → not-found=false\n');
 
 console.log('\nALL TESTS PASSED');

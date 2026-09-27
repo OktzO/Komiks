@@ -80,25 +80,43 @@ export const neighbourChapters = <T extends { number: number }>(
 };
 
 /**
- * Whether to keep walking chapter pages while hunting for `chapterId`.
+ * Walk chapter pages until `chapterId` turns up plus enough rows to give it both
+ * neighbours, and return every row collected.
  *
- * The answer is read off the rows that came back, never off the chapter number:
+ * The walk is driven by the rows that came back, never by the chapter number:
  * ingest drops every chapter whose body fetch failed or came back blank, so the
  * numbering has guaranteed gaps and a list page is a row-offset window rather
- * than a number range. `Math.ceil(number / limit)` therefore points at the
- * wrong window for exactly the novels long enough to page.
+ * than a number range. For chapters 1-10 and 101-200, chapter 150 is on page 2
+ * while `ceil(150 / 50)` says 3.
+ *
+ * `maxPages` bounds it. Past the bound the caller gets a row set that does not
+ * contain the current chapter, so the reader leaves its prev/next links off
+ * rather than risk pointing at the wrong one.
  */
-export const shouldFetchNextChapterPage = (
-  rows: { source_chapter_id: string }[],
+export const chapterPageWalk = async <T extends { source_chapter_id: string }>(
+  fetchPage: (page: number) => Promise<T[]>,
   chapterId: string,
-  limit: number,
-): boolean => {
-  const at = rows.findIndex((c) => c.source_chapter_id === chapterId);
-  // Not in this window. A short page is the end of the list, so the chapter is
-  // not stored; a full page means keep walking.
-  if (at === -1) return rows.length >= limit;
-  // Current chapter is the last row of this window: its successor is on the next.
-  return at === rows.length - 1;
+  { limit, maxPages }: { limit: number; maxPages: number },
+): Promise<T[]> => {
+  const collected: T[] = [];
+  let needNextPage = false;
+  for (let page = 1; page <= maxPages; page++) {
+    const rows = await fetchPage(page);
+    if (rows.length === 0) break;
+    const at = rows.findIndex((c) => c.source_chapter_id === chapterId);
+    collected.push(...rows);
+    if (at !== -1) {
+      // Not the last row: its successor is already in hand, and every earlier
+      // row is behind it in `collected`, so both links are covered.
+      if (at < rows.length - 1) break;
+      needNextPage = true; // last row of the window — the successor is next
+    } else if (needNextPage) {
+      break;
+    }
+    // A short window is the end of the list, whatever the chapter looks like.
+    if (rows.length < limit) break;
+  }
+  return collected;
 };
 
 /** genre arrives as a JSON array string; anything else is not a tag list, so `[]`. */

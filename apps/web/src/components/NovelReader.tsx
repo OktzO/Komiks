@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getNovelChapter, getNovelChapters, type NovelChapter, type NovelChapterBody } from '@/lib/api';
-import { chapterNumberOf, neighbourChapters, novelChapterUrl, sanitizeNovelHtml, shouldFetchNextChapterPage } from '@/lib/novelRoutes';
+import { chapterNumberOf, chapterPageWalk, neighbourChapters, novelChapterUrl, sanitizeNovelHtml } from '@/lib/novelRoutes';
 
 // Text reader for prose. Deliberately not a variant of Reader.tsx: that one
 // reserves image aspect ratios to fight CLS, which is meaningless here — the
@@ -92,22 +92,16 @@ export function NovelReader({
   // number. Ingest drops every chapter whose body fetch failed, so numbering has
   // gaps and a list page is a row-offset window: for a novel with chapters
   // 1-10 and 101-200, chapter 150 sits on page 2, while ceil(150 / 50) says 3.
-  // The walk is bounded — past NEIGHBOUR_PAGES the links stay off rather than
-  // risk pointing at the wrong chapter, and the series page remains the way in.
+  // The walk is bounded — see chapterPageWalk for what a longer series gets.
   useEffect(() => {
     let alive = true;
-    const collected: NovelChapter[] = [];
-    (async () => {
-      for (let page = 1; page <= NEIGHBOUR_PAGES; page++) {
-        const res = await getNovelChapters(slug, { page, limit: LIMIT }).catch(() => null);
-        if (!alive || !res) return;
-        const rows = res.data ?? [];
-        if (rows.length === 0) return;
-        collected.push(...rows);
-        setSiblings([...collected]);
-        if (!shouldFetchNextChapterPage(rows, chapterId, LIMIT)) return;
-      }
-    })();
+    chapterPageWalk(
+      (page) => getNovelChapters(slug, { page, limit: LIMIT }).then((r) => r.data ?? []),
+      chapterId,
+      { limit: LIMIT, maxPages: NEIGHBOUR_PAGES },
+    )
+      .then((rows) => { if (alive) setSiblings(rows); })
+      .catch(() => {});
     return () => { alive = false; };
   }, [slug, chapterId]);
 

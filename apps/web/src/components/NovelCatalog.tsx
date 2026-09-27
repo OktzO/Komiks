@@ -19,17 +19,30 @@ export function NovelCatalog({
   genre: string;
   initial: NovelCatalogPage | null;
 }) {
-  const [data, setData] = useState<NovelCatalogPage | null>(initial);
+  const [data, setData] = useState<{ page: number; res: NovelCatalogPage } | null>(
+    initial ? { page: initial.page, res: initial } : null,
+  );
   const [failed, setFailed] = useState(false);
 
+  // The merge ceiling is only knowable from a response, so a hand-typed
+  // /novel?page=99 first answers for a page that does not exist. Clamp the
+  // REQUEST, not the label: the ceiling comes from that response's total, and
+  // the corrected page answers with the same total, so this settles in one
+  // extra request and cannot loop. Until it lands the payload in hand belongs
+  // to no real page, so it is not rendered — the empty state would be a lie
+  // next to a "Halaman 13 / 13" counter.
+  const ceiling = data ? catalogLastPage(data.res.total, data.res.limit || CATALOG_PAGE_SIZE) : Number.MAX_SAFE_INTEGER;
+  const target = Math.min(Math.max(1, page), ceiling);
+  const loaded = data !== null && data.page === target;
+
   useEffect(() => {
-    if (initial !== null) return;
+    if (loaded) return;
     let alive = true;
-    getNovelCatalog({ genre: genre || undefined, page, limit: CATALOG_PAGE_SIZE })
-      .then((res) => { if (alive) setData(res); })
+    getNovelCatalog({ genre: genre || undefined, page: target, limit: CATALOG_PAGE_SIZE })
+      .then((res) => { if (alive) setData({ page: target, res }); })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
-  }, [initial, genre, page]);
+  }, [loaded, genre, target]);
 
   if (failed) {
     return (
@@ -39,7 +52,7 @@ export function NovelCatalog({
     );
   }
 
-  if (!data) {
+  if (!data || !loaded) {
     return (
       <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6" aria-busy="true" aria-label="Memuat katalog novel">
         {Array.from({ length: 12 }).map((_, i) => (
@@ -52,11 +65,8 @@ export function NovelCatalog({
     );
   }
 
-  const lastPage = catalogLastPage(data.total, data.limit || CATALOG_PAGE_SIZE);
-  // A hand-typed /novel?page=99 must land on the last real page, not on the
-  // empty state the merge ceiling produces out there.
-  const current = Math.min(Math.max(1, page), lastPage);
-  const series = data.data ?? [];
+  const lastPage = catalogLastPage(data.res.total, data.res.limit || CATALOG_PAGE_SIZE);
+  const series = data.res.data ?? [];
 
   return (
     <div>
@@ -82,11 +92,11 @@ export function NovelCatalog({
 
       {lastPage > 1 && (
         <nav className="mt-8 flex items-center justify-center gap-2" aria-label="Halaman katalog novel">
-          <PagerLink page={current - 1} genre={genre} disabled={current <= 1} label="← Sebelumnya" />
+          <PagerLink page={target - 1} genre={genre} disabled={target <= 1} label="← Sebelumnya" />
           <span className="px-2 font-mono text-[11px] text-muted">
-            Halaman {current} / {lastPage}
+            Halaman {target} / {lastPage}
           </span>
-          <PagerLink page={current + 1} genre={genre} disabled={current >= lastPage} label="Berikutnya →" />
+          <PagerLink page={target + 1} genre={genre} disabled={target >= lastPage} label="Berikutnya →" />
         </nav>
       )}
     </div>

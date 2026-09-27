@@ -17,7 +17,6 @@ import {
   parseNovelGenres,
   resolveNovelRoute,
   sanitizeNovelHtml,
-  shouldFetchNextChapterPage,
 } from '../src/lib/novelRoutes';
 
 test('resolveNovelRoute maps the three novel routes', () => {
@@ -66,41 +65,10 @@ test('chapterNumberOf reads the bab number off a composite id', () => {
 
 // Finding 1. novelIngest drops every chapter whose body fetch failed or came back
 // blank, so numbering has guaranteed gaps and a list page is a row-offset window
-// — never a number range. These two cases are the ones where
-// Math.ceil(number / limit) picks the wrong page.
+// — never a number range. The walk that must cope with this, and the neighbours
+// it feeds, are covered behaviourally in novel-neighbours.test.ts.
 const gapped = (numbers: number[]) =>
   numbers.map((n) => ({ number: n, source_chapter_id: `s/${n}` }));
-
-test('the page walk finds a chapter that the number arithmetic misplaces', () => {
-  const LIMIT = 50;
-  // Chapters 1-10 and 101-200 survived ingest: 11-100 were dropped. 110 rows.
-  const rows = gapped([...Array.from({ length: 10 }, (_, i) => i + 1), ...Array.from({ length: 100 }, (_, i) => i + 101)]);
-  const pages = [rows.slice(0, LIMIT), rows.slice(LIMIT, LIMIT * 2), rows.slice(LIMIT * 2)];
-
-  // Chapter 150 is row 59 → page 2. The old arithmetic said ceil(150/50) = 3.
-  assert.equal(Math.ceil(150 / LIMIT), 3, 'the arithmetic this replaces really is wrong here');
-  assert.ok(!pages[2].some((c) => c.source_chapter_id === 's/150'), 'page 3 has no chapter 150');
-  assert.ok(pages[1].some((c) => c.source_chapter_id === 's/150'), 'chapter 150 is on page 2');
-
-  // Walking the real pages stops on page 2, and only asks for page 3 because
-  // chapter 150 is not the last row of page 2.
-  assert.equal(shouldFetchNextChapterPage(pages[0], 's/150', LIMIT), true);
-  assert.equal(shouldFetchNextChapterPage(pages[1], 's/150', LIMIT), false);
-});
-
-test('the page walk stops one row early when the successor is still ahead', () => {
-  const LIMIT = 50;
-  // 250 stored rows, the current one landing last on page 5.
-  const pages = gapped(Array.from({ length: 250 }, (_, i) => i + 1));
-  assert.equal(shouldFetchNextChapterPage(pages.slice(0, LIMIT), 's/50', LIMIT), true, 'last row of the window');
-  assert.equal(shouldFetchNextChapterPage(pages.slice(LIMIT, LIMIT * 2), 's/100', LIMIT), true);
-  assert.equal(shouldFetchNextChapterPage(pages.slice(LIMIT * 2, LIMIT * 3), 's/150', LIMIT), true);
-  // Anything not on the last row already has its successor in hand.
-  assert.equal(shouldFetchNextChapterPage(pages.slice(0, LIMIT), 's/49', LIMIT), false);
-  // A short page is the end of the list: the chapter is not stored, so stop.
-  assert.equal(shouldFetchNextChapterPage(gapped([1, 2, 3]), 's/900', LIMIT), false);
-  assert.equal(shouldFetchNextChapterPage([], 's/1', LIMIT), false);
-});
 
 test('prev/next come from the stored rows, gaps and all', () => {
   // Ingest dropped 41-60; the neighbours of 61 are 40 and 62, not 60.
