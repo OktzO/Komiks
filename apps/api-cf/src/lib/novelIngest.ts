@@ -365,25 +365,49 @@ export const refreshStaleSeries = async (
   return pass;
 };
 
-// Search terms the catalog is seeded from. The novel adapter contract has no
-// "list everything" call, and novelid's search is a keyword endpoint that
-// returns nothing for an empty query, so a catalogue has to be harvested through
-// queries. These are genre words, which is also what the catalog's genre filter
-// offers, so a synced series is reachable from the browse UI.
-// ponytail: six hardcoded terms is a floor, not a strategy — the listing is one
-// page per term and the source's own ranking decides what surfaces. Replace with
-// a KV-held term list once the admin UI needs to steer discovery.
-const CATALOG_SEEDS = ['romance', 'fantasy', 'isekai', 'slice of life', 'misteri', 'fantasi'];
-// novelid serves fixed 18-card search pages, so stepping by 18 is what advances
-// the upstream page.
-const SEARCH_PAGE = 18;
-const SEARCH_PAGES_PER_SEED = 2;
+// The catalogue walk. One upstream listing page is 18 cards, and that is the
+// step size, so an offset and a page number are the same walk in two units.
+const CATALOG_PAGE = 18;
+// A stop for a listing that never ends, not a target: novelid's walk closed at
+// 11 pages / 181 series when this was measured (2026-09-27).
+const CATALOG_MAX_PAGES = 40;
+
+/** Where the walk resumes between passes. Long-lived because a pass is bounded
+ *  by the subrequest budget, not by the end of the listing. */
+const CATALOG_CURSOR_KEY = 'novel:catalog:cursor';
+const CATALOG_CURSOR_TTL_SEC = 30 * 86400;
+
+/** Upstream requests one *new* series costs: its series page, the cover GET and
+ *  the B2 PUT. A row that already exists costs only the listing page, because a
+ *  complete row is recognised without a detail fetch. */
+const CATALOG_NEW_SERIES_COST = 3;
 
 export interface SyncCatalogResult {
   inserted: number;
   filled: number;
   skipped: number;
+  /** Listing pages this pass fetched. */
+  pages: number;
+  /** Where the next pass resumes; 0 means the listing was walked to its end and
+   *  the cursor was rewound, so the following pass starts over and picks up
+   *  anything published since. */
+  cursor: number;
+  /** True when this pass reached the end of the listing. */
+  complete: boolean;
 }
+
+const readCatalogCursor = async (env: Env): Promise<number> => {
+  const raw = await env.CACHE_KV.get(CATALOG_CURSOR_KEY).catch(() => null);
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+const writeCatalogCursor = async (env: Env, offset: number): Promise<void> => {
+  const put = offset > 0
+    ? env.CACHE_KV.put(CATALOG_CURSOR_KEY, String(offset), { expirationTtl: CATALOG_CURSOR_TTL_SEC })
+    : env.CACHE_KV.delete(CATALOG_CURSOR_KEY);
+  await put.catch(() => {});
+};
 
 /**
  * Where the discovery crawl runs. One worker, chosen by the same ring every
@@ -467,20 +491,31 @@ const fetchDetail = async (
 /**
  * Discovers series and writes them, so the catalog is not born empty.
  *
- * Discovery only: `search`, `getSeries` and `upsertSeries`, never
+ * Discovery only: `browse`, `getSeries` and `upsertSeries`, never
  * `getChapterContent` — a catalogue crawl that also fetched bodies would pull
  * thousands of chapter requests per run. The crawl is owner-gated (see
  * `isCatalogCrawler`) so one worker pays the upstream requests, and every row is
  * written into the D1 that owns it (see `writeOwned`), so the four D1s still
  * partition the catalogue instead of one holding all of it.
  *
- * `getSeries` is what makes the rows worth rendering. A novelid search card
- * carries only title, one genre and a 120x160 thumbnail, and no tier-2 source
- * carries the same novels, so without the series page every synced row kept a
- * null author, a null status and no synopsis for good. It is called once per row
- * that is still missing them, never on a row that is already complete.
+ * Discovery walks the source's own listing rather than searching it. novelid's
+ * `?s=` substring-matches *titles*, so the six genre words this used to seed
+ * from returned 5 hits and 3 unique series out of a possible 216 requests: a
+ * keyword search cannot find a novel no reader could already name. A chapter
+ * source with no `browse` is logged and skipped, not silently under-discovered.
  *
- * An existing row is only ever gap-filled, never re-upserted. A search payload
+ * One pass is bounded by the invocation's subrequest budget, not by the end of
+ * the listing, so the walk carries a KV cursor between passes. The cursor is
+ * rewound when the listing ends, which is what makes a full catalogue a
+ * repeating property instead of a one-off.
+ *
+ * `getSeries` is what makes the rows worth rendering. A novelid listing card
+ * carries only title and one genre, and no tier-2 source carries the same
+ * novels, so without the series page every synced row kept a null author, a null
+ * status and no synopsis for good. It is called once per row that is still
+ * missing them, never on a row that is already complete.
+ *
+ * An existing row is only ever gap-filled, never re-upserted. A listing payload
  * carries no synopsis and a failed `getSeries` carries no author or status, so
  * re-syncing from one would wipe what tier-2 filled in. Two things hold that
  * line, and neither is trusted alone: the pre-INSERT read asks the owner, so a
@@ -491,91 +526,123 @@ const fetchDetail = async (
 export const syncCatalog = async (
   env: Env,
   opts: {
-    seeds?: string[];
-    pagesPerSeed?: number;
+    /** Upstream requests this pass may spend. Defaults to the same budget the
+     *  chapter refresh uses, so one Worker invocation cannot exceed the plan's
+     *  subrequest limit on either path. */
+    budget?: number;
     resolve?: (key: string) => NovelSourceAdapter | null;
   } = {}
 ): Promise<SyncCatalogResult> => {
-  const seeds = opts.seeds ?? CATALOG_SEEDS;
-  const pages = Math.max(1, opts.pagesPerSeed ?? SEARCH_PAGES_PER_SEED);
   // The registry takes (key, env?); resolving it bare meant env was undefined
   // and the adapter's robots.txt KV cache never engaged on this path.
   const resolve = opts.resolve ?? ((k: string) => getNovelAdapter(k, novelAdapterEnv(env)));
-  const out: SyncCatalogResult = { inserted: 0, filled: 0, skipped: 0 };
+  const out: SyncCatalogResult = { inserted: 0, filled: 0, skipped: 0, pages: 0, cursor: 0, complete: false };
+  const budget = Math.max(1, opts.budget ?? budgetFor(env));
+  let spent = 0;
 
+  let offset = await readCatalogCursor(env);
   for (const key of NOVEL_SOURCES) {
     const adapter = resolve(key);
     // Only the chapter source can back a series we could ever read chapters for.
     if (!adapter || adapter.capability !== 'chapter') continue;
-    for (const seed of seeds) {
-      for (let page = 0; page < pages; page++) {
-        let hits: NovelSeries[] = [];
-        try {
-          hits = await upstream(() => adapter.search({ q: seed, limit: SEARCH_PAGE, offset: page * SEARCH_PAGE })) ?? [];
-        } catch (e) {
-          console.error(`[novel] catalog search failed for "${seed}" on ${key}: ${e}`);
+    if (typeof adapter.browse !== 'function') {
+      console.error(`[novel] ${key} has no catalogue listing — skipped`);
+      continue;
+    }
+    for (let page = 0; page < CATALOG_MAX_PAGES && spent < budget; page++) {
+      let hits: NovelSeries[] = [];
+      try {
+        const browse = adapter.browse.bind(adapter);
+        hits = await upstream(() => browse({ limit: CATALOG_PAGE, offset })) ?? [];
+      } catch (e) {
+        console.error(`[novel] catalog browse failed at offset ${offset} on ${key}: ${e}`);
+        break;
+      }
+      spent++;
+      out.pages++;
+      // A short page is the end of the listing. A budget stop mid-page is not,
+      // so the cursor stays on this page and the next pass re-walks it — the
+      // rows it already wrote are recognised as existing and cost nothing.
+      let pageDone = hits.length < CATALOG_PAGE;
+      for (const hit of hits) {
+        if (spent >= budget) {
+          pageDone = false;
           break;
         }
-        for (const hit of hits) {
-          const id = seriesIdFor(key, hit.sourceSeriesId);
-          if (isBlank(hit.title) || id.includes('/')) {
-            console.error(`[novel] unusable catalog hit for "${seed}" (id ${id}) — skipped`);
-            out.skipped++;
-            continue;
-          }
-          // Whether the row already exists is the owner's business, not this
-          // shard's, so the read goes through novelDbFor — the local D1 when
-          // this shard owns the row, the owner's read-forward when it does not.
-          // Reading locally only made a peer-owned row look absent on every
-          // tick, which sent the same series down the INSERT path forever: the
-          // B2 cover was re-uploaded every 12 hours, and a failed getSeries
-          // re-upserted the search card's nulls over tier-2's fills.
-          const existing = await novelDbFor(env, id).getSeriesBySlug(id);
-          if (existing) {
-            // The search card is the weaker source, so it only fills what the
-            // series page did not supply — and only the columns the owner still
-            // has blank, so a complete row costs no write at all.
-            const patch: Partial<Record<DetailColumn, string>> = {
-              ...patchFrom(hit),
-              ...patchFrom(needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null),
-            };
-            const cols = (Object.keys(patch) as DetailColumn[]).filter((c) => patch[c] !== undefined && isBlank(existing[c]));
-            if (
-              cols.length > 0
-              && (await writeOwned(env, id, FILL_GAPS_SQL(cols), [...cols.map((c) => patch[c] as string), id])).changes > 0
-            ) {
-              out.filled++;
-            }
-            continue;
-          }
-          const detail = await fetchDetail(adapter, hit.sourceSeriesId);
-          // Same step as the detail fetch: the cover lives in B2 from here on, so
-          // the reader never asks the source and availability stops depending on
-          // novelid being up. cover_fallback stays as the pre-upload URL.
-          const coverRef = await uploadNovelCover(env, id, detail?.coverUrl ?? hit.coverUrl);
-          const now = nowSec();
-          const written = await writeOwned(env, id, UPSERT_SERIES_SQL, [
-            id,
-            hit.sourceSeriesId,
-            key,
-            hit.title,
-            detail?.author ?? hit.author ?? null,
-            detail?.genres?.length ? JSON.stringify(detail.genres) : (hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null),
-            detail?.status ?? hit.status ?? null,
-            coverRef,
-            // cover_fallback is the upstream URL the reader falls back to when
-            // there is no stored object (no B2 account, or the upload failed).
-            detail?.coverUrl ?? hit.coverUrl ?? null,
-            detail?.synopsis ?? hit.synopsis ?? null,
-            now,
-            now,
-          ]);
-          if (written.ok) out.inserted++;
-          else out.skipped++;
+        const id = seriesIdFor(key, hit.sourceSeriesId);
+        if (isBlank(hit.title) || id.includes('/')) {
+          console.error(`[novel] unusable catalog hit for ${id} — skipped`);
+          out.skipped++;
+          continue;
         }
-        if (hits.length < SEARCH_PAGE) break;
+        // Whether the row already exists is the owner's business, not this
+        // shard's, so the read goes through novelDbFor — the local D1 when
+        // this shard owns the row, the owner's read-forward when it does not.
+        // Reading locally only made a peer-owned row look absent on every
+        // tick, which sent the same series down the INSERT path forever: the
+        // B2 cover was re-uploaded every 12 hours, and a failed getSeries
+        // re-upserted the listing card's nulls over tier-2's fills.
+        const existing = await novelDbFor(env, id).getSeriesBySlug(id);
+        if (existing) {
+          // The listing card is the weaker source, so it only fills what the
+          // series page did not supply — and only the columns the owner still
+          // has blank, so a complete row costs no write at all.
+          const patch: Partial<Record<DetailColumn, string>> = {
+            ...patchFrom(hit),
+            ...patchFrom(needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null),
+          };
+          const cols = (Object.keys(patch) as DetailColumn[]).filter((c) => patch[c] !== undefined && isBlank(existing[c]));
+          if (
+            cols.length > 0
+            && (await writeOwned(env, id, FILL_GAPS_SQL(cols), [...cols.map((c) => patch[c] as string), id])).changes > 0
+          ) {
+            out.filled++;
+          }
+          continue;
+        }
+        const detail = await fetchDetail(adapter, hit.sourceSeriesId);
+        // Same step as the detail fetch: the cover lives in B2 from here on, so
+        // the reader never asks the source and availability stops depending on
+        // novelid being up. cover_fallback stays as the pre-upload URL.
+        const coverRef = await uploadNovelCover(env, id, detail?.coverUrl ?? hit.coverUrl);
+        const now = nowSec();
+        const written = await writeOwned(env, id, UPSERT_SERIES_SQL, [
+          id,
+          hit.sourceSeriesId,
+          key,
+          hit.title,
+          detail?.author ?? hit.author ?? null,
+          detail?.genres?.length ? JSON.stringify(detail.genres) : (hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null),
+          detail?.status ?? hit.status ?? null,
+          coverRef,
+          // cover_fallback is the upstream URL the reader falls back to when
+          // there is no stored object (no B2 account, or the upload failed).
+          detail?.coverUrl ?? hit.coverUrl ?? null,
+          detail?.synopsis ?? hit.synopsis ?? null,
+          now,
+          now,
+        ]);
+        spent += CATALOG_NEW_SERIES_COST;
+        if (written.ok) out.inserted++;
+        else out.skipped++;
+      }
+      offset += CATALOG_PAGE;
+      if (pageDone) {
+        out.complete = true;
+        break;
       }
     }
+    if (out.complete) break;
   }
+
+  // Reaching the end rewinds rather than parks: a re-walk of a full catalogue
+  // costs one subrequest per listing page and no detail fetch, because every row
+  // is already complete, which is how a newly published novel is noticed.
+  out.cursor = out.complete ? 0 : offset;
+  await writeCatalogCursor(env, out.cursor);
+  console.log(
+    `[novel] catalog pass: ${out.pages} listing pages, ${out.inserted} new, ${out.filled} gap-filled,`
+    + ` ${out.skipped} skipped, ${spent}/${budget} subrequests${out.complete ? ', listing complete' : ''}`
+  );
   return out;
 };

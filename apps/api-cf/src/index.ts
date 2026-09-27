@@ -18,6 +18,7 @@ import { router as inventoryAdminRouter } from './routes/admin/inventory';
 import { router as dashboardAdminRouter } from './routes/admin/dashboard';
 import { router as savedAdminRouter } from './routes/admin/saved';
 import { router as logAdminRouter } from './routes/admin/log';
+import { router as novelAdminRouter } from './routes/admin/novel';
 import { router as scrapeRouter } from './routes/admin/scrape';
 import { router as mergeAdminRouter } from './routes/admin/merge';
 import { router as readerRouter, imgRouter } from './routes/reader';
@@ -122,6 +123,9 @@ app.route('/api/admin', monitoringAdminRouter);
 app.route('/api/admin', dashboardAdminRouter);
 app.route('/api/admin', savedAdminRouter);
 app.route('/api/admin', logAdminRouter);
+// Operator trigger for the novel catalogue crawl (POST .../catalog/sync).
+// requireAdminSession (session.role===admin) enforced inside router.
+app.route('/api/admin', novelAdminRouter);
 app.route('/api/reader', readerRouter);
 app.route('/api', resolveRouter);
 app.route('/api/auth', authRouter);
@@ -171,6 +175,7 @@ export default {
           const res = await syncCatalog(env);
           console.log(
             `[cron] novel catalog synced: ${res.inserted} new, ${res.filled} gap-filled, ${res.skipped} skipped`
+            + ` (${res.pages} listing pages, cursor ${res.cursor}${res.complete ? ', listing complete' : ''})`
           );
           await env.CACHE_KV.put('novel:catalog:last_sync', String(Date.now()), { expirationTtl: 43200 }).catch(() => {});
         }

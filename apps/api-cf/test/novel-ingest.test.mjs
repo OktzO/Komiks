@@ -59,6 +59,11 @@ const stubAdapter = (over = {}) => {
       if (over.searchThrows) throw over.searchThrows;
       return over.searchResult ?? [];
     },
+    async browse(params) {
+      calls.push(['browse', params?.offset]);
+      if (over.browseThrows) throw over.browseThrows;
+      return over.browseResult ?? [];
+    },
     async getSeries(id) {
       calls.push(['getSeries', id]);
       if (over.seriesThrows) throw over.seriesThrows;
@@ -165,23 +170,32 @@ const stubD1 = ({ listStale, existing = null } = {}) => {
   return { client, trace };
 };
 
-const envFor = (client, over = {}) => {
+const stubKv = () => {
   const kv = new Map();
+  return {
+    kv,
+    async get(key, type) {
+      const raw = kv.get(key);
+      const asJson = typeof type === 'string' ? type : type?.type;
+      return raw === undefined ? null : (asJson === 'json' ? JSON.parse(raw) : raw);
+    },
+    async put(key, value) { kv.set(key, value); },
+    async delete(key) { kv.delete(key); },
+  };
+};
+
+const envFor = (client, over = {}) => {
+  const kvStub = stubKv();
   const kvKeys = { deleted: [] };
   const env = {
     DB: client,
     CACHE_KV: {
-      async get(key, type) {
-        const raw = kv.get(key);
-        const asJson = typeof type === 'string' ? type : type?.type;
-        return raw === undefined ? null : (asJson === 'json' ? JSON.parse(raw) : raw);
-      },
-      async put(key, value) { kv.set(key, value); },
-      async delete(key) { kvKeys.deleted.push(key); kv.delete(key); },
+      ...kvStub,
+      async delete(key) { kvKeys.deleted.push(key); return kvStub.delete(key); },
     },
     ...over,
   };
-  return { env, kvKeys, cursor: (id) => JSON.parse(kv.get(`novel:refresh:${id}`) ?? 'null')?.offset ?? null };
+  return { env, kvKeys, cursor: (id) => JSON.parse(kvStub.kv.get(`novel:refresh:${id}`) ?? 'null')?.offset ?? null };
 };
 
 // The chapter line is the only thing that separates a complete refresh from a
@@ -642,7 +656,10 @@ test('refreshStaleSeries counts a truncated pass apart from a complete one', asy
 
 // ── catalog sync ────────────────────────────────────────────────────────────
 // The catalog starts empty, so syncCatalog is the only thing that ever creates a
-// series row. It is discovery: search + upsert, never a chapter body.
+// series row. It is discovery: the source's own listing + upsert, never a
+// chapter body, and never a keyword search — novelid's `?s=` substring-matches
+// titles, so the six genre words it used to seed from returned 5 hits and 3
+// unique series where the listing returns 181.
 const catalogHit = (over = {}) => ({
   sourceSeriesId: 'halal-tapi-asing',
   source: 'novelid',
@@ -653,7 +670,7 @@ const catalogHit = (over = {}) => ({
   ...over,
 });
 
-// Search is paged by offset, so the responder counts calls per seed.
+// The listing is paged by offset, so the responder counts calls per page.
 const catalogAdapter = (pages, over = {}) => {
   const calls = [];
   const adapter = stubAdapter({
@@ -662,7 +679,7 @@ const catalogAdapter = (pages, over = {}) => {
     getChapterContent: () => { throw new Error('the catalog sync must not fetch chapters'); },
     ...over,
   });
-  adapter.search = async (params) => {
+  adapter.browse = async (params) => {
     calls.push(params);
     return pages[Math.floor(params.offset / 18)] ?? [];
   };
@@ -673,10 +690,11 @@ const catalogAdapter = (pages, over = {}) => {
 // the sync walks every source in the registry.
 const onlyNovelId = (adapter) => (key) => (key === 'novelid' ? adapter : null);
 
-const onePeer = (over = {}) => ({ PEER_URLS: 'https://w0.test', PEER_INDEX: '0', ...over });
+const onePeer = (over = {}) => ({ PEER_URLS: 'https://w0.test', PEER_INDEX: '0', CACHE_KV: stubKv(), ...over });
 const fourPeers = (over = {}) => ({
   PEER_URLS: 'https://w0.test,https://w1.test,https://w2.test,https://w3.test',
   PEER_INDEX: '0',
+  CACHE_KV: stubKv(),
   ...over,
 });
 
@@ -703,7 +721,7 @@ const detailSync = (over = {}) =>
 test('a newly inserted series is written with the detail page, not the search card', async () => {
   const { client, trace } = stubD1();
   const { adapter } = detailSync();
-  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
 
   assert.equal(res.inserted, 1);
   assert.deepEqual(
@@ -732,7 +750,7 @@ test('a series whose detail is still missing is filled from getSeries', async ()
   };
   const { client, trace } = stubD1({ existing: stored });
   const { adapter } = detailSync();
-  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
 
   assert.equal(res.inserted, 0, 'the row already exists');
   assert.equal(res.filled, 1);
@@ -758,7 +776,7 @@ test('a series whose detail is still missing is filled from getSeries', async ()
 test('a complete series is not re-fetched on a later tick', async () => {
   const { client, trace } = stubD1({ existing: { ...SERIES, id: 'novelid-halal-tapi-asing', source_series_id: 'halal-tapi-asing' } });
   const { adapter } = detailSync();
-  await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
   assert.deepEqual(adapter.calls.filter(([m]) => m === 'getSeries'), [], 'nothing is missing, so no detail fetch');
   const update = trace.find((r) => r.sql.startsWith('UPDATE novel_series SET cover_fallback'));
   assert.equal(update, undefined, 'and no write: a column the card still carries but the owner already has is not a gap');
@@ -767,7 +785,7 @@ test('a complete series is not re-fetched on a later tick', async () => {
 test('a failing getSeries still inserts the series from the search card', async () => {
   const { client, trace } = stubD1();
   const { adapter } = catalogAdapter({ 0: [catalogHit({ author: 'Dari Kartu' })] }, { seriesThrows: new Error('novelid getSeries: 500') });
-  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
   assert.equal(res.inserted, 1, 'a dead detail page must not lose the series');
   const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
   assert.equal(row.args[4], 'Dari Kartu', 'whatever the search card did carry is kept');
@@ -795,7 +813,7 @@ test('a cover is stored in B2 by the same sync, so cover_ref gets a real key', a
         { name: 'b1', bucket: 'manga-images', keyId: 'k1', appKey: 'a1', region: 'us-east-005', host: 's3.us-east-005.backblazeb2.com' },
       ]),
       CACHE_KV: env.CACHE_KV,
-    }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+    }, { resolve: onlyNovelId(adapter) });
     assert.equal(res.inserted, 1);
     const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
     assert.equal(row.args[7], 'novel/covers/novelid-halal-tapi-asing', 'cover_ref is the B2 key, so the web never hotlinks');
@@ -809,7 +827,7 @@ test('a cover is stored in B2 by the same sync, so cover_ref gets a real key', a
 test('syncCatalog creates series with single-segment ids and never fetches chapters', async () => {
   const { client, trace } = stubD1();
   const { adapter, calls } = catalogAdapter({ 0: [catalogHit()] });
-  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['fantasi'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
 
   assert.equal(res.inserted, 1);
   assert.deepEqual(calls.map((c) => c.offset), [0], 'one search page for one seed');
@@ -829,23 +847,21 @@ test('seriesIdFor is the routing id, and the sync refuses an unroutable one', as
   assert.equal(seriesIdFor('novelid', 'halal-tapi-asing'), 'novelid-halal-tapi-asing');
   const { client, trace } = stubD1();
   const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: 'nested/slug' })] });
-  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
   assert.equal(res.inserted, 0);
   assert.equal(res.skipped, 1, 'an id with a separator can never be read back, so it is dropped');
   assert.equal(trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).length, 0);
 });
 
-test('syncCatalog pages through the search window and stops on a short page', async () => {
+test('syncCatalog pages through the listing and stops on a short page', async () => {
   const { client } = stubD1();
   const full = Array.from({ length: 18 }, (_, i) => catalogHit({ sourceSeriesId: `s${i}` }));
   const { adapter, calls } = catalogAdapter({ 0: full, 1: full, 2: [catalogHit({ sourceSeriesId: 'tail' })] });
-  const res = await syncCatalog({ ...onePeer(), DB: client }, {
-    seeds: ['fantasi'],
-    pagesPerSeed: 3,
-    resolve: onlyNovelId(adapter),
-  });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { budget: 100, resolve: onlyNovelId(adapter) });
   assert.deepEqual(calls.map((c) => c.offset), [0, 18, 36], 'the window advances by a full page');
   assert.equal(res.inserted, 19, '18 unique, then 1 from the short page that ends the walk');
+  assert.equal(res.complete, true, 'the short page is the end of the listing, so it is reported');
+  assert.equal(res.cursor, 0, 'and the cursor is rewound, so the next pass re-walks and notices new arrivals');
 });
 
 // The 12h discovery crawl is owner-gated, so only one worker pays the upstream
@@ -939,7 +955,7 @@ test('a series another shard owns is forwarded to its owner, not dropped', async
   try {
     const res = await syncCatalog({
       ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret',
-    }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+    }, { resolve: onlyNovelId(adapter) });
     assert.equal(res.inserted, 1, 'the row was written, just not here');
     assert.equal(res.skipped, 0);
     assert.equal(forwarded.length, 1, 'one forward, to the owner');
@@ -962,7 +978,7 @@ test('a forward that fails is queued in the outbox rather than lost', async () =
   globalThis.fetch = () => Promise.reject(new Error('owner unreachable'));
   try {
     const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
     assert.equal(res.inserted, 1);
     const queued = trace.find((r) => r.sql.includes('INSERT INTO _outbox'));
@@ -998,7 +1014,7 @@ test('a gap fill for a series this shard owns is never routed by the patch value
   const { forwarded, restore } = capturingExec();
   try {
     const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
     assert.equal(res.filled, 1);
     assert.deepEqual(forwarded, [], 'a row this shard owns is written here, whatever the first bound value hashes to');
@@ -1026,7 +1042,7 @@ test('a gap fill is routed by the series id, not by the patch value bound first'
   });
   try {
     await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
   } finally {
     restore();
@@ -1051,7 +1067,7 @@ test('a fill that reached a shard holding no such row is not counted as filled',
   });
   try {
     const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
     assert.equal(forwarded.length, 1, 'the write was still attempted');
     assert.equal(res.filled, 0, 'but a fill that changed no row is not a fill');
@@ -1072,7 +1088,7 @@ test('a series this shard owns still goes straight to the local D1', async () =>
   const { forwarded, restore } = capturingExec();
   try {
     const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
     assert.equal(res.inserted, mine.length);
     assert.deepEqual(
@@ -1098,7 +1114,7 @@ test('a re-sync gap-fills an existing series instead of overwriting it', async (
   };
   const { client, trace } = stubD1({ existing: stored });
   const { adapter } = catalogAdapter({ 0: [catalogHit()] });
-  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
 
   assert.equal(res.inserted, 0);
   assert.equal(res.filled, 1);
@@ -1153,7 +1169,7 @@ test('a row already on the owner is gap-filled, not re-upserted, on a failing ge
     const res = await syncCatalog({
       ...fourPeers(), ...b2AccountEnv(), DB: client, CACHE_KV: envFor(kvClient).env.CACHE_KV,
       DB_FORWARD_KEY: 'forward-secret',
-    }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+    }, { resolve: onlyNovelId(adapter) });
     assert.equal(res.inserted, 0, 'the row already exists on the owner');
     assert.equal(queries.length, 1, 'and this shard asked the owner, not its own D1');
     assert.equal(queries[0].params[0], id);
@@ -1184,7 +1200,7 @@ test('a partial owner row is filled with a COALESCE update that writes no null o
   const { forwarded, restore } = capturingPeers({ ownerRows: { [id]: stored } });
   try {
     const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
     assert.equal(res.inserted, 0);
     assert.equal(forwarded.length, 1);
@@ -1203,7 +1219,7 @@ test('an upsert that does reach a shard holding the row still cannot null a popu
   // it fails and the row only turns up at INSERT time.
   const { client, trace } = stubD1();
   const { adapter } = catalogAdapter({ 0: [catalogHit()] }, { seriesThrows: new Error('novelid getSeries: 500') });
-  await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  await syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) });
   const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
   for (const col of ['author', 'genre', 'status', 'cover_ref', 'cover_fallback', 'synopsis']) {
     assert.match(
@@ -1238,7 +1254,7 @@ test('the catalog sync resolves its adapter with env, so the robots cache engage
   const { client } = stubD1();
   const { env } = envFor(client);
   try {
-    const res = await syncCatalog({ ...onePeer(), DB: client, CACHE_KV: env.CACHE_KV }, { seeds: ['a', 'b'], pagesPerSeed: 1 });
+    const res = await syncCatalog({ ...onePeer(), DB: client, CACHE_KV: env.CACHE_KV }, {});
     assert.ok(res.inserted > 0, 'the walk really happened, so the count means something');
   } finally {
     globalThis.fetch = original;
@@ -1276,7 +1292,7 @@ test('a forwarded write can only ever reach the shard that owns the series id', 
   const { forwarded, restore } = capturingExec();
   try {
     await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
   } finally {
     restore();
@@ -1320,7 +1336,7 @@ test('a peer failure leaves exactly one outbox row, and a successful flush remov
   };
   try {
     const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+      resolve: onlyNovelId(adapter),
     });
     assert.equal(res.inserted, 1, 'the write is not lost, it is queued');
     const queued = trace.filter((r) => r.sql.includes('INSERT INTO _outbox'));
@@ -1344,11 +1360,9 @@ test('a metadata source is never crawled for the catalogue', async () => {
   const { client, trace } = stubD1();
   const calls = [];
   const metadata = stubAdapter({ sourceKey: 'gooddreamer', capability: 'metadata' });
-  const original = metadata.search;
-  metadata.search = async (p) => { calls.push(p); return original(p); };
+  const original = metadata.browse;
+  metadata.browse = async (p) => { calls.push(p); return original(p); };
   const res = await syncCatalog({ ...onePeer(), DB: client }, {
-    seeds: ['x'],
-    pagesPerSeed: 1,
     resolve: (key) => (key === 'novelid' ? null : metadata),
   });
   assert.deepEqual(calls, [], 'only a chapter source can back a series we could read chapters for');
@@ -1356,22 +1370,40 @@ test('a metadata source is never crawled for the catalogue', async () => {
   assert.equal(trace.length, 0);
 });
 
-test('a failing search ends that seed without losing the rest', async () => {
+test('a chapter source with no catalogue listing is skipped loudly, not silently', async () => {
+  // A keyword search can only find a novel someone could already name, so
+  // discovery has nothing to fall back on. Under-discovering quietly is how the
+  // catalogue ended up with 3 series out of a possible 216 requests, so the
+  // absence of a listing is an error line, not a zero.
   const { client } = stubD1();
-  const { adapter } = catalogAdapter({ 0: [catalogHit()] });
+  const adapter = stubAdapter({ sourceKey: 'novelid', capability: 'chapter' });
+  delete adapter.browse;
+  const { lines, result } = await captureLog(() => syncCatalog({ ...onePeer(), DB: client }, { resolve: onlyNovelId(adapter) }));
+  assert.match(lines.join('\n'), /\[novel] novelid has no catalogue listing/);
+  assert.equal(result.inserted, 0);
+  assert.deepEqual(adapter.calls, [], 'and no search is attempted in its place');
+});
+
+test('a listing page that cannot be read stops the pass rather than stepping over it', async () => {
+  // The walk is linear and cursor-driven, so stepping past a page that failed
+  // would skip its 18 series for good — the next pass resumes after it. Stopping
+  // costs one retried pass and loses nothing.
+  const { client } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit()], 1: [catalogHit({ sourceSeriesId: 'later' })] });
   const attempted = [];
-  adapter.search = async (params) => {
-    attempted.push(params.q);
-    if (params.q === 'a') throw new Error('upstream 500');
+  adapter.browse = async (params) => {
+    attempted.push(params.offset);
+    if (params.offset === 0) throw new Error('upstream 500');
     return [catalogHit()];
   };
-  const res = await syncCatalog({ ...onePeer(), DB: client }, {
-    seeds: ['a', 'b'],
-    pagesPerSeed: 1,
+  const { lines, result } = await captureLog(() => syncCatalog({ ...onePeer(), DB: client }, {
     resolve: onlyNovelId(adapter),
-  });
-  assert.deepEqual(attempted, ['a', 'a', 'b'], 'the failing seed is retried once, then the walk continues');
-  assert.equal(res.inserted, 1, 'the second seed still landed');
+  }));
+  assert.deepEqual(attempted, [0, 0], 'the failing page is retried once, then the pass stops');
+  assert.match(lines.join('\n'), /catalog browse failed at offset 0/);
+  assert.equal(result.inserted, 0);
+  assert.equal(result.complete, false, 'an unread page is not the end of the listing');
+  assert.equal(result.cursor, 0, 'and the cursor stays on it, so the next pass retries it');
 });
 // ── the chapterless exemption must be a bootstrap, not a standing rule ──────
 // listStaleSeries returns a chapterless row that has never been visited, so a
@@ -1586,4 +1618,81 @@ test('a series that keeps failing stops occupying the head of the queue', async 
     ['later'],
     'so the next tick spends its single visit on the other series, not on the one that cannot be filled',
   );
+});
+
+// ── the crawl is cursor-driven, so one pass is a slice not a catalogue ──────
+// novelid's listing is 11 pages / 181 series, and each new series costs a
+// series page, a cover GET and a B2 PUT. One Worker invocation cannot spend
+// that, so the pass is bounded and the cursor carries the rest. These are the
+// two properties that make repeating a safe trigger converge instead of
+// overwriting itself.
+test('a pass stops at the subrequest budget and the cursor says where to resume', async () => {
+  const { client } = stubD1();
+  const full = Array.from({ length: 18 }, (_, i) => catalogHit({ sourceSeriesId: `s${i}` }));
+  const { adapter, calls } = catalogAdapter({ 0: full, 1: full, 2: full, 3: full });
+  const { env } = envFor(client);
+  const resolve = onlyNovelId(adapter);
+
+  // 1 listing page + 3 per new series. A budget of 10 buys page 1 and two of its
+  // 18 series, then stops.
+  const res = await syncCatalog({ ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client }, { budget: 10, resolve });
+
+  assert.equal(res.inserted, 3, 'the budget, not the listing, ended the pass');
+  assert.equal(res.complete, false);
+  assert.equal(res.cursor, 18, 'and the cursor names the page the next pass starts at');
+  assert.deepEqual(calls.map((c) => c.offset), [0], 'page 2 was never requested');
+  assert.equal(await env.CACHE_KV.get('novel:catalog:cursor'), '18', 'the cursor is persisted for the next pass');
+});
+
+test('the next pass resumes at the cursor and reaches further', async () => {
+  const { client } = stubD1();
+  const full = Array.from({ length: 18 }, (_, i) => catalogHit({ sourceSeriesId: `s${i}` }));
+  const { adapter, calls } = catalogAdapter({ 0: full, 1: full, 2: full, 3: full });
+  const { env } = envFor(client);
+  const resolve = onlyNovelId(adapter);
+  const peer = { ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client };
+
+  await syncCatalog(peer, { budget: 10, resolve });
+  const second = await syncCatalog(peer, { budget: 10, resolve });
+
+  assert.equal(second.inserted, 3, 'the second slice is just as productive');
+  assert.equal(second.cursor, 36, 'and it advanced the cursor again');
+  assert.deepEqual(calls.map((c) => c.offset), [0, 18], 'the walk did not restart from the top');
+});
+test('a pass that reaches the end of the listing rewinds the cursor to zero', async () => {
+  // Otherwise the cursor would sit past the last page forever and the catalogue
+  // would never notice a novel published later.
+  const { client } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit()] });
+  const { env } = envFor(client);
+  const res = await syncCatalog({ ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client }, {
+    budget: 100,
+    resolve: onlyNovelId(adapter),
+  });
+  assert.equal(res.complete, true);
+  assert.equal(res.cursor, 0);
+});
+
+test('re-walking a complete catalogue writes nothing and re-fetches no page', async () => {
+  // The reason a rewound cursor is affordable: every row is recognised as
+  // existing and complete, so a full re-walk costs one listing page per page
+  // and no getSeries, no cover upload, no write.
+  const full = Array.from({ length: 18 }, (_, i) => `s${i}`);
+  const { client } = stubD1({
+    existing: [...full, 'tail'].map((source_series_id) => ({
+      ...SERIES,
+      id: `novelid-${source_series_id}`,
+      source_series_id,
+    })),
+  });
+  const { adapter } = catalogAdapter({ 0: full.map((sourceSeriesId) => catalogHit({ sourceSeriesId })), 1: [catalogHit({ sourceSeriesId: 'tail' })] });
+  const { env } = envFor(client);
+  const res = await syncCatalog({ ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client }, {
+    budget: 200,
+    resolve: onlyNovelId(adapter),
+  });
+  assert.equal(res.inserted, 0);
+  assert.equal(res.filled, 0);
+  assert.equal(res.complete, true, 'the listing is still walked end to end, so a new novel is noticed');
+  assert.deepEqual(adapter.calls.filter(([m]) => m === 'getSeries'), [], 'no detail refetch for a complete row');
 });

@@ -313,6 +313,58 @@ test('search honours offset via the upstream /page/N/ path', async () => {
   }
 });
 
+// The catalogue walk. Discovery cannot go through search: novelid's `?s=`
+// substring-matches titles, so the six genre words the sync used to seed from
+// returned 5 hits and 3 unique series against a possible 216 requests. The site's
+// own listing is what a catalogue has to be harvested from, and the fixture is
+// the same 18-card card template the search page uses — so the parse is shared
+// and only the path differs.
+test('browse walks the site listing, not the keyword search', async () => {
+  const adapter = novelidAdapter();
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    requested.push(String(url));
+    return new Response(searchFixture, { status: 200 });
+  };
+  const pages = () => requested.filter((u) => !u.endsWith('/robots.txt'));
+  try {
+    const hits = await adapter.browse({ limit: 18 });
+    assert.equal(hits.length, 18, 'one upstream page is 18 cards, the same as a search page');
+    assert.match(pages()[0], /novelid\.org\/genre\/\/page\/1\/$/, 'page 1 is the listing itself');
+    // Same offset->page mapping as search, so the two cannot drift apart.
+    await adapter.browse({ limit: 3, offset: 20 });
+    assert.match(pages().at(-1), /novelid\.org\/genre\/\/page\/2\/$/);
+    const windowed = await adapter.browse({ limit: 3, offset: 2 });
+    assert.deepEqual(
+      windowed.map((s) => s.sourceSeriesId),
+      parseSearchHtml(searchFixture).slice(2, 5).map((i) => i.slug),
+      'an offset inside a page is an in-page window, not a repeat of the head'
+    );
+    assert.ok(hits.every((h) => !h.coverUrl), 'a listing card is still an avatar, never a cover');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('the listing goes through the same robots gate as search', async () => {
+  // If upstream ever disallows /genre/, fetchAllowed throws and the crawl stops
+  // with `[novel] catalog browse failed` rather than crawling anyway — so the
+  // listing is asserted to be gated, not to be reachable.
+  const adapter = novelidAdapter();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/robots.txt')) return new Response('User-agent: *\nDisallow: /genre/\n', { status: 200 });
+    return new Response(searchFixture, { status: 200 });
+  };
+  try {
+    await assert.rejects(() => adapter.browse({ limit: 18 }), /robots.txt disallows/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('stripCoverQuery drops the resize thumbnail params', () => {
   assert.equal(
     stripCoverQuery('https://novelid.org/uploads/a.jpg?resize=139,184'),

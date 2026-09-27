@@ -35,6 +35,12 @@ export interface NovelSourceAdapter {
   sourceKey: NovelSourceKey;
   capability: NovelCapability;
   search(params: { q: string; limit?: number; offset?: number }): Promise<NovelSeries[]>;
+  // Whole-catalogue page walk, for sources that have one. `search` is a keyword
+  // endpoint — on novelid it substring-matches titles, so a catalogue harvested
+  // through it can only ever find novels a reader could already name. Discovery
+  // uses this instead, and falls back to `search` keywords only where it is
+  // absent, so an unlisted source is a visible no-op rather than a silent one.
+  browse?(params: { limit?: number; offset?: number }): Promise<NovelSeries[]>;
   getSeries(sourceId: string): Promise<NovelSeries>;
   listChapters(sourceId: string, opts?: { limit?: number; offset?: number }): Promise<NovelChapterSummary[]>;
   // Absent on `capability: 'metadata'` sources. Coin-gated or app-only chapter

@@ -36,6 +36,28 @@ export const novelidAdapter = (env?: NovelidEnv) => {
   const get = (url: string, entityId: string, stage: string) =>
     withNovelRetry(() => fetchAllowed(url, env), { source: 'novelid', entityId, stage });
 
+  // Upstream paginates in fixed 18-card pages, so the in-page window is the
+  // remainder — not a plain slice(0, limit), which would repeat page 1.
+  const pageOf = (offset: number): number => Math.floor(offset / NOVELID_SEARCH_PAGE_SIZE) + 1;
+
+  const window = (
+    items: ReturnType<typeof parseSearchHtml>,
+    offset: number,
+    limit: number
+  ): NovelSeries[] => {
+    const start = offset % NOVELID_SEARCH_PAGE_SIZE;
+    return items.slice(start, start + limit).map((item) => ({
+      sourceSeriesId: item.slug,
+      source: 'novelid' as const,
+      title: item.title,
+      slug: item.slug,
+      genres: item.genre ? [item.genre] : undefined,
+      // No coverUrl: a novelid search card's only image is the author avatar
+      // (see parseSearchHtml), so emitting one would put a portrait of the
+      // author on the catalogue card. The series page carries the real cover.
+    }));
+  };
+
   return {
     sourceKey: 'novelid' as const,
     capability: 'chapter' as const,
@@ -43,23 +65,14 @@ export const novelidAdapter = (env?: NovelidEnv) => {
     async search({ q, limit = 20, offset = 0 }: { q: string; limit?: number; offset?: number }): Promise<NovelSeries[]> {
       const trimmed = q.trim();
       if (!trimmed) return [];
-      const page = Math.floor(offset / NOVELID_SEARCH_PAGE_SIZE) + 1;
-      const url = NOVELID_BASE + NOVELID_PATHS.search(trimmed, page);
-      const html = await get(url, trimmed, 'search');
-      const items = parseSearchHtml(html);
-      // Upstream paginates in fixed 18-card pages, so the in-page window is the
-      // remainder — not a plain slice(0, limit), which would repeat page 1.
-      const start = offset % NOVELID_SEARCH_PAGE_SIZE;
-      return items.slice(start, start + limit).map((item) => ({
-        sourceSeriesId: item.slug,
-        source: 'novelid' as const,
-        title: item.title,
-        slug: item.slug,
-        genres: item.genre ? [item.genre] : undefined,
-        // No coverUrl: a novelid search card's only image is the author avatar
-        // (see parseSearchHtml), so emitting one would put a portrait of the
-        // author on the catalogue card. The series page carries the real cover.
-      }));
+      const html = await get(NOVELID_BASE + NOVELID_PATHS.search(trimmed, pageOf(offset)), trimmed, 'search');
+      return window(parseSearchHtml(html), offset, limit);
+    },
+
+    async browse({ limit = 20, offset = 0 }: { limit?: number; offset?: number } = {}): Promise<NovelSeries[]> {
+      const page = pageOf(offset);
+      const html = await get(NOVELID_BASE + NOVELID_PATHS.browse(page), `page ${page}`, 'browse');
+      return window(parseSearchHtml(html), offset, limit);
     },
 
     async getSeries(sourceId: string): Promise<NovelSeries> {

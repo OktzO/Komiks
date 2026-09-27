@@ -11,6 +11,13 @@ export const NOVELID_PATHS = {
   // /page/2/?s=a returning a disjoint result set.
   search: (q: string, page = 1): string =>
     page <= 1 ? `/?s=${encodeURIComponent(q)}` : `/page/${page}/?s=${encodeURIComponent(q)}`,
+  // The whole-catalogue walk. `?s=` only matches a substring of a *title* — it
+  // cannot discover a novel nobody could already name — whereas /genre/ is the
+  // site's own listing of everything, same 18-card page. The doubled slash is
+  // upstream's own pagination href on that page, not a typo. robots.txt
+  // disallows /search/, /memeen/, /includes/ and /themes/, none of which this
+  // touches.
+  browse: (page = 1): string => `/genre//page/${page}/`,
 } as const;
 
 export const NOVELID_SEARCH_PAGE_SIZE = 18;
