@@ -133,8 +133,8 @@ and a regression in either is a data-availability incident, not a parse bug.
 using Web Crypto:
 
 - `deriveKey` (line 9) — `SHA-256(LB_ENCRYPTION_KEY)` imported raw as a 256-bit **AES-GCM** key.
-- `encryptToken` (line 19) — fresh 12-byte random IV per call, returns `[12-byte iv | ciphertext+tag]`.
-- `decryptToken` (line 36) — splits the IV back off, rejects blobs shorter than `IV_LEN + 1`.
+- `encryptToken` (line 20) — fresh 12-byte random IV per call, returns `[12-byte iv | ciphertext+tag]`.
+- `decryptToken` (line 33) — splits the IV back off, rejects blobs shorter than `IV_LEN + 1`.
 
 The plaintext token is never persisted. Callers: `accounts.ts:204` (store), `accounts.ts:257` (load),
 `provision.ts:219`. The ciphertext lands in D1 `lb_accounts.encrypted_token`. Covered by
