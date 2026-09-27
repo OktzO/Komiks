@@ -66,6 +66,22 @@ apply_0020() {
   fi
   apply "$cfg" "$f"
 }
+apply_0021() {
+  cfg="$1"; f="packages/db/migrations/0021_novel_module.sql"
+  [ -f "$f" ] || { echo "skip missing $f"; return 0; }
+  name="$(basename "$f")"
+  if ledger_has "$cfg" "$name"; then
+    echo "skip $cfg $name: already applied"
+    return 0
+  fi
+  if CLOUDFLARE_API_TOKEN="$tok" npx wrangler d1 execute manga-db --remote --json \
+    --command "PRAGMA table_info(novel_series)" --config "$cfg" 2>/dev/null \
+    | grep -qE '"name":[[:space:]]*"source_series_id"'; then
+    echo "skip $cfg $name: novel_series already present"
+    return 0
+  fi
+  apply "$cfg" "$f"
+}
 failures=0
 i=0
 for cfg in $WORKER_CFGS; do
@@ -86,6 +102,7 @@ for cfg in $WORKER_CFGS; do
   apply "$cfg" "packages/db/migrations/backfill_entity_decode.sql"
   for f in packages/db/migrations/0019_*.sql; do apply "$cfg" "$f"; done
   apply_0020 "$cfg"
+  apply_0021 "$cfg"
 done
 if [ "$failures" -gt 0 ]; then
   echo "aborted: $failures migration(s) failed — see FAILED lines above"
