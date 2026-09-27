@@ -1063,3 +1063,221 @@ export const db = (client: D1Database): Db => {
 
 /** `db.client` convenience: build a Db from an env binding. */
 export const client = (envDb: D1Database): Db => db(envDb);
+
+export interface NovelSeriesRow {
+  id: string; source_series_id: string; source: string; title: string;
+  author: string | null; genre: string | null; status: string | null;
+  cover_ref: string | null; cover_fallback: string | null;
+  synopsis: string | null; created_at: number; updated_at: number;
+}
+
+export interface NovelChapterRow {
+  id: string; series_id: string; source_chapter_id: string;
+  number: number; title: string | null; content: string;
+  content_hash: string; source_url: string | null; scraped_at: number;
+}
+
+const NOVEL_SERIES_COLUMNS =
+  'id, source_series_id, source, title, author, genre, status, cover_ref, cover_fallback, synopsis, created_at, updated_at';
+const NOVEL_CHAPTER_COLUMNS =
+  'id, series_id, source_chapter_id, number, title, content, content_hash, source_url, scraped_at';
+const NOVEL_GAP_COLUMNS = ['cover_fallback', 'synopsis', 'author'] as const;
+
+const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+const clampLimit = (limit: number, max = 100): number => {
+  const n = Math.floor(Number(limit));
+  return Number.isFinite(n) ? Math.min(max, Math.max(1, n)) : 1;
+};
+
+const clampOffset = (offset: number): number => {
+  const n = Math.floor(Number(offset));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+export class NovelDb {
+  constructor(private readonly d1: D1Database) {}
+
+  async upsertSeries(row: NovelSeriesRow): Promise<void> {
+    // `id` and `created_at` are deliberately absent from the update set: id is
+    // the routing key that every stored chapter's series_id points at.
+    await this.d1
+      .prepare(
+        `INSERT INTO novel_series (${NOVEL_SERIES_COLUMNS})
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT(source, source_series_id) DO UPDATE SET
+           title = excluded.title,
+           author = excluded.author,
+           genre = excluded.genre,
+           status = excluded.status,
+           cover_ref = excluded.cover_ref,
+           cover_fallback = excluded.cover_fallback,
+           synopsis = excluded.synopsis,
+           updated_at = excluded.updated_at`
+      )
+      .bind(
+        row.id, row.source_series_id, row.source, row.title, row.author, row.genre,
+        row.status, row.cover_ref, row.cover_fallback, row.synopsis,
+        row.created_at, row.updated_at,
+      )
+      .run();
+  }
+
+  async getSeriesBySourceId(source: string, sourceSeriesId: string): Promise<NovelSeriesRow | null> {
+    const row = await this.d1
+      .prepare(`SELECT ${NOVEL_SERIES_COLUMNS} FROM novel_series WHERE source = ?1 AND source_series_id = ?2 LIMIT 1`)
+      .bind(source, sourceSeriesId)
+      .first<Row>();
+    return (row as NovelSeriesRow | null) ?? null;
+  }
+
+  async getSeriesBySlug(slug: string): Promise<NovelSeriesRow | null> {
+    // The route slug *is* the primary key; novel_series has no slug column.
+    const row = await this.d1
+      .prepare(`SELECT ${NOVEL_SERIES_COLUMNS} FROM novel_series WHERE id = ?1 LIMIT 1`)
+      .bind(slug)
+      .first<Row>();
+    return (row as NovelSeriesRow | null) ?? null;
+  }
+
+  async listSeries(opts: { limit: number; offset: number; genre?: string }): Promise<NovelSeriesRow[]> {
+    const limit = clampLimit(opts.limit);
+    const offset = clampOffset(opts.offset);
+    const base = `SELECT ${NOVEL_SERIES_COLUMNS} FROM novel_series`;
+    const order = 'ORDER BY updated_at DESC, id DESC';
+    const { results } = opts.genre
+      ? await this.d1
+          .prepare(`${base} WHERE genre LIKE ?3 ${order} LIMIT ?1 OFFSET ?2`)
+          .bind(limit, offset, `%"${opts.genre}"%`)
+          .all<Row>()
+      : await this.d1
+          .prepare(`${base} ${order} LIMIT ?1 OFFSET ?2`)
+          .bind(limit, offset)
+          .all<Row>();
+    return (results ?? []) as unknown as NovelSeriesRow[];
+  }
+
+  async countSeries(genre?: string): Promise<number> {
+    const stmt = this.d1.prepare(
+      `SELECT COUNT(*) AS c FROM novel_series${genre ? ' WHERE genre LIKE ?1' : ''}`
+    );
+    const row = genre ? await stmt.bind(`%"${genre}"%`).first<Row>() : await stmt.first<Row>();
+    return Number(row?.c ?? 0);
+  }
+
+  async fillSeriesGaps(
+    id: string,
+    patch: { cover_fallback?: string; synopsis?: string; author?: string },
+  ): Promise<void> {
+    const sets: string[] = [];
+    const args: string[] = [];
+    for (const col of NOVEL_GAP_COLUMNS) {
+      if (patch[col] !== undefined) {
+        sets.push(`${col} = ?${args.length + 1}`);
+        args.push(patch[col] as string);
+      }
+    }
+    if (sets.length === 0) return;
+    sets.push(`updated_at = ?${args.length + 1}`);
+    await this.d1
+      .prepare(`UPDATE novel_series SET ${sets.join(', ')} WHERE id = ?${args.length + 2}`)
+      .bind(...args, nowSec(), id)
+      .run();
+  }
+
+  async upsertChapters(
+    seriesId: string,
+    chapters: NovelChapterRow[],
+  ): Promise<{ inserted: number; updated: number; unchanged: number }> {
+    const counts = { inserted: 0, updated: 0, unchanged: 0 };
+    if (!Array.isArray(chapters) || chapters.length === 0) return counts;
+
+    const incoming = new Map<string, NovelChapterRow>();
+    for (const c of chapters) {
+      if (c && typeof c.source_chapter_id === 'string' && c.source_chapter_id.length > 0 && !incoming.has(c.source_chapter_id)) {
+        incoming.set(c.source_chapter_id, c);
+      }
+    }
+    if (incoming.size === 0) return counts;
+
+    const { results } = await this.d1
+      .prepare('SELECT source_chapter_id, content_hash FROM novel_chapters WHERE series_id = ?1')
+      .bind(seriesId)
+      .all<Row>();
+    const stored = new Map<string, string>();
+    for (const r of results ?? []) stored.set(r.source_chapter_id as string, r.content_hash as string);
+
+    const stmts: D1PreparedStatement[] = [];
+    for (const c of incoming.values()) {
+      const prior = stored.get(c.source_chapter_id);
+      if (prior === undefined) {
+        counts.inserted++;
+        stmts.push(this.d1
+          .prepare(
+            `INSERT INTO novel_chapters (${NOVEL_CHAPTER_COLUMNS})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(series_id, source_chapter_id) DO UPDATE SET
+               number = excluded.number,
+               title = excluded.title,
+               content = excluded.content,
+               content_hash = excluded.content_hash,
+               source_url = excluded.source_url,
+               scraped_at = excluded.scraped_at`
+          )
+          .bind(
+            c.id, seriesId, c.source_chapter_id, c.number, c.title,
+            c.content, c.content_hash, c.source_url, c.scraped_at,
+          ));
+      } else if (prior !== c.content_hash) {
+        counts.updated++;
+        stmts.push(this.d1
+          .prepare(
+            `UPDATE novel_chapters SET number = ?1, title = ?2, content = ?3, content_hash = ?4,
+               source_url = ?5, scraped_at = ?6
+             WHERE series_id = ?7 AND source_chapter_id = ?8`
+          )
+          .bind(c.number, c.title, c.content, c.content_hash, c.source_url, c.scraped_at, seriesId, c.source_chapter_id));
+      } else {
+        counts.unchanged++;
+      }
+    }
+
+    for (let i = 0; i < stmts.length; i += 100) await this.d1.batch(stmts.slice(i, i + 100));
+    return counts;
+  }
+
+  async getChapter(seriesId: string, sourceChapterId: string): Promise<NovelChapterRow | null> {
+    const row = await this.d1
+      .prepare(`SELECT ${NOVEL_CHAPTER_COLUMNS} FROM novel_chapters WHERE series_id = ?1 AND source_chapter_id = ?2 LIMIT 1`)
+      .bind(seriesId, sourceChapterId)
+      .first<Row>();
+    return (row as NovelChapterRow | null) ?? null;
+  }
+
+  async listChapters(seriesId: string, opts: { limit: number; offset: number }): Promise<NovelChapterRow[]> {
+    const { results } = await this.d1
+      .prepare(`SELECT ${NOVEL_CHAPTER_COLUMNS} FROM novel_chapters WHERE series_id = ?1 ORDER BY number ASC LIMIT ?2 OFFSET ?3`)
+      .bind(seriesId, clampLimit(opts.limit), clampOffset(opts.offset))
+      .all<Row>();
+    return (results ?? []) as unknown as NovelChapterRow[];
+  }
+
+  async countChapters(seriesId: string): Promise<number> {
+    const row = await this.d1
+      .prepare('SELECT COUNT(*) AS c FROM novel_chapters WHERE series_id = ?1')
+      .bind(seriesId)
+      .first<Row>();
+    return Number(row?.c ?? 0);
+  }
+
+  async listStaleSeries(olderThanSec: number, limit: number): Promise<NovelSeriesRow[]> {
+    const cutoff = nowSec() - Math.max(0, Math.floor(Number(olderThanSec) || 0));
+    const { results } = await this.d1
+      .prepare(`SELECT ${NOVEL_SERIES_COLUMNS} FROM novel_series WHERE updated_at < ?1 ORDER BY updated_at ASC LIMIT ?2`)
+      .bind(cutoff, clampLimit(limit))
+      .all<Row>();
+    return (results ?? []) as unknown as NovelSeriesRow[];
+  }
+}
+
+export const novelDb = (d1: D1Database): NovelDb => new NovelDb(d1);
