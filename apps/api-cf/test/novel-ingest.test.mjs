@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { murmur3_32 } from '@manga-platform/shared/r2-routing';
+import { flushOutbox } from '../src/lib/dbWrite.ts';
 import { sha256Hex } from '../src/lib/context.ts';
 import {
   fillMetadataGaps,
@@ -101,13 +102,17 @@ const chapterAdapter = (bodies, over = {}) => stubAdapter({
 });
 
 // `listStale` feeds the stale-series listing, which honours the bound LIMIT the
-// way D1 does. `existing` is a series row that is already stored, so an upsert
-// path can be told apart from an insert path.
+// way D1 does. `existing` is a series row (or rows) that are already stored, so
+// an upsert path can be told apart from an insert path. _outbox is kept as rows
+// too, because a queue that is only visible in the trace cannot be replayed.
 const stubD1 = ({ listStale, existing = null } = {}) => {
   const trace = [];
+  const stored = existing ? (Array.isArray(existing) ? existing : [existing]) : [];
   // Ids this stub has been asked to insert, so a re-sync sees the row a previous
   // upsert would have created instead of inserting it again.
-  const written = new Set(existing ? [existing.id] : []);
+  const written = new Set(stored.map((r) => r.id));
+  let nextOutboxId = 1;
+  const outbox = [];
   const client = {
     prepare(sql) {
       const rec = { sql, args: [] };
@@ -116,16 +121,29 @@ const stubD1 = ({ listStale, existing = null } = {}) => {
         rec,
         bind(...args) { rec.args = args; return stmt; },
         async first() {
-          if (existing && sql.includes('FROM novel_series') && rec.args[0] === existing.id) return existing;
+          if (sql.includes('FROM _outbox')) return { c: outbox.length };
+          const row = stored.find((r) => sql.includes('FROM novel_series') && r.id === rec.args[0]);
+          if (row) return row;
           if (written.has(rec.args[0])) return { id: rec.args[0] };
           return null;
         },
         async all() {
+          if (sql.includes('FROM _outbox')) return { results: outbox };
           if (!listStale) return { results: [] };
           // listStaleSeries binds (cutoff, limit) — the limit is the last arg.
           return { results: listStale.slice(0, rec.args.at(-1)) };
         },
         async run() {
+          if (sql.startsWith('INSERT INTO _outbox')) {
+            const [owner_url, table_name, sqlText, params] = rec.args;
+            outbox.push({ id: nextOutboxId++, owner_url, table_name, sql: sqlText, params, attempts: 0 });
+          } else if (sql.startsWith('DELETE FROM _outbox WHERE id')) {
+            const at = outbox.findIndex((r) => r.id === rec.args[0]);
+            if (at >= 0) outbox.splice(at, 1);
+          } else if (sql.startsWith('UPDATE _outbox SET attempts')) {
+            const row = outbox.find((r) => r.id === rec.args[0]);
+            if (row) row.attempts++;
+          }
           // D1 reports rows_written, and a forwarded /db/exec passes it back, so
           // a write that reached a shard holding no such row is distinguishable
           // from one that landed. An UPDATE filters on its trailing id.
@@ -1226,6 +1244,100 @@ test('the catalog sync resolves its adapter with env, so the robots cache engage
     globalThis.fetch = original;
   }
   assert.equal(robotsRequests.length, 1, 'robots.txt is read once for the whole catalogue walk, not once per page');
+});
+
+test('a forwarded write can only ever reach the shard that owns the series id', async () => {
+  // writeOwned's owner key is explicit now, so a novel_series write can only land
+  // on ownerFor(id) or nowhere. The batch runs both statements: an id already
+  // stored is gap-filled and binds the patch value first, a new one is upserted
+  // and binds the id first — only the fill separates this from routing by
+  // params[0].
+  //
+  // An id this worker owns takes the local branch, never a forward to its own
+  // URL: the row is in this D1 already, so forwarding it would write it twice
+  // through two paths. The ring split, not the batch size, is what sets the
+  // forward count.
+  const ids = Array.from({ length: 12 }, (_, i) => `fwd-${i}`);
+  const ownerOf = (seriesId) => `https://w${murmur3_32(seriesId) % 4}.test/`;
+  const stored = ids.filter((_, i) => i % 2 === 0);
+  const mine = ids.filter((id) => ownerOf(`novelid-${id}`) === 'https://w0.test/');
+  const theirs = ids.filter((id) => !mine.includes(id));
+  const storedRow = (id) => ({ ...SERIES, id: `novelid-${id}`, source_series_id: id, source: 'novelid', synopsis: null });
+
+  const { client, trace } = stubD1({ existing: stored.filter((id) => mine.includes(id)).map(storedRow) });
+  const { adapter } = catalogAdapter({
+    0: ids.map((id) => catalogHit({
+      sourceSeriesId: id,
+      // A fill binds this text first, so it is hashed to a shard that is not the
+      // one owning the id: a write routed by params[0] reaches no such row.
+      synopsis: valueOnOtherShard(`novelid-${id}`, 'sinopsis'),
+    })),
+  });
+  const { forwarded, restore } = capturingExec();
+  try {
+    await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+  } finally {
+    restore();
+  }
+  assert.ok(mine.length > 0 && theirs.length > 0, 'the batch has to span this shard and its peers');
+  // Each forward is named by the shard owning the id it carries, so this one
+  // comparison pins both statements to ownerFor(id), to no other shard, and to
+  // exactly once. A forward carrying no id of this batch stays as its own url.
+  assert.deepEqual(
+    forwarded.map((f) => {
+      const carried = f.body.params.find((p) => ids.some((id) => p === `novelid-${id}`));
+      return carried ? ownerOf(carried) : f.url;
+    }).sort(),
+    theirs.map((id) => ownerOf(`novelid-${id}`)).sort(),
+    'a peer-owned id is forwarded to its own owner, once, and to no other shard',
+  );
+  const local = trace.filter((r) => /^(INSERT INTO|UPDATE) novel_series/.test(r.sql));
+  assert.equal(local.length, mine.length, 'a peer-owned row never lands in this D1');
+  for (const id of mine) {
+    assert.equal(local.filter((r) => r.args.includes(`novelid-${id}`)).length, 1, `${id} was written here, once, and not forwarded`);
+  }
+});
+
+test('a peer failure leaves exactly one outbox row, and a successful flush removes it', async () => {
+  const elsewhere = shardOf('outbox');
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: elsewhere })] });
+  const ownerUrl = `https://w${murmur3_32(`novelid-${elsewhere}`) % 4}.test`;
+  const original = globalThis.fetch;
+  // The owner is down for the write, then back for the flush.
+  let peerDown = true;
+  const execs = [];
+  globalThis.fetch = (input, init) => {
+    const url = String(input?.url ?? input);
+    if (url.includes('/api/_internal/db/exec')) {
+      if (peerDown) return Promise.reject(new Error('owner unreachable'));
+      execs.push(JSON.parse(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, changes: 1 }), { status: 200 }));
+    }
+    return Promise.reject(new Error(`network disabled: ${url}`));
+  };
+  try {
+    const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+    assert.equal(res.inserted, 1, 'the write is not lost, it is queued');
+    const queued = trace.filter((r) => r.sql.includes('INSERT INTO _outbox'));
+    assert.equal(queued.length, 1, 'queued once, not once per attempt');
+    assert.equal(queued[0].args[0], ownerUrl, 'and addressed to the owner, not to whoever answered');
+
+    peerDown = false;
+    const flushed = await flushOutbox({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' });
+    assert.equal(flushed.flushed, 1);
+    assert.equal(execs.length, 1, 'the queued write is replayed exactly once, not re-queued behind itself');
+    assert.equal(execs[0].table, 'novel_series');
+    assert.ok(String(execs[0].sql).startsWith('INSERT INTO novel_series'));
+    const deletes = trace.filter((r) => r.sql.includes('DELETE FROM _outbox WHERE id'));
+    assert.equal(deletes.length, 1, 'and the retry row is retired, so a later flush cannot write it again');
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test('a metadata source is never crawled for the catalogue', async () => {
