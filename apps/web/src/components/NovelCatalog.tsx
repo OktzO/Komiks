@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CoverImage } from '@/components/CoverImage';
-import { getNovelCatalog, type NovelCatalogPage } from '@/lib/api';
+import { getNovelCatalog, imgOriginFor, type NovelCatalogPage } from '@/lib/api';
 import { catalogLastPage, novelCatalogUrl, novelSeriesUrl } from '@/lib/novelRoutes';
 
 // The API clamps limit to 50; 24 keeps one page to a screenful of cards and
@@ -79,7 +79,7 @@ export function NovelCatalog({
           {series.map((s) => (
             <a key={s.id} href={novelSeriesUrl(s.id)} className="group block">
               <div className="aspect-[3/4] w-full overflow-hidden rounded border border-subtle bg-card">
-                <CoverImage src={novelCover(s)} alt={s.title} title={s.title} className="h-full w-full" fit="cover" zoom />
+                <CoverImage src={novelCover(s)} trusted={s.cover_url != null} alt={s.title} title={s.title} className="h-full w-full" fit="cover" zoom />
               </div>
               <p className="mt-2 line-clamp-2 text-xs leading-snug text-secondary transition-colors group-hover:text-accent">
                 {s.title}
@@ -105,9 +105,13 @@ export function NovelCatalog({
 
 const fmtGenre = (genre: string) => (genre ? ` bergenre ${genre}` : '');
 
-// cover_ref is a storage ref with no producer until the cover pipeline lands,
-// so cover_fallback (the upstream URL) is the only renderable source in V1.
-const novelCover = (s: { cover_fallback?: string | null }): string | null => s.cover_fallback ?? null;
+// cover_url is the API's signed /img path, minted from the stored cover_ref, so
+// the bytes come from B2 and the reader's IP never reaches the source.
+// cover_fallback is the source URL and is only used when nothing is stored.
+const novelCover = (s: { cover_url?: string | null; cover_fallback?: string | null }): string | null => {
+  const stored = s.cover_url;
+  return stored ? `${imgOriginFor(stored)}${stored}` : (s.cover_fallback ?? null);
+};
 
 function PagerLink({ page, genre, disabled, label }: { page: number; genre: string; disabled: boolean; label: string }) {
   if (disabled) {

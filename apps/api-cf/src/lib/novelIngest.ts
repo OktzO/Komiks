@@ -5,6 +5,7 @@ import type { NovelAdapterEnv, NovelSeries, NovelSourceAdapter } from '@manga-pl
 import type { Env } from './context';
 import { sha256Hex } from './context';
 import { ownerFor } from './peers';
+import { uploadNovelCover } from './novelCover';
 import { retryUpstream } from './retry';
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -340,7 +341,6 @@ const fetchDetail = async (
     return undefined;
   }
 };
-
 /**
  * Discovers series and writes them, so the catalog is not born empty.
  *
@@ -413,6 +413,10 @@ export const syncCatalog = async (
             continue;
           }
           const detail = await fetchDetail(adapter, hit.sourceSeriesId);
+          // Same step as the detail fetch: the cover lives in B2 from here on, so
+          // the reader never asks the source and availability stops depending on
+          // novelid being up. cover_fallback stays as the pre-upload URL.
+          const coverRef = await uploadNovelCover(env, id, detail?.coverUrl ?? hit.coverUrl);
           const now = nowSec();
           await novel.upsertSeries({
             id,
@@ -422,9 +426,9 @@ export const syncCatalog = async (
             author: detail?.author ?? hit.author ?? null,
             genre: detail?.genres?.length ? JSON.stringify(detail.genres) : (hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null),
             status: detail?.status ?? hit.status ?? null,
-            // No cover object yet: the cover pipeline owns cover_ref, and
-            // cover_fallback is the upstream URL the reader falls back to.
-            cover_ref: null,
+            cover_ref: coverRef,
+            // cover_fallback is the upstream URL the reader falls back to when
+            // there is no stored object (no B2 account, or the upload failed).
             cover_fallback: detail?.coverUrl ?? hit.coverUrl ?? null,
             synopsis: detail?.synopsis ?? hit.synopsis ?? null,
             created_at: now,

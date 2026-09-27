@@ -16,6 +16,7 @@ import { b2PutObject, b2GetObject } from '../lib/s3Upload.ts';
 import { parseSlugFromChapterId } from '../lib/komikuSlug.ts';
 import { evictStaleStorage } from '../lib/storageEviction.ts';
 import { signImgPath, verifyImgSig } from '../lib/signedImage';
+import { novelCoverKey } from '../lib/novelCover';
 
 export const router = new Hono<{ Bindings: Env }>();
 // Router untuk /img/* (image proxy). Terpisah dari router utama supaya
@@ -1096,6 +1097,47 @@ router.get('/:source/page/:chapterId/:pageNo', async (c: Context) => {
   const retry = Math.min(Math.max(Number(c.req.query('retry')) || 0, 0), 2);
 
   return servePageImage(c, source, chapterId, n, retry);
+});
+
+// Novel series cover: GET /img/novel/:seriesId
+// The chapter-page route below is /img/:source/:chapterId/:pageNo and resolves
+// through a chapter_pages row, so a cover cannot ride it — this is the same
+// router, the same signature + referer guards and the same server-side B2 read,
+// not a second image path. B2 miss is a 404: a cover is never hotlinked, or the
+// source would still see the reader.
+imgRouter.get('/novel/:seriesId', async (c: Context) => {
+  const seriesId = c.req.param('seriesId');
+  if (!seriesId || seriesId.includes('/')) return c.json({ error: 'bad series id' }, 400);
+
+  if (!(await hasValidImgSignature(c))) {
+    return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } });
+  }
+  if (!refererAllowed(c.env, c.req.header('referer'))) {
+    return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } });
+  }
+
+  const accounts = resolveB2Accounts(c.env.B2_CONFIG, c.env.B2_ACCOUNTS);
+  const key = novelCoverKey(seriesId);
+  const account = accounts[pickB2AccountIdx(accounts, key)];
+  if (!account) return c.json({ error: 'cover not found' }, 404);
+
+  try {
+    const res = await b2GetObject(account, key);
+    if (!res.ok) return c.json({ error: 'cover not found' }, 404);
+    const h = new Headers();
+    h.set('Content-Type', res.headers.get('content-type') || 'image/jpeg');
+    h.set('Cache-Control', 'public, max-age=31536000, immutable');
+    setCorsHeaders(c.env, h, c.req.header('origin'));
+    const resp = new Response(res.body, { status: 200, headers: h });
+    if (typeof caches !== 'undefined') {
+      const cache = (caches as unknown as { default: Cache }).default;
+      c.executionCtx.waitUntil(cache.put(c.req.raw, resp.clone()).catch(() => {}));
+    }
+    return resp;
+  } catch (e) {
+    console.error(`[img] novel cover read failed for ${seriesId}: ${e}`);
+    return c.json({ error: 'cover not found' }, 404);
+  }
 });
 
 // Image proxy: GET /img/:source/:chapterId/:pageNo

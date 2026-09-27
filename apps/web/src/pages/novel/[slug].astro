@@ -3,7 +3,7 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import { NovelChapterList } from '@/components/NovelChapterList';
 import { CoverImage } from '@/components/CoverImage';
-import { getNovelSeries, isNotFound, type NovelChapter, type NovelSeries } from '@/lib/api';
+import { getNovelSeries, imgOriginFor, isNotFound, type NovelChapter, type NovelSeries } from '@/lib/api';
 import { chapterNumberOf, novelCatalogUrl, parseNovelGenres } from '@/lib/novelRoutes';
 
 export const prerender = false;
@@ -35,6 +35,11 @@ const startChapter = (chapters ?? []).reduce<NovelChapter | null>(
   (min, c) => (min === null || c.number < min.number ? c : min),
   null,
 );
+
+// Same preference as the catalogue: the stored B2 cover through the signed /img
+// path, and only then the source URL.
+const novelCover = (s: NovelSeries): string | null =>
+  s.cover_url ? `${imgOriginFor(s.cover_url)}${s.cover_url}` : (s.cover_fallback ?? null);
 
 const genres = parseNovelGenres(series?.genre);
 const desc = (series?.synopsis ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
@@ -74,7 +79,7 @@ if (notFound) Astro.response.status = 404;
         <div class="md:flex md:gap-6 md:items-start mb-5">
           <div class="flex justify-center md:shrink-0 mb-4 md:mb-0">
             <div class="w-32 md:w-36 aspect-[3/4] overflow-hidden rounded-xl border border-border-default bg-card">
-              <CoverImage src={series.cover_fallback} alt={series.title} title={series.title} className="h-full w-full" fit="cover" />
+              <CoverImage src={novelCover(series)} trusted={series.cover_url != null} alt={series.title} title={series.title} className="h-full w-full" fit="cover" />
             </div>
           </div>
 

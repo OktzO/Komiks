@@ -5,6 +5,7 @@ import type { NovelSourceAdapter } from '@manga-platform/sources/novel';
 import { Env, json } from '../lib/context';
 import type { Context } from '../lib/context';
 import { ownerFor } from '../lib/peers';
+import { signImgPath } from '../lib/signedImage';
 import { fillMetadataGaps, hasMetadataGap, novelAdapterEnv, refreshSeries } from '../lib/novelIngest';
 import { novelDbFor, novelDbOn, peerUrls } from '../lib/novelShard';
 
@@ -60,6 +61,25 @@ const readThrough = async <T>(
   return fresh;
 };
 
+/**
+ * The renderable form of a stored cover: a signed `/img/novel/{id}` path.
+ *
+ * Minted per response rather than stored, because the signature is 25 minutes
+ * and a row is permanent — but the catalogue payload is cached for 600s, so a
+ * cached URL is always still inside its window. `cover_ref` stays the storage
+ * key and `cover_url` is what a client may actually request.
+ */
+const coverUrlFor = async (env: Env, series: Pick<NovelSeriesRow, 'id' | 'cover_ref'>): Promise<string | null> => {
+  if (!series.cover_ref?.trim()) return null;
+  const path = `/img/novel/${encodeURIComponent(series.id)}`;
+  const secret = (env.SIGNED_IMG_SECRET as string | undefined)?.trim() ?? '';
+  // No secret means /img is in its documented fail-open dev mode, so the bare
+  // path is what it accepts.
+  if (!secret) return path;
+  const { exp, sig } = await signImgPath(secret, path, 1500, Math.floor(Date.now() / 1000));
+  return `${path}?exp=${exp}&sig=${sig}`;
+};
+
 // listSeries already orders by updated_at DESC, id DESC; the merge has to restore
 // that order because the shards answer independently.
 const byNewest = (a: NovelSeriesRow, b: NovelSeriesRow): number =>
@@ -83,8 +103,9 @@ router.get('/novel/catalog', async (c) => {
     const seen = new Set<string>();
     const merged = rows.flat().filter((s) => (seen.has(s.id) ? false : (seen.add(s.id), true)));
     merged.sort(byNewest);
+    const onPage = merged.slice(offset, offset + limit);
     return {
-      data: merged.slice(offset, offset + limit),
+      data: await Promise.all(onPage.map(async (s) => ({ ...s, cover_url: await coverUrlFor(c.env, s) }))),
       page,
       limit,
       total: counts.reduce((sum, n) => sum + n, 0),
@@ -104,7 +125,11 @@ router.get('/novel/series/:slug', async (c) => {
     if (!series) return null;
     // Summaries, not rows: the embedded page is a navigation list, and shipping
     // 50 chapter bodies with it would be ~1MB nobody reads.
-    return { ...series, chapters: await novel.listChapterSummaries(slug, { limit: DETAIL_CHAPTERS, offset: 0 }) };
+    return {
+      ...series,
+      cover_url: await coverUrlFor(c.env, series),
+      chapters: await novel.listChapterSummaries(slug, { limit: DETAIL_CHAPTERS, offset: 0 }),
+    };
   });
   if (!data) return json(c, { error: 'Series not found' }, 404);
 

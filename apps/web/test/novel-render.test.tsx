@@ -97,3 +97,45 @@ test('an in-range page renders its rows and a real pager', () => {
   assert.ok(html.includes('href="/novel?page=3"'), 'next page is a link');
   assert.ok(!html.includes('Belum ada novel'));
 });
+
+// ---- Covers come from B2, not from the source -------------------------------
+// spec 6.8: covers ride the existing R2/B2 + signed /img pipeline. cover_url is
+// the API's signed /img path built from cover_ref; cover_fallback is the source
+// URL. A row with a stored cover must produce no request to the source at all,
+// so the reader's IP and UA never leave, and novelid being down does not blank
+// the catalogue.
+const coverRow = (over: Record<string, unknown>) => ({
+  id: 'novelid-halal-tapi-asing', source: 'novelid', title: 'Halal Tapi Asing',
+  author: 'Pengarang', genre: null, status: null,
+  cover_ref: null, cover_fallback: null, cover_url: null, synopsis: null, updated_at: 0,
+  ...over,
+});
+
+const coverPage = (rows: unknown[]) => renderToStaticMarkup(
+  <NovelCatalog page={1} genre="" initial={{ data: rows, page: 1, limit: CATALOG_PAGE_SIZE, total: rows.length } as never} />,
+);
+
+test('a stored cover renders through /img and never touches the source', () => {
+  const signed = '/img/novel/novelid-halal-tapi-asing?exp=1800000000&sig=abc123';
+  const html = coverPage([coverRow({
+    cover_ref: 'novel/covers/novelid-halal-tapi-asing',
+    cover_url: signed,
+    cover_fallback: 'https://i2.wp.com/novelid.org/uploads/halal.webp',
+  })]);
+  // & is HTML-escaped in the attribute; the sig is what is being asserted.
+  assert.ok(html.includes(signed.replace(/&/g, '&amp;')),
+    `the signed /img path is the src, got: ${html.match(/src="[^"]*"/)?.[0]}`);
+  assert.ok(!html.includes('i2.wp.com'), 'no direct upstream image request');
+});
+
+test('a row with no stored cover falls back to the source URL', () => {
+  const html = coverPage([coverRow({ cover_fallback: 'https://i2.wp.com/novelid.org/uploads/halal.webp' })]);
+  assert.ok(html.includes('i2.wp.com'), 'the fallback still renders something');
+  assert.ok(!html.includes('/img/novel/'), 'and is not a broken /img path');
+});
+
+test('a row with neither cover shows the title placeholder, not a broken image', () => {
+  const html = coverPage([coverRow({})]);
+  assert.ok(html.includes('Halal Tapi Asing'));
+  assert.ok(!html.includes('<img'), 'no img element at all');
+});

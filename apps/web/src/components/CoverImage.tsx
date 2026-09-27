@@ -11,6 +11,7 @@ export function CoverImage({
   zoom = false,
   priority = false,
   fit = 'contain',
+  trusted = false,
 }: {
   src: string | null;
   alt: string;
@@ -19,11 +20,15 @@ export function CoverImage({
   zoom?: boolean;
   priority?: boolean;
   fit?: 'contain' | 'cover';
+  // A Worker-minted signed /img URL, which sanitizeCoverUrl would strip the
+  // ?exp=&sig= out of. A caller sets trusted only for a value the API itself
+  // produced; every third-party URL still goes through the sanitiser.
+  trusted?: boolean;
 }) {
   // Cover hasil scrape bisa masih `http://` (data lama di D1/KV) → mixed
   // content diblokir browser, gambar gagal diam-diam. Adapter sudah sanitize
   // data baru; ini menutup data lama yang masih cached.
-  const safeSrc = sanitizeCoverUrl(src);
+  const safeSrc = trusted ? src : sanitizeCoverUrl(src);
   if (!safeSrc) return <div className={`flex items-center justify-center bg-card p-2 text-center ${className}`}>{title ?? alt}</div>;
   // object-contain shows the full image without cropping (no zoom/cut-off).
   // object-cover fills the container, cropping edges — used only when caller

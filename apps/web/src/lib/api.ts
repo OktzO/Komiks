@@ -225,6 +225,8 @@ export interface NovelSeries {
   status: string | null;
   cover_ref: string | null;
   cover_fallback: string | null;
+  // Signed /img path minted from cover_ref; null when no cover is stored.
+  cover_url?: string | null;
   synopsis: string | null;
   updated_at: number;
   chapters?: NovelChapter[];

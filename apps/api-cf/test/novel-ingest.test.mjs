@@ -613,6 +613,38 @@ test('a failing getSeries still inserts the series from the search card', async 
 });
 
 
+test('a cover is stored in B2 by the same sync, so cover_ref gets a real key', async () => {
+  const { client, trace } = stubD1();
+  const { env } = envFor(client);
+  const original = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const url = String(input?.url ?? input);
+    if (url.includes('backblazeb2.com') && init?.method === 'PUT') return Promise.resolve(new Response('', { status: 200 }));
+    if (url.includes('wp.com')) {
+      return Promise.resolve(new Response('BYTES', { status: 200, headers: { 'content-type': 'image/webp' } }));
+    }
+    return Promise.reject(new Error(`network disabled: ${url}`));
+  };
+  const { adapter } = detailSync({ coverUrl: 'https://i2.wp.com/novelid.org/uploads/halal.webp' });
+  try {
+    const res = await syncCatalog({
+      ...onePeer(),
+      DB: client,
+      B2_ACCOUNTS: JSON.stringify([
+        { name: 'b1', bucket: 'manga-images', keyId: 'k1', appKey: 'a1', region: 'us-east-005', host: 's3.us-east-005.backblazeb2.com' },
+      ]),
+      CACHE_KV: env.CACHE_KV,
+    }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+    assert.equal(res.inserted, 1);
+    const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
+    assert.equal(row.args[7], 'novel/covers/novelid-halal-tapi-asing', 'cover_ref is the B2 key, so the web never hotlinks');
+    assert.equal(row.args[8], 'https://i2.wp.com/novelid.org/uploads/halal.webp', 'cover_fallback survives as the fallback');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+
 test('syncCatalog creates series with single-segment ids and never fetches chapters', async () => {
   const { client, trace } = stubD1();
   const { adapter, calls } = catalogAdapter({ 0: [catalogHit()] });
