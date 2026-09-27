@@ -7,7 +7,7 @@ import type { Series, Chapter } from '@manga-platform/shared';
 import { drainResponse, sanitizeCoverUrl } from '@manga-platform/shared/http';
 import { decodeHtmlEntities } from '@manga-platform/shared/entities';
 import { mapStatusText } from '@manga-platform/shared/status';
-import { THRIVE_BASE, fetchHtml, parseNextData, fetchRobots, isPathAllowed } from './client.js';
+import { THRIVE_BASE, THRIVE_CDN, fetchHtml, parseNextData, fetchRobots, isPathAllowed } from './client.js';
 import type { RobotsResult } from './client.js';
 
 export interface ThriveAdapterEnv {
@@ -188,7 +188,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
       const data = parseNextData<ThriveChapterPage>(html);
       if (!data?.prefix || !data?.image) throw new Error(`thrive fetchPageUrls: no image data for ${chapterSourceId}`);
       return data.image.map((f) => ({
-        url: `https://cdn.thrive.moe/data/${data.prefix}/${f}`,
+        url: `${THRIVE_CDN}/data/${data.prefix}/${f}`,
         proxyHeaders: { Referer: THRIVE_BASE + '/' },
       }));
     },
@@ -270,7 +270,7 @@ export const thriveAdapter = (env?: ThriveAdapterEnv) => {
     },
     fetchPageUrlsFromFixtureForTest(d: ThriveChapterPage): { url: string; proxyHeaders?: Record<string, string> }[] {
       return (d.image || []).map((f) => ({
-        url: `https://cdn.thrive.moe/data/${d.prefix}/${f}`,
+        url: `${THRIVE_CDN}/data/${d.prefix}/${f}`,
         proxyHeaders: { Referer: THRIVE_BASE + '/' },
       }));
     },

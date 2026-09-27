@@ -2,6 +2,9 @@
 import { drainResponse } from '@manga-platform/shared/http';
 
 export const THRIVE_BASE = 'https://thrive.moe';
+// Page images are served from a separate CDN host; pageProps only carries a
+// prefix + filename, so the host has to be reattached here.
+export const THRIVE_CDN = 'https://cdn.thrive.moe';
 
 export const THRIVE_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
