@@ -72,6 +72,11 @@ const QUERY_ALLOWED_TABLES = new Set([
   'manga_source_link',
   'b2_temp_objects',
   'b2_usage',
+  // Novel tables shard by series, so a series read has to be able to reach the
+  // shard that owns it (lib/novelShard.ts). No user data: novel_series and
+  // novel_chapters are public catalogue rows.
+  'novel_series',
+  'novel_chapters',
 ]);
 
 const USERS_EXEC_ALLOW = [

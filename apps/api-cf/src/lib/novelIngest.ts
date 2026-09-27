@@ -1,9 +1,10 @@
 import { novelDb } from '@manga-platform/db';
 import type { NovelChapterRow, NovelSeriesRow } from '@manga-platform/db';
-import { getNovelAdapter } from '@manga-platform/sources/novel';
+import { NOVEL_SOURCES, getNovelAdapter } from '@manga-platform/sources/novel';
 import type { NovelSeries, NovelSourceAdapter } from '@manga-platform/sources/novel';
 import type { Env } from './context';
 import { sha256Hex } from './context';
+import { ownerFor } from './peers';
 import { retryUpstream } from './retry';
 
 const nowSec = (): number => Math.floor(Date.now() / 1000);
@@ -18,6 +19,18 @@ const upstream = <T>(fn: () => Promise<T>): Promise<T> => retryUpstream(fn, 2);
 
 const normTitle = (title: string): string =>
   title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * The id a series is stored and routed under.
+ *
+ * Single-segment on purpose: the reader route is /novel/{seriesSlug}/{chapterRef},
+ * so the id lands in one URL path segment, and the route 404s a slug that
+ * decoded to a '/'. A hyphen keeps the source prefix without a separator that
+ * breaks routing. A source id that itself contains a separator would produce an
+ * unroutable id, so the caller must drop it.
+ */
+export const seriesIdFor = (source: string, sourceSeriesId: string): string =>
+  `${source}-${sourceSeriesId}`;
 
 type GapColumn = 'cover_fallback' | 'synopsis' | 'author';
 
@@ -155,4 +168,112 @@ export const refreshStaleSeries = async (
     }
   }
   return refreshed;
+};
+
+// Search terms the catalog is seeded from. The novel adapter contract has no
+// "list everything" call, and novelid's search is a keyword endpoint that
+// returns nothing for an empty query, so a catalogue has to be harvested through
+// queries. These are genre words, which is also what the catalog's genre filter
+// offers, so a synced series is reachable from the browse UI.
+// ponytail: six hardcoded terms is a floor, not a strategy — the listing is one
+// page per term and the source's own ranking decides what surfaces. Replace with
+// a KV-held term list once the admin UI needs to steer discovery.
+const CATALOG_SEEDS = ['romance', 'fantasy', 'isekai', 'slice of life', 'misteri', 'fantasi'];
+// novelid serves fixed 18-card search pages, so stepping by 18 is what advances
+// the upstream page.
+const SEARCH_PAGE = 18;
+const SEARCH_PAGES_PER_SEED = 2;
+
+export interface SyncCatalogResult {
+  inserted: number;
+  filled: number;
+  skipped: number;
+}
+
+/**
+ * Discovers series and writes them, so the catalog is not born empty.
+ *
+ * Discovery only: `search` and `upsertSeries`, never `getChapterContent` — a
+ * catalogue crawl that also fetched bodies would pull thousands of chapter
+ * requests per run. Only series this shard owns are written, so the four D1s
+ * partition the catalogue instead of each holding all of it.
+ *
+ * An existing row is only ever gap-filled, never re-upserted: `upsertSeries`
+ * overwrites author/synopsis/cover_fallback on conflict, so re-syncing from a
+ * search payload (which carries no synopsis) would wipe what tier-2 filled in.
+ */
+export const syncCatalog = async (
+  env: Env,
+  opts: {
+    seeds?: string[];
+    pagesPerSeed?: number;
+    resolve?: (key: string) => NovelSourceAdapter | null;
+  } = {}
+): Promise<SyncCatalogResult> => {
+  const seeds = opts.seeds ?? CATALOG_SEEDS;
+  const pages = Math.max(1, opts.pagesPerSeed ?? SEARCH_PAGES_PER_SEED);
+  const resolve = opts.resolve ?? getNovelAdapter;
+  const novel = novelDb(env.DB);
+  const out: SyncCatalogResult = { inserted: 0, filled: 0, skipped: 0 };
+
+  for (const key of NOVEL_SOURCES) {
+    const adapter = resolve(key);
+    // Only the chapter source can back a series we could ever read chapters for.
+    if (!adapter || adapter.capability !== 'chapter') continue;
+    for (const seed of seeds) {
+      for (let page = 0; page < pages; page++) {
+        let hits: NovelSeries[] = [];
+        try {
+          hits = await upstream(() => adapter.search({ q: seed, limit: SEARCH_PAGE, offset: page * SEARCH_PAGE })) ?? [];
+        } catch (e) {
+          console.error(`[novel] catalog search failed for "${seed}" on ${key}: ${e}`);
+          break;
+        }
+        for (const hit of hits) {
+          const id = seriesIdFor(key, hit.sourceSeriesId);
+          if (isBlank(hit.title) || id.includes('/')) {
+            console.error(`[novel] unusable catalog hit for "${seed}" (id ${id}) — skipped`);
+            out.skipped++;
+            continue;
+          }
+          if (!ownerFor(env, id).self) {
+            out.skipped++;
+            continue;
+          }
+          const existing = await novel.getSeriesBySlug(id);
+          if (existing) {
+            const patch: Partial<Record<GapColumn, string>> = {};
+            if (hit.coverUrl?.trim()) patch.cover_fallback = hit.coverUrl;
+            if (hit.synopsis?.trim()) patch.synopsis = hit.synopsis;
+            if (hit.author?.trim()) patch.author = hit.author;
+            if (Object.keys(patch).length > 0) {
+              await novel.fillSeriesGaps(id, patch);
+              out.filled++;
+            }
+            continue;
+          }
+          const now = nowSec();
+          await novel.upsertSeries({
+            id,
+            source_series_id: hit.sourceSeriesId,
+            source: key,
+            title: hit.title,
+            author: hit.author ?? null,
+            genre: hit.genres && hit.genres.length > 0 ? JSON.stringify(hit.genres) : null,
+            status: hit.status ?? null,
+            // No cover object yet: the cover pipeline owns cover_ref, and
+            // cover_fallback is the upstream URL the reader falls back to.
+            cover_ref: null,
+            cover_fallback: hit.coverUrl ?? null,
+            synopsis: hit.synopsis ?? null,
+            created_at: now,
+            updated_at: now,
+          });
+          out.inserted++;
+        }
+        if (hits.length < SEARCH_PAGE) break;
+      }
+    }
+  }
+  return out;
 };

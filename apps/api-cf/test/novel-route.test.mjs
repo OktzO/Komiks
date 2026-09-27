@@ -1,6 +1,7 @@
-// Novel route contract — no D1 in tests, a stub records prepare()/bind().
-// Asserted here: paging clamps, the %2F slug guard, the chapter read path
-// touching no upstream, and which shard is allowed to refresh a series.
+// Novel route contract — no D1 in tests, a stub records prepare()/bind() and a
+// stub fetch answers peer forwards. Asserted here: paging clamps, the %2F slug
+// guard, the chapter read path touching no upstream, which shard may refresh a
+// series, and that a series owned by another shard is still readable here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Hono } from 'hono';
@@ -11,24 +12,29 @@ import { app as apiApp } from '../src/index.ts';
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
-const SERIES = {
-  id: 'tekaburu',
-  source_series_id: 'tekaburu',
+const FOUR_PEERS = 'https://w0.test,https://w1.test,https://w2.test,https://w3.test';
+
+const series = (id, over = {}) => ({
+  id,
+  source_series_id: id.replace(/^novelid-/, ''),
   source: 'novelid',
   title: 'Teka Buru',
   author: 'Someone',
   genre: '["Fantasy"]',
   status: 'Ongoing',
-  cover_ref: 'covers/tekaburu.webp',
-  cover_fallback: 'https://img.test/tekaburu.jpg',
+  cover_ref: 'covers/x.webp',
+  cover_fallback: 'https://img.test/x.jpg',
   synopsis: 'A girl wakes in a fantasy world.',
   created_at: 1000,
   updated_at: 2000,
-};
+  ...over,
+});
+
+const SERIES = series('novelid-tekaburu');
 
 const chapter = (over = {}) => ({
-  id: 'tekaburu:tekaburu/1',
-  series_id: 'tekaburu',
+  id: 'novelid-tekaburu:tekaburu/1',
+  series_id: 'novelid-tekaburu',
   source_chapter_id: 'tekaburu/1',
   number: 1,
   title: 'Bab 1',
@@ -39,10 +45,18 @@ const chapter = (over = {}) => ({
   ...over,
 });
 
+// listSeries/listChapters bind (limit, offset[, genre]); getSeriesBySlug and
+// getChapter bind no numbers, which is what the owner-forwarding facade's
+// first() -> all()[0] collapse looks like, so both shapes have to answer.
+const windowOf = (args, total) => {
+  const nums = args.filter((a) => typeof a === 'number');
+  return nums.length === 0 ? { offset: 0, limit: total } : { offset: nums[1] ?? 0, limit: nums[0] };
+};
+
 // `first`/`all` answer by table and by bound args, so one stub serves every read
-// the four routes issue. `fetchLog` counts global fetch calls: a chapter read
-// that reaches an adapter shows up here.
-const stubD1 = ({ series = [], chapters = [] } = {}) => {
+// the four routes issue. It is a single shard's D1: a series that is not in here
+// can only be found by forwarding.
+const stubD1 = ({ series: rows = [], chapters = [] } = {}) => {
   const trace = [];
   const client = {
     prepare(sql) {
@@ -52,8 +66,10 @@ const stubD1 = ({ series = [], chapters = [] } = {}) => {
         rec,
         bind(...args) { rec.args = args; return stmt; },
         async first() {
-          if (sql.includes('COUNT(*)')) return { c: chapters.length };
-          if (sql.includes('FROM novel_series')) return series.find((s) => s.id === rec.args[0]) ?? null;
+          if (sql.includes('COUNT(*)')) {
+            return { c: sql.includes('novel_chapters') ? chapters.length : rows.length };
+          }
+          if (sql.includes('FROM novel_series')) return rows.find((s) => s.id === rec.args[0]) ?? null;
           if (sql.includes('FROM novel_chapters')) {
             const [slug, id] = rec.args;
             return chapters.find((c) => c.series_id === slug && (id === undefined || c.source_chapter_id === id)) ?? null;
@@ -61,11 +77,14 @@ const stubD1 = ({ series = [], chapters = [] } = {}) => {
           return null;
         },
         async all() {
-          if (sql.includes('FROM novel_series')) return { results: series };
+          if (sql.includes('FROM novel_series')) {
+            const { offset, limit } = windowOf(rec.args, rows.length);
+            return { results: rows.slice(offset, offset + limit) };
+          }
           if (sql.includes('FROM novel_chapters')) {
-            const [slug] = rec.args;
-            const [limit, offset] = rec.args.filter((a) => typeof a === 'number');
-            return { results: chapters.filter((c) => c.series_id === slug).slice(offset, offset + limit) };
+            const mine = chapters.filter((c) => c.series_id === rec.args[0]);
+            const { offset, limit } = windowOf(rec.args, mine.length);
+            return { results: mine.slice(offset, offset + limit) };
           }
           return { results: [] };
         },
@@ -84,11 +103,14 @@ const appFor = () => {
   return app;
 };
 
+// One peer by default: ownerFor is then always self, so a read is a local D1 read
+// and the assertions stay about the route rather than about forwarding.
 const envFor = (over = {}) => {
   const store = new Map();
   return {
-    PEER_URLS: 'https://w0.test,https://w1.test,https://w2.test,https://w3.test',
+    PEER_URLS: 'https://w0.test',
     PEER_INDEX: '0',
+    DB_FORWARD_KEY: 'forward-secret',
     CACHE_KV: {
       async get(key, type) {
         const raw = store.get(key);
@@ -100,18 +122,34 @@ const envFor = (over = {}) => {
   };
 };
 
+// Answers /api/_internal/db/query for the listed peer origins, which is how
+// novelShard.ts reaches a shard it does not own. Anything else 500s, which is
+// what makes a missing forward visible as a 404.
+const peerForward = (byOrigin) => (input, init) => {
+  const origin = new URL(String(input)).origin;
+  const body = JSON.parse(init.body);
+  const rows = byOrigin[origin]?.[body.table];
+  if (!rows) return Promise.resolve(new Response('', { status: 500 }));
+  const results = body.sql.includes('COUNT(*)') ? [{ c: rows.length }] : rows;
+  return Promise.resolve(new Response(JSON.stringify({ ok: true, results }), {
+    headers: { 'content-type': 'application/json' },
+  }));
+};
+
 // `app.request` takes the ExecutionContext as its 4th argument, so every
 // waitUntil() the route schedules lands in `pending` and can be awaited.
-// `fetchImpl` lets a test supply a slow upstream; by default every fetch is
-// logged and rejected, which is how a read path that scrapes gets caught.
+// Every fetch is logged: a forward is a fetch too, so `sourceFetches` is what
+// separates "talked to a peer shard" from "scraped an upstream source".
 const call = async (path, env, opts = {}) => {
   const pending = [];
   const fetchLog = [];
   const original = globalThis.fetch;
-  globalThis.fetch = opts.fetchImpl ?? ((input) => {
-    fetchLog.push(String(input));
-    return Promise.reject(new Error('network disabled in tests'));
-  });
+  globalThis.fetch = (input, init) => {
+    fetchLog.push(String(input?.url ?? input));
+    return opts.fetchImpl
+      ? opts.fetchImpl(input, init)
+      : Promise.reject(new Error('network disabled in tests'));
+  };
   const target = opts.app ?? appFor();
   const started = Date.now();
   try {
@@ -121,29 +159,52 @@ const call = async (path, env, opts = {}) => {
     });
     const elapsed = Date.now() - started;
     await Promise.all(pending);
-    return { res, body: await res.json(), fetchLog, elapsed };
+    const log = { fetchLog, sourceFetches: fetchLog.filter((u) => !u.includes('/api/_internal/')) };
+    return { res, body: await res.json(), elapsed, ...log };
   } finally {
     globalThis.fetch = original;
   }
 };
 
+// The first slug whose shard is `want`, so a test states its ownership
+// expectation instead of hard-coding a hash outcome.
+const slugForShard = (want, prefix = 'novel') => {
+  for (let i = 0; i < 2000; i++) {
+    const slug = `${prefix}-${i}`;
+    if (murmur3_32(slug) % 4 === want) return slug;
+  }
+  throw new Error(`no slug for shard ${want}`);
+};
+
 test('catalog clamps limit to 50 and defaults page to 1', async () => {
   const { client, trace } = stubD1({ series: [SERIES] });
-  const { res, body } = await call('/api/novel/catalog?limit=5000', envFor({ DB: client }));
+  const { res, body, fetchLog } = await call('/api/novel/catalog?limit=5000', envFor({ DB: client }));
   assert.equal(res.status, 200);
   assert.equal(body.limit, 50, 'limit is clamped to 50');
   assert.equal(body.page, 1, 'page defaults to 1');
   assert.equal(body.data.length, 1);
+  assert.equal(body.total, 1);
+  assert.deepEqual(fetchLog, [], 'a single-shard deployment forwards nothing');
 
   const listed = trace.filter((r) => r.sql.includes('ORDER BY'));
+  // Every shard is asked for the whole window from offset 0; the page offset is
+  // applied after the merge, so a page is never a per-shard slice.
   assert.deepEqual(listed[0].args.slice(0, 2), [50, 0], 'the clamp is what reaches D1');
 
-  const paged = stubD1({ series: [SERIES] });
-  const second = await call('/api/novel/catalog?page=3&limit=20', envFor({ DB: paged.client }));
-  assert.equal(second.body.page, 3);
-  assert.equal(second.body.limit, 20);
+  // Distinct updated_at so the assertion is about paging, not the id tiebreak.
+  const paged = stubD1({
+    series: [
+      series('a', { updated_at: 300 }),
+      series('b', { updated_at: 200 }),
+      series('c', { updated_at: 100 }),
+    ],
+  });
+  const second = await call('/api/novel/catalog?page=2&limit=1', envFor({ DB: paged.client }));
+  assert.equal(second.body.page, 2);
+  assert.equal(second.body.limit, 1);
+  assert.deepEqual(second.body.data.map((s) => s.id), ['b'], 'the page offset is applied to the merged list');
   const listed2 = paged.trace.filter((r) => r.sql.includes('ORDER BY'));
-  assert.deepEqual(listed2[0].args.slice(0, 2), [20, 40], 'offset = (page - 1) * limit');
+  assert.deepEqual(listed2[0].args.slice(0, 2), [2, 0], 'the window covers offset + limit');
 });
 
 test('catalog binds genre instead of interpolating it', async () => {
@@ -157,9 +218,10 @@ test('catalog binds genre instead of interpolating it', async () => {
 
 test('a slug containing %2F is rejected before any D1 read', async () => {
   const { client, trace } = stubD1({ series: [SERIES] });
-  const { res } = await call('/api/novel/series/novelid%2Ftekaburu', envFor({ DB: client }));
+  const { res, fetchLog } = await call('/api/novel/series/novelid%2Ftekaburu', envFor({ DB: client }));
   assert.equal(res.status, 404);
   assert.equal(trace.length, 0, 'a rejected slug must not resolve to some other series');
+  assert.deepEqual(fetchLog, [], 'and must not be forwarded to a shard');
 
   // Control: %252F decodes to the literal "%2F", which holds no slash, so the
   // same router must reach the row lookup. Without it, the 404 above could just
@@ -172,16 +234,16 @@ test('a slug containing %2F is rejected before any D1 read', async () => {
 
 test('series detail embeds the stored chapters', async () => {
   const { client } = stubD1({ series: [SERIES], chapters: [chapter()] });
-  const { res, body } = await call('/api/novel/series/tekaburu', envFor({ DB: client }));
+  const { res, body } = await call('/api/novel/series/novelid-tekaburu', envFor({ DB: client }));
   assert.equal(res.status, 200);
-  assert.equal(body.data.id, 'tekaburu');
+  assert.equal(body.data.id, 'novelid-tekaburu');
   assert.equal(body.data.chapters.length, 1);
   assert.equal(body.data.chapters[0].source_chapter_id, 'tekaburu/1');
 });
 
 test('chapter read returns stored content without calling any adapter', async () => {
   const { client, trace } = stubD1({ series: [SERIES], chapters: [chapter()] });
-  const { res, body, fetchLog } = await call('/api/novel/series/tekaburu/chapter/tekaburu%2F1', envFor({ DB: client }));
+  const { res, body, fetchLog } = await call('/api/novel/series/novelid-tekaburu/chapter/tekaburu%2F1', envFor({ DB: client }));
   assert.equal(res.status, 200);
   assert.equal(body.data.content, '<p>prose</p>');
   assert.equal(body.data.number, 1);
@@ -190,69 +252,126 @@ test('chapter read returns stored content without calling any adapter', async ()
   assert.deepEqual(fetchLog, [], 'a fresh chapter is served from D1 with no upstream fetch');
   assert.equal(trace.filter((r) => r.sql.includes('FROM novel_series')).length, 0, 'no series row needed for a fresh read');
   const read = trace.find((r) => r.sql.includes('WHERE series_id = ?1 AND source_chapter_id = ?2'));
-  assert.deepEqual(read.args, ['tekaburu', 'tekaburu/1'], 'the composite chapter id is bound whole');
+  assert.deepEqual(read.args, ['novelid-tekaburu', 'tekaburu/1'], 'the composite chapter id is bound whole');
 });
 
 test('an unknown chapter is a 404, not an empty 200', async () => {
   const { client } = stubD1({ series: [SERIES], chapters: [chapter()] });
-  const { res, body } = await call('/api/novel/series/tekaburu/chapter/tekaburu%2F99', envFor({ DB: client }));
+  const { res, body } = await call('/api/novel/series/novelid-tekaburu/chapter/tekaburu%2F99', envFor({ DB: client }));
   assert.equal(res.status, 404);
   assert.ok(body.error, 'the client can tell a miss from an empty chapter');
 });
 
 test('an unknown series chapter is a 404', async () => {
   const { client } = stubD1({ series: [], chapters: [] });
-  const { res } = await call('/api/novel/series/ghost/chapter/ghost%2F1', envFor({ DB: client }));
+  const { res } = await call('/api/novel/series/novelid-ghost/chapter/ghost%2F1', envFor({ DB: client }));
   assert.equal(res.status, 404);
+});
+
+// Acceptance for the owner-forwarding gap: the series was synced to shard 0, the
+// request is served by shard 1, and shard 1's own D1 has never heard of it.
+test('a series owned by another shard is readable from this one', async () => {
+  const slug = slugForShard(0);
+  const row = series(slug);
+  const chap = chapter({ id: `${slug}:x/1`, series_id: slug, source_chapter_id: 'x/1' });
+  // Self is shard 1, the owner is shard 0, and the local D1 is empty.
+  const { client, trace } = stubD1({ series: [], chapters: [] });
+  const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '1' });
+  assert.equal(ownerFor(env, slug).index, 0, 'the series belongs to shard 0');
+
+  const forward = peerForward({
+    'https://w0.test': { novel_series: [row], novel_chapters: [chap] },
+  });
+  const detail = await call(`/api/novel/series/${slug}`, env, { fetchImpl: forward });
+  assert.equal(detail.res.status, 200, 'the owning shard answered');
+  assert.equal(detail.body.data.id, slug);
+  assert.equal(detail.body.data.chapters.length, 1, 'chapters came from the owner too');
+  assert.deepEqual(detail.sourceFetches, [], 'no upstream scrape on a read');
+
+  const read = await call(`/api/novel/series/${slug}/chapter/x%2F1`, env, { fetchImpl: forward });
+  assert.equal(read.res.status, 200);
+  assert.equal(read.body.data.content, '<p>prose</p>');
+  assert.deepEqual(trace, [], 'nothing was read from the local D1 for a series it does not own');
+});
+
+test('the forward names the owning shard and binds the series id', async () => {
+  const slug = slugForShard(0);
+  const env = envFor({ DB: stubD1().client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '1' });
+  const { fetchLog } = await call(`/api/novel/series/${slug}`, env, {
+    fetchImpl: peerForward({ 'https://w0.test': { novel_series: [series(slug)] } }),
+  });
+  const forwards = fetchLog.filter((u) => u.includes('/api/_internal/db/query'));
+  assert.ok(forwards.length > 0, 'the read was forwarded');
+  assert.ok(forwards.every((u) => u.startsWith('https://w0.test')), 'forwarded to the owner, not to a neighbour');
+});
+
+test('a peer that cannot answer falls back to the local D1', async () => {
+  const slug = slugForShard(0);
+  const { client } = stubD1({ series: [series(slug)] });
+  const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '1' });
+  // No forward responder: the peer 500s and the read must still succeed locally.
+  const { res, body } = await call(`/api/novel/series/${slug}`, env);
+  assert.equal(res.status, 200, 'a dead peer must not turn a stored series into a 404');
+  assert.equal(body.data.id, slug);
+});
+
+test('the catalog merges every shard', async () => {
+  const rows = {
+    local: series('novelid-a', { updated_at: 400 }),
+    w1: series('novelid-b', { updated_at: 500 }),
+    w2: series('novelid-c', { updated_at: 300 }),
+    w3: series('novelid-d', { updated_at: 200 }),
+  };
+  const { client } = stubD1({ series: [rows.local] });
+  const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '0' });
+  const { res, body } = await call('/api/novel/catalog', env, {
+    fetchImpl: peerForward({
+      'https://w1.test': { novel_series: [rows.w1] },
+      'https://w2.test': { novel_series: [rows.w2] },
+      'https://w3.test': { novel_series: [rows.w3] },
+    }),
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(body.data.map((s) => s.id), ['novelid-b', 'novelid-a', 'novelid-c', 'novelid-d'],
+    'every shard is represented, ordered by updated_at DESC');
+  assert.equal(body.total, 4, 'total is the sum across shards');
 });
 
 test('only the shard that owns the series refreshes a stale chapter', async () => {
   const staleAt = nowSec() - 90000;
-  // Four slugs, one per shard. Which is self is decided by the same expression
-  // the route must use, so a wrong shard key is a failure, not a coincidence.
-  const byShard = new Map();
-  for (let i = 0; byShard.size < 4; i++) {
-    const slug = `novel-${i}`;
-    const shard = murmur3_32(slug) % 4;
-    if (!byShard.has(shard)) byShard.set(shard, slug);
-  }
-  assert.equal(byShard.size, 4, 'found a slug for every shard');
-
-  for (const [shard, slug] of byShard) {
-    const row = { ...SERIES, id: slug, source_series_id: slug };
+  // Self is always shard 0; the series walks through all four shards, so exactly
+  // one of these requests may scrape.
+  for (let shard = 0; shard < 4; shard++) {
+    const slug = slugForShard(shard);
+    const row = series(slug);
     const { client } = stubD1({
       series: [row],
-      chapters: [chapter({ series_id: slug, source_chapter_id: `${slug}/1`, scraped_at: staleAt })],
+      chapters: [chapter({ id: `${slug}:x/1`, series_id: slug, source_chapter_id: 'x/1', scraped_at: staleAt })],
     });
-    const env = envFor({ DB: client });
-    assert.equal(ownerFor(env, slug).index, shard, 'the test shard expectation matches ownerFor');
-    const { res, body, fetchLog } = await call(`/api/novel/series/${slug}/chapter/${slug}%2F1`, env);
+    const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '0' });
+    assert.equal(ownerFor(env, slug).index, shard, 'the test states the owner it expects');
+    const { res, body, sourceFetches } = await call(`/api/novel/series/${slug}/chapter/x%2F1`, env);
     assert.equal(res.status, 200, `shard ${shard}: a stale chapter is served, not an error`);
     assert.equal(body.data.content, '<p>prose</p>', `shard ${shard}: the stale body still reaches the client`);
     if (shard === 0) {
-      assert.ok(fetchLog.length > 0, 'the owning shard refreshes the stale chapter');
+      assert.ok(sourceFetches.length > 0, 'the owning shard refreshes the stale chapter');
     } else {
-      assert.deepEqual(fetchLog, [], `shard ${shard} does not own ${slug} and must not refresh it`);
+      assert.deepEqual(sourceFetches, [], `shard ${shard} does not own ${slug} and must not refresh it`);
     }
   }
 });
 
 test('a failing refresh is swallowed so the stale body still reaches the client', async () => {
   const staleAt = nowSec() - 90000;
-  let slug = null;
-  for (let i = 0; slug === null && i < 500; i++) {
-    if (murmur3_32(`own-${i}`) % 4 === 0) slug = `own-${i}`;
-  }
-  const row = { ...SERIES, id: slug, source_series_id: slug };
+  const row = series('novelid-stale');
   const { client } = stubD1({
     series: [row],
-    chapters: [chapter({ series_id: slug, source_chapter_id: `${slug}/1`, scraped_at: staleAt })],
+    chapters: [chapter({ series_id: 'novelid-stale', source_chapter_id: 's/1', scraped_at: staleAt })],
   });
-  const env = envFor({ DB: client });
   // A slow, always-failing upstream. Timed rather than inspected, because
   // "scheduled on waitUntil" and "awaited inline" look identical once the
   // harness drains the pending promises — only the latency tells them apart.
-  const { res, body, elapsed } = await call(`/api/novel/series/${slug}/chapter/${slug}%2F1`, env, {
+  const { res, body, elapsed } = await call('/api/novel/series/novelid-stale/chapter/s%2F1', envFor({ DB: client }), {
     fetchImpl: () => new Promise((_, reject) => { setTimeout(() => reject(new Error('offline')), 400); }),
   });
   assert.equal(res.status, 200, 'a failed refresh is not a failed read');

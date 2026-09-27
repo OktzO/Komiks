@@ -4,8 +4,15 @@
 // at all. Those are the parts that silently corrupt stored content.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { murmur3_32 } from '@manga-platform/shared/r2-routing';
 import { sha256Hex } from '../src/lib/context.ts';
-import { fillMetadataGaps, refreshSeries, refreshStaleSeries } from '../src/lib/novelIngest.ts';
+import {
+  fillMetadataGaps,
+  refreshSeries,
+  refreshStaleSeries,
+  seriesIdFor,
+  syncCatalog,
+} from '../src/lib/novelIngest.ts';
 
 const SERIES = {
   id: 'tekaburu',
@@ -83,10 +90,14 @@ const chapterAdapter = (bodies, over = {}) => stubAdapter({
   ...over,
 });
 
-// `rows` answers every read; `listStale` feeds the stale-series listing, which
-// honours the bound LIMIT the way D1 does.
-const stubD1 = ({ listStale } = {}) => {
+// `listStale` feeds the stale-series listing, which honours the bound LIMIT the
+// way D1 does. `existing` is a series row that is already stored, so an upsert
+// path can be told apart from an insert path.
+const stubD1 = ({ listStale, existing = null } = {}) => {
   const trace = [];
+  // Ids this stub has been asked to insert, so a re-sync sees the row a previous
+  // upsert would have created instead of inserting it again.
+  const written = new Set(existing ? [existing.id] : []);
   const client = {
     prepare(sql) {
       const rec = { sql, args: [] };
@@ -94,17 +105,27 @@ const stubD1 = ({ listStale } = {}) => {
       const stmt = {
         rec,
         bind(...args) { rec.args = args; return stmt; },
-        async first() { return { c: 0 }; },
+        async first() {
+          if (existing && sql.includes('FROM novel_series') && rec.args[0] === existing.id) return existing;
+          if (written.has(rec.args[0])) return { id: rec.args[0] };
+          return null;
+        },
         async all() {
           if (!listStale) return { results: [] };
           // listStaleSeries binds (cutoff, limit) — the limit is the last arg.
           return { results: listStale.slice(0, rec.args.at(-1)) };
         },
-        async run() { return { success: true, meta: {} }; },
+        async run() {
+          if (sql.includes('INSERT INTO novel_series')) written.add(rec.args[0]);
+          return { success: true, meta: {} };
+        },
       };
       return stmt;
     },
-    async batch(stmts) { return stmts.map(() => ({ success: true, meta: {} })); },
+    async batch(stmts) {
+      for (const st of stmts) if (st.rec.sql.includes('INSERT INTO novel_series')) written.add(st.rec.args[0]);
+      return stmts.map(() => ({ success: true, meta: {} }));
+    },
   };
   return { client, trace };
 };
@@ -283,4 +304,165 @@ test('a row whose source has no adapter is skipped, not fatal', async () => {
   const count = await refreshStaleSeries(envFor(client), 86400, 5, () => null);
   assert.equal(count, 0);
   assert.equal(inserted(trace).length, 0);
+});
+
+// ── catalog sync ────────────────────────────────────────────────────────────
+// The catalog starts empty, so syncCatalog is the only thing that ever creates a
+// series row. It is discovery: search + upsert, never a chapter body.
+const catalogHit = (over = {}) => ({
+  sourceSeriesId: 'halal-tapi-asing',
+  source: 'novelid',
+  title: 'Halal Tapi Asing',
+  slug: 'halal-tapi-asing',
+  genres: ['Fantasi', 'Romance'],
+  coverUrl: 'https://img.test/halal.jpg',
+  ...over,
+});
+
+// Search is paged by offset, so the responder counts calls per seed.
+const catalogAdapter = (pages) => {
+  const calls = [];
+  const adapter = stubAdapter({
+    sourceKey: 'novelid',
+    capability: 'chapter',
+    getChapterContent: () => { throw new Error('the catalog sync must not fetch chapters'); },
+  });
+  adapter.search = async (params) => {
+    calls.push(params);
+    return pages[Math.floor(params.offset / 18)] ?? [];
+  };
+  return { adapter, calls };
+};
+
+// Only novelid is chapter-capable, so the resolver answers for that key alone —
+// the sync walks every source in the registry.
+const onlyNovelId = (adapter) => (key) => (key === 'novelid' ? adapter : null);
+
+const onePeer = (over = {}) => ({ PEER_URLS: 'https://w0.test', PEER_INDEX: '0', ...over });
+const fourPeers = (over = {}) => ({
+  PEER_URLS: 'https://w0.test,https://w1.test,https://w2.test,https://w3.test',
+  PEER_INDEX: '0',
+  ...over,
+});
+
+test('syncCatalog creates series with single-segment ids and never fetches chapters', async () => {
+  const { client, trace } = stubD1();
+  const { adapter, calls } = catalogAdapter({ 0: [catalogHit()] });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['fantasi'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+
+  assert.equal(res.inserted, 1);
+  assert.deepEqual(calls.map((c) => c.offset), [0], 'one search page for one seed');
+  const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
+  assert.equal(row.args[0], 'novelid-halal-tapi-asing', 'the id is source-prefixed and single-segment');
+  assert.ok(!row.args[0].includes('/'), 'a slash in the id would be unroutable');
+  assert.equal(row.args[1], 'halal-tapi-asing');
+  assert.equal(row.args[2], 'novelid');
+  assert.equal(row.args[3], 'Halal Tapi Asing');
+  assert.equal(row.args[5], '["Fantasi","Romance"]', 'genres are stored as the JSON array the filter LIKE-matches');
+  assert.equal(row.args[7], null, 'cover_ref is left to the cover pipeline');
+  assert.equal(row.args[8], 'https://img.test/halal.jpg', 'the upstream cover lands in cover_fallback');
+  assert.deepEqual(adapter.calls.filter(([m]) => m === 'getChapterContent'), []);
+});
+
+test('seriesIdFor is the routing id, and the sync refuses an unroutable one', async () => {
+  assert.equal(seriesIdFor('novelid', 'halal-tapi-asing'), 'novelid-halal-tapi-asing');
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: 'nested/slug' })] });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  assert.equal(res.inserted, 0);
+  assert.equal(res.skipped, 1, 'an id with a separator can never be read back, so it is dropped');
+  assert.equal(trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).length, 0);
+});
+
+test('syncCatalog pages through the search window and stops on a short page', async () => {
+  const { client } = stubD1();
+  const full = Array.from({ length: 18 }, (_, i) => catalogHit({ sourceSeriesId: `s${i}` }));
+  const { adapter, calls } = catalogAdapter({ 0: full, 1: full, 2: [catalogHit({ sourceSeriesId: 'tail' })] });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, {
+    seeds: ['fantasi'],
+    pagesPerSeed: 3,
+    resolve: onlyNovelId(adapter),
+  });
+  assert.deepEqual(calls.map((c) => c.offset), [0, 18, 36], 'the window advances by a full page');
+  assert.equal(res.inserted, 19, '18 unique, then 1 from the short page that ends the walk');
+});
+
+test('syncCatalog only writes the series this shard owns', async () => {
+  // source_series_id, so the stored id is `novelid-<this>` — the hash key is the
+  // stored id, not the upstream one.
+  const mine = [];
+  for (let i = 0; mine.length < 2; i++) {
+    if (murmur3_32(`novelid-own-${i}`) % 4 === 0) mine.push(`own-${i}`);
+  }
+  const hits = [
+    ...mine.map((id) => catalogHit({ sourceSeriesId: id })),
+    catalogHit({ sourceSeriesId: 'not-mine' }),
+  ];
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: hits });
+  const res = await syncCatalog({ ...fourPeers(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  assert.equal(res.inserted, mine.length, 'two of the three belong to shard 0');
+  assert.deepEqual(
+    trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).map((r) => r.args[0]),
+    mine.map((id) => `novelid-${id}`),
+    'the four D1s partition the catalogue'
+  );
+  assert.equal(murmur3_32('novelid-not-mine') % 4 !== 0, true, 'the third id is owned elsewhere');
+});
+
+test('a re-sync gap-fills an existing series instead of overwriting it', async () => {
+  const stored = {
+    ...SERIES,
+    id: 'novelid-halal-tapi-asing',
+    source_series_id: 'halal-tapi-asing',
+    // A tier-2 fill that a naive upsert would wipe: search hits carry no synopsis.
+    synopsis: 'Filled by tier 2',
+    author: 'Nobody',
+    cover_fallback: null,
+  };
+  const { client, trace } = stubD1({ existing: stored });
+  const { adapter } = catalogAdapter({ 0: [catalogHit()] });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+
+  assert.equal(res.inserted, 0);
+  assert.equal(res.filled, 1);
+  assert.equal(trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).length, 0, 'no re-upsert');
+  const update = trace.find((r) => r.sql.startsWith('UPDATE novel_series SET cover_fallback'));
+  assert.ok(update, 'the cover was filled through fillSeriesGaps');
+  assert.doesNotMatch(update.sql, /synopsis|author/, 'a populated column is not written');
+  assert.deepEqual(update.args, ['https://img.test/halal.jpg', stored.id]);
+});
+
+test('a metadata source is never crawled for the catalogue', async () => {
+  const { client, trace } = stubD1();
+  const calls = [];
+  const metadata = stubAdapter({ sourceKey: 'gooddreamer', capability: 'metadata' });
+  const original = metadata.search;
+  metadata.search = async (p) => { calls.push(p); return original(p); };
+  const res = await syncCatalog({ ...onePeer(), DB: client }, {
+    seeds: ['x'],
+    pagesPerSeed: 1,
+    resolve: (key) => (key === 'novelid' ? null : metadata),
+  });
+  assert.deepEqual(calls, [], 'only a chapter source can back a series we could read chapters for');
+  assert.equal(res.inserted, 0);
+  assert.equal(trace.length, 0);
+});
+
+test('a failing search ends that seed without losing the rest', async () => {
+  const { client } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit()] });
+  const attempted = [];
+  adapter.search = async (params) => {
+    attempted.push(params.q);
+    if (params.q === 'a') throw new Error('upstream 500');
+    return [catalogHit()];
+  };
+  const res = await syncCatalog({ ...onePeer(), DB: client }, {
+    seeds: ['a', 'b'],
+    pagesPerSeed: 1,
+    resolve: onlyNovelId(adapter),
+  });
+  assert.deepEqual(attempted, ['a', 'a', 'b'], 'the failing seed is retried once, then the walk continues');
+  assert.equal(res.inserted, 1, 'the second seed still landed');
 });

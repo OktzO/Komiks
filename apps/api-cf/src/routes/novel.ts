@@ -1,22 +1,25 @@
 import { Hono } from 'hono';
-import { novelDb } from '@manga-platform/db';
+import type { NovelSeriesRow } from '@manga-platform/db';
 import { NOVEL_SOURCES, getNovelAdapter } from '@manga-platform/sources/novel';
 import type { NovelSourceAdapter } from '@manga-platform/sources/novel';
 import { Env, json } from '../lib/context';
 import type { Context } from '../lib/context';
 import { ownerFor } from '../lib/peers';
 import { fillMetadataGaps, hasMetadataGap, refreshSeries } from '../lib/novelIngest';
+import { novelDbFor, novelDbOn, peerUrls } from '../lib/novelShard';
 
 export const router = new Hono<{ Bindings: Env }>();
 
 const MAX_LIMIT = 50;
+// ponytail: a shard list is read per page and the db layer clamps any window to
+// 100, so the merged catalogue is only complete to ~4x100 rows. Raise the window
+// (with a keyset cursor instead of OFFSET) when the library outgrows that.
+const MERGE_WINDOW = 100;
 const STALE_SEC = 86400;
 // ponytail: the detail payload embeds only the first page. Raise it, or drop the
 // field and make the web client page /novel/series/:slug/chapters, once real
 // series turn out to have chapter lists the reader must page through.
 const DETAIL_CHAPTERS = 50;
-
-const novelOf = (c: Context) => novelDb(c.env.DB);
 
 const metadataAdapters = (): NovelSourceAdapter[] =>
   NOVEL_SOURCES
@@ -56,23 +59,36 @@ const readThrough = async <T>(
   return fresh;
 };
 
+// listSeries already orders by updated_at DESC, id DESC; the merge has to restore
+// that order because the shards answer independently.
+const byNewest = (a: NovelSeriesRow, b: NovelSeriesRow): number =>
+  b.updated_at - a.updated_at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+
 router.get('/novel/catalog', async (c) => {
   const genre = c.req.query('genre') ?? undefined;
   const page = pageOf(c.req.query('page'), 1);
   const limit = limitOf(c.req.query('limit'));
-  const payload = await readThrough(
-    c,
-    `novel:catalog:${genre ?? ''}:${page}:${limit}`,
-    600,
-    async () => {
-      const novel = novelOf(c);
-      const [data, total] = await Promise.all([
-        novel.listSeries({ genre, limit, offset: (page - 1) * limit }),
-        novel.countSeries(genre),
-      ]);
-      return { data, page, limit, total };
-    }
-  );
+  const offset = (page - 1) * limit;
+
+  const payload = await readThrough(c, `novel:catalog:${genre ?? ''}:${page}:${limit}`, 600, async () => {
+    // The catalogue shards by series, so it has no single owner: every shard's
+    // window is merged here, otherwise a worker would list only its own quarter.
+    const shards = ['', ...peerUrls(c.env)].map((url) => novelDbOn(c.env, url));
+    const window = Math.min(MERGE_WINDOW, offset + limit);
+    const [rows, counts] = await Promise.all([
+      Promise.all(shards.map((db) => db.listSeries({ genre, limit: window, offset: 0 }))),
+      Promise.all(shards.map((db) => db.countSeries(genre))),
+    ]);
+    const seen = new Set<string>();
+    const merged = rows.flat().filter((s) => (seen.has(s.id) ? false : (seen.add(s.id), true)));
+    merged.sort(byNewest);
+    return {
+      data: merged.slice(offset, offset + limit),
+      page,
+      limit,
+      total: counts.reduce((sum, n) => sum + n, 0),
+    };
+  });
   c.header('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=1800');
   return json(c, payload);
 });
@@ -82,14 +98,15 @@ router.get('/novel/series/:slug', async (c) => {
   if (!isPlainSlug(slug)) return json(c, { error: 'Series not found' }, 404);
 
   const data = await readThrough(c, `novel:series:${slug}`, 600, async () => {
-    const novel = novelOf(c);
+    const novel = novelDbFor(c.env, slug);
     const series = await novel.getSeriesBySlug(slug);
     if (!series) return null;
     return { ...series, chapters: await novel.listChapters(slug, { limit: DETAIL_CHAPTERS, offset: 0 }) };
   });
   if (!data) return json(c, { error: 'Series not found' }, 404);
 
-  if (hasMetadataGap(data)) {
+  // Gap fill writes to the local D1, so only the owning shard may run it.
+  if (ownerFor(c.env, slug).self && hasMetadataGap(data)) {
     c.executionCtx.waitUntil(
       fillMetadataGaps(c.env, data, metadataAdapters())
         .catch((e) => console.error(`[novel] metadata gap fill failed for ${slug}: ${e}`))
@@ -104,11 +121,12 @@ router.get('/novel/series/:slug/chapters', async (c) => {
   if (!isPlainSlug(slug)) return json(c, { error: 'Series not found' }, 404);
   const page = pageOf(c.req.query('page'), 1);
   const limit = limitOf(c.req.query('limit'));
+  const offset = (page - 1) * limit;
 
   const payload = await readThrough(c, `novel:chapters:${slug}:${page}:${limit}`, 600, async () => {
-    const novel = novelOf(c);
+    const novel = novelDbFor(c.env, slug);
     const [data, total] = await Promise.all([
-      novel.listChapters(slug, { limit, offset: (page - 1) * limit }),
+      novel.listChapters(slug, { limit, offset }),
       novel.countChapters(slug),
     ]);
     return { data, total };
@@ -122,7 +140,7 @@ router.get('/novel/series/:slug/chapter/:chapterId', async (c) => {
   if (!isPlainSlug(slug)) return json(c, { error: 'Series not found' }, 404);
   const chapterId = c.req.param('chapterId');
 
-  const novel = novelOf(c);
+  const novel = novelDbFor(c.env, slug);
   const chapter = await novel.getChapter(slug, chapterId);
   if (!chapter) return json(c, { error: 'Chapter not found' }, 404);
 
@@ -139,7 +157,7 @@ router.get('/novel/series/:slug/chapter/:chapterId', async (c) => {
   );
 
   // Never scraped inline: a stale body is served now and refreshed after the
-  // response, and only by the shard that owns the series.
+  // response. Only the owning shard refreshes, and only into its own D1.
   if (Math.floor(Date.now() / 1000) - chapter.scraped_at >= STALE_SEC && ownerFor(c.env, slug).self) {
     c.executionCtx.waitUntil(
       (async () => {

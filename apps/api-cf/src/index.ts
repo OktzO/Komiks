@@ -26,7 +26,7 @@ import { router as authRouter } from './routes/auth';
 import { router as userRouter } from './routes/user';
 import { router as internalRouter } from './routes/internal';
 import { evictStaleStorage, cleanupTempObjects } from './lib/storageEviction';
-import { refreshStaleSeries } from './lib/novelIngest';
+import { refreshStaleSeries, syncCatalog } from './lib/novelIngest';
 import { getB2Usage } from './lib/b2Usage';
 import { writeWithFallback, flushOutbox } from './lib/dbWrite';
 import { fetchHomepageFromSources } from './routes/homepage';
@@ -157,9 +157,25 @@ export default {
     const run = async () => {
       const outbox = await flushOutbox(env as Env).catch(() => ({ flushed: 0, pending: -1 }));
       console.log(`[cron] outbox flushed: ${outbox.flushed} (pending ${outbox.pending})`);
-      // Novel chapter refresh runs on every worker, ahead of the EVICTION_OWNER
-      // gate below: each shard owns a slice of the catalogue, so gating it on a
-      // single owner would starve the other three.
+      // Novel discovery and chapter refresh run on every worker, ahead of the
+      // EVICTION_OWNER gate below: each shard owns a slice of the catalogue, so
+      // gating this on a single owner would starve the other three.
+      try {
+        // 12h catalogue sync (same KV-timestamp guard as the homepage feed). The
+        // catalogue is otherwise born empty and stays empty — nothing else
+        // creates a series.
+        const lastSync = await env.CACHE_KV.get('novel:catalog:last_sync').catch(() => null);
+        const lastSyncMs = lastSync ? parseInt(lastSync, 10) : 0;
+        if (Date.now() - lastSyncMs > 12 * 60 * 60 * 1000) {
+          const res = await syncCatalog(env);
+          console.log(
+            `[cron] novel catalog synced: ${res.inserted} new, ${res.filled} gap-filled, ${res.skipped} skipped`
+          );
+          await env.CACHE_KV.put('novel:catalog:last_sync', String(Date.now()), { expirationTtl: 43200 }).catch(() => {});
+        }
+      } catch (e) {
+        console.error('[cron] novel catalog sync failed:', e);
+      }
       try {
         const refreshed = await refreshStaleSeries(env as Env, 86400, 20);
         console.log(`[cron] novel series refreshed: ${refreshed}`);

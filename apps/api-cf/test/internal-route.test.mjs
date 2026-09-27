@@ -76,6 +76,39 @@ test('db/query returns rows for SELECT on allowlisted table', async () => {
   assert.equal(j.results[0].page_number, 1);
 });
 
+// The novel tables shard by series, so lib/novelShard.ts forwards reads here.
+// Without these two names on the allowlist every cross-shard novel read is a 403
+// and the series is unreadable outside its owner.
+for (const [table, sql] of [
+  ['novel_series', 'SELECT id, title FROM novel_series WHERE id = ?1 LIMIT 1'],
+  ['novel_chapters', 'SELECT id, content FROM novel_chapters WHERE series_id = ?1 AND source_chapter_id = ?2 LIMIT 1'],
+]) {
+  test(`db/query accepts a forwarded novel read on ${table}`, async () => {
+    const res = await app.request('/api/_internal/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-db-forward-key': 'sekret' },
+      body: JSON.stringify({ sql, params: ['x', 'y'], table }),
+    }, stubEnv());
+    assert.equal(res.status, 200, `${table} must be forwardable`);
+    const j = await res.json();
+    assert.equal(j.results.length, 1);
+  });
+}
+
+test('the novel allowlist entries do not open up writes or other tables', async () => {
+  const post = (sql, table) => app.request('/api/_internal/db/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-db-forward-key': 'sekret' },
+    body: JSON.stringify({ sql, params: [], table }),
+  }, stubEnv());
+  // Same novel table, write shape.
+  assert.equal((await post('DELETE FROM novel_chapters', 'novel_chapters')).status, 403);
+  // novel table named, but the FROM is a table that is not allowlisted.
+  assert.equal((await post('SELECT id FROM users', 'novel_series')).status, 403);
+  // A table nobody added.
+  assert.equal((await post('SELECT id FROM novel_paragraphs', 'novel_paragraphs')).status, 403);
+});
+
 test('kv/get rejects non-allowlisted key prefix', async () => {
   const res = await app.request('/api/_internal/kv/get?key=secret:data', {
     headers: { 'x-db-forward-key': 'sekret' },
