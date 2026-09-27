@@ -77,8 +77,10 @@ test('prev/next come from the stored rows, gaps and all', () => {
   // Ends of a gapped list have one neighbour, not a phantom ±1.
   assert.deepEqual(neighbourChapters(rows, 1), { prev: null, next: { number: 2, source_chapter_id: 's/2' } });
   assert.deepEqual(neighbourChapters(rows, 100), { prev: { number: 99, source_chapter_id: 's/99' }, next: null });
-  // A chapter that is not in the list yet: both links off, never a guess.
-  assert.deepEqual(neighbourChapters(rows, 55), { prev: { number: 40, source_chapter_id: 's/40' }, next: { number: 61, source_chapter_id: 's/61' } });
+  // A chapter that is not among the rows: both links off. This assertion used
+  // to expect 40/61 here, which is the round-2 residual — absence from the rows
+  // in hand is not evidence about the list, so a "neighbour" is a guess.
+  assert.deepEqual(neighbourChapters(rows, 55), { prev: null, next: null });
   assert.deepEqual(neighbourChapters(rows, null), { prev: null, next: null });
   assert.deepEqual(neighbourChapters([], 5), { prev: null, next: null });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getNovelChapter, getNovelChapters, type NovelChapter, type NovelChapterBody } from '@/lib/api';
-import { chapterNumberOf, chapterPageWalk, neighbourChapters, novelChapterUrl, sanitizeNovelHtml } from '@/lib/novelRoutes';
+import { chapterNumberOf, chapterPageWalk, neighbourChapters, novelChapterUrl, sanitizeNovelHtml, type ChapterPageWalk } from '@/lib/novelRoutes';
 
 // Text reader for prose. Deliberately not a variant of Reader.tsx: that one
 // reserves image aspect ratios to fight CLS, which is meaningless here — the
@@ -60,14 +60,13 @@ export function NovelReader({
 }) {
   const [body, setBody] = useState<Body | null>(initial);
   const [failed, setFailed] = useState(false);
-  const [siblings, setSiblings] = useState<NovelChapter[]>([]);
+  const [walk, setWalk] = useState<ChapterPageWalk<NovelChapter> | null>(null);
   const [prefs, setPrefs] = useState<Prefs>({ fontSize: 17, lineHeight: 1.7 });
   const [panelOpen, setPanelOpen] = useState(false);
   const [chromeHidden, setChromeHidden] = useState(false);
   const ratioRef = useRef(0);
   const lastSavedAt = useRef(0);
 
-  const chapterNumber = body?.number ?? chapterNumberProp ?? chapterNumberOf(chapterId);
   const chapterTitle = body?.title ?? chapterTitleProp;
   const progressKey = `${slug}/${chapterId}`;
 
@@ -92,7 +91,8 @@ export function NovelReader({
   // number. Ingest drops every chapter whose body fetch failed, so numbering has
   // gaps and a list page is a row-offset window: for a novel with chapters
   // 1-10 and 101-200, chapter 150 sits on page 2, while ceil(150 / 50) says 3.
-  // The walk is bounded — see chapterPageWalk for what a longer series gets.
+  // A walk that stops on its row budget returns a prefix, not the list, so its
+  // reason gates the links — a wrong neighbour is worse than no neighbour.
   useEffect(() => {
     let alive = true;
     chapterPageWalk(
@@ -100,14 +100,17 @@ export function NovelReader({
       chapterId,
       { limit: LIMIT, maxPages: NEIGHBOUR_PAGES },
     )
-      .then((rows) => { if (alive) setSiblings(rows); })
+      .then((walk) => { if (alive) setWalk(walk); })
       .catch(() => {});
     return () => { alive = false; };
   }, [slug, chapterId]);
 
+  const chapterNumber = body?.number ?? chapterNumberProp ?? chapterNumberOf(chapterId);
   const { prev, next } = useMemo(
-    () => neighbourChapters(siblings, body?.number ?? chapterNumberProp ?? chapterNumberOf(chapterId)),
-    [siblings, body?.number, chapterNumberProp, chapterId],
+    () => (walk?.reason === 'end'
+      ? neighbourChapters(walk.rows, chapterNumber)
+      : { prev: null, next: null }),
+    [walk, chapterNumber],
   );
 
   const saveProgress = (ratio: number, force = false) => {

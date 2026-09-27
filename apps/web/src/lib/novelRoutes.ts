@@ -66,12 +66,21 @@ export const chapterNumberOf = (chapterId: string): number | null => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
-/** Row windows are ordered by `number`, so the neighbours are simply the rows either side. */
+/**
+ * The rows either side of `number`, or nothing at all.
+ *
+ * Absence from `chapters` means there is no neighbour to link to, and both links
+ * come back null: whether the row set is the complete list (the chapter is not
+ * stored) or only a prefix (we have not read that far), inventing a neighbour
+ * from whatever rows happen to be in hand is the bug this function exists to
+ * avoid. A wrong link is worse than no link.
+ */
 export const neighbourChapters = <T extends { number: number }>(
   chapters: T[],
   number: number | null,
 ): { prev: T | null; next: T | null } => {
   if (number === null || chapters.length === 0) return { prev: null, next: null };
+  if (!chapters.some((c) => c.number === number)) return { prev: null, next: null };
   const ordered = [...chapters].sort((a, b) => a.number - b.number);
   return {
     prev: ordered.filter((c) => c.number < number).pop() ?? null,
@@ -80,8 +89,21 @@ export const neighbourChapters = <T extends { number: number }>(
 };
 
 /**
+ * Why the walk stopped.
+ *
+ * `end` — the chapter list is exhausted (a short page came back), so `rows` is
+ * the complete list and the neighbours can be trusted.
+ * `budget` — the walk ran out of pages, so `rows` is only a prefix. The current
+ * chapter may be far outside it, and any "neighbour" derived from a prefix is a
+ * guess. The caller must not render links on this.
+ */
+export type ChapterPageWalkReason = 'end' | 'budget';
+
+export type ChapterPageWalk<T> = { rows: T[]; reason: ChapterPageWalkReason };
+
+/**
  * Walk chapter pages until `chapterId` turns up plus enough rows to give it both
- * neighbours, and return every row collected.
+ * neighbours, and report why the walk stopped.
  *
  * The walk is driven by the rows that came back, never by the chapter number:
  * ingest drops every chapter whose body fetch failed or came back blank, so the
@@ -89,34 +111,45 @@ export const neighbourChapters = <T extends { number: number }>(
  * than a number range. For chapters 1-10 and 101-200, chapter 150 is on page 2
  * while `ceil(150 / 50)` says 3.
  *
- * `maxPages` bounds it. Past the bound the caller gets a row set that does not
- * contain the current chapter, so the reader leaves its prev/next links off
- * rather than risk pointing at the wrong one.
+ * `maxPages` is a row budget, not a guess about the series. Exceeding it is a
+ * `budget` stop, and the reader renders no links at all — see `neighbourChapters`.
  */
 export const chapterPageWalk = async <T extends { source_chapter_id: string }>(
   fetchPage: (page: number) => Promise<T[]>,
   chapterId: string,
   { limit, maxPages }: { limit: number; maxPages: number },
-): Promise<T[]> => {
+): Promise<ChapterPageWalk<T>> => {
   const collected: T[] = [];
   let needNextPage = false;
+  // Anything other than exhausting `maxPages` proves the list is the whole list.
+  let reason: ChapterPageWalkReason = 'budget';
   for (let page = 1; page <= maxPages; page++) {
     const rows = await fetchPage(page);
-    if (rows.length === 0) break;
+    if (rows.length === 0) {
+      reason = 'end';
+      break;
+    }
     const at = rows.findIndex((c) => c.source_chapter_id === chapterId);
     collected.push(...rows);
     if (at !== -1) {
       // Not the last row: its successor is already in hand, and every earlier
       // row is behind it in `collected`, so both links are covered.
-      if (at < rows.length - 1) break;
+      if (at < rows.length - 1) {
+        reason = 'end';
+        break;
+      }
       needNextPage = true; // last row of the window — the successor is next
     } else if (needNextPage) {
+      reason = 'end';
       break;
     }
     // A short window is the end of the list, whatever the chapter looks like.
-    if (rows.length < limit) break;
+    if (rows.length < limit) {
+      reason = 'end';
+      break;
+    }
   }
-  return collected;
+  return { rows: collected, reason };
 };
 
 /** genre arrives as a JSON array string; anything else is not a tag list, so `[]`. */
