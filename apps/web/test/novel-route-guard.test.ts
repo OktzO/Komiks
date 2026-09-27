@@ -173,6 +173,26 @@ test('sanitiser strips comments and unclosed script bodies', () => {
   assert.equal(sanitizeNovelHtml('<p>a</p><img src=x><p>b</p>'), '<p>a</p><p>b</p>');
 });
 
+// The discard boundary is indexed in `src.toLowerCase()` coordinates while the
+// walk advances through `src`, and toLowerCase is not length-preserving. That
+// makes the boundary inexact on a page containing a character like İ, so this
+// pins the direction the inexactness is allowed to err in: over-swallow, never
+// under-swallow. If someone "fixes" the coordinate mismatch, this must still
+// hold — an escaped </script> surviving as live markup is the failure it exists
+// to prevent.
+test('a case-folding character near a discard tag still swallows, never leaks', () => {
+  for (const html of [
+    '<p>a</p><script>x</script>İ<p>b</p>',
+    'İ<script>x</script><p>b</p>',
+    '<p>İİİ</p><script>x</script>İ<p>b</p>',
+    '<style>.x{}</style>İİ<p>b</p>',
+  ]) {
+    const out = sanitizeNovelHtml(html);
+    assert.ok(!/<script|<style/i.test(out), `leaked a discarded tag: ${html}`);
+    assert.ok(!/x</.test(out), `leaked the discarded body: ${html}`);
+  }
+});
+
 test('sanitiser decodes entities once and re-escapes exactly once', () => {
   assert.equal(sanitizeNovelHtml('<p>a &amp; b &nbsp;c &mdash; d</p>'), '<p>a &amp; b  c — d</p>');
   // Pre-encoded markup stays literal text, it is never re-interpreted.

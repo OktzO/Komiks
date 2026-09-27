@@ -255,6 +255,14 @@ export const sanitizeNovelHtml = (input: string | null | undefined): string => {
     } else if (DISCARD_TAGS.has(tag)) {
       if (closing) continue;
       // Unclosed → swallow the remainder. Failing closed is the safe direction.
+      //
+      // The index is taken in `lower`'s coordinates while `i` walks `src`, and
+      // toLowerCase is not length-preserving (İ U+0130 → 2 chars). So the end
+      // index is computed in a different coordinate space than the slice: on a
+      // pathological page the boundary can be off by a character or two. The
+      // error direction is safe — it over-swallows and never under-swallows, so
+      // no tag boundary is ever missed and an escaped </script> stays inert
+      // text. The cost is content loss on such a page, not XSS.
       const end = lower.indexOf(`</${tag}`, i);
       i = end === -1 ? src.length : end;
     }
