@@ -208,7 +208,7 @@ Then edit the file down to the `<div class="watch-chapter-detail">…</div>` reg
 - The result contains **no** `<style`, `<script`, or `css` token.
 - `buildChapterUrl('halal-tapi-asing', 1)` === `https://novelid.org/novel/halal-tapi-asing/bab/1/`.
 - `buildSeriesUrl('halal-tapi-asing')` === `https://novelid.org/novel/halal-tapi-asing/`.
-- `buildChapterSourceId('https://novelid.org/novel/x/bab/12/')` === `'12'`.
+- `buildChapterSourceId('https://novelid.org/novel/x/bab/12/')` === `'x/12'` (composite; the bare bab number is `buildBabNumber`, which cannot address a page on its own).
 - `stripCoverQuery('https://novelid.org/uploads/a.jpg?resize=139,184')` === `'https://novelid.org/uploads/a.jpg'`.
 - Given HTML with no `watch-chapter-detail` div, `parseChapterHtml` returns `null` — not an empty string, not the CSS preamble.
 
