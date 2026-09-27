@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPeers, ownerFor, backupOwnerFor, getTopology, fetchPeerInventory, internalExec, internalQuery, peerKvGet } from '../src/lib/peers.ts';
+import { getPeers, ownerFor, backupOwnerFor, getTopology, fetchPeerInventory, internalExec, internalExecCounted, internalQuery, peerKvGet } from '../src/lib/peers.ts';
 import { peerInventoryFixture } from './helpers/inventory-fixture.mjs';
 import { ResourceStatus, ResourceSource } from '@manga-platform/shared/types';
 
@@ -143,13 +143,12 @@ test('internalExec POSTs to /api/_internal/db/exec with forward key', async () =
     calls.push({ url, init });
     return new Response(JSON.stringify({ ok: true, changes: 3 }), { status: 200 });
   };
-  const res = await internalExec(env(), 'https://b.example.com', {
-    sql: 'INSERT INTO chapter_pages ...', params: [1], table: 'chapter_pages',
-  });
-  assert.equal(res.ok, true);
-  // The owner's own row count, so a caller can tell a write that matched a row
-  // from one that reached the wrong shard and matched nothing.
-  assert.equal(res.changes, 3);
+  assert.equal(
+    await internalExec(env(), 'https://b.example.com', {
+      sql: 'INSERT INTO chapter_pages ...', params: [1], table: 'chapter_pages',
+    }),
+    true
+  );
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://b.example.com/api/_internal/db/exec');
   assert.equal(calls[0].init.method, 'POST');
@@ -159,24 +158,53 @@ test('internalExec POSTs to /api/_internal/db/exec with forward key', async () =
   delete globalThis.fetch;
 });
 
-test('internalExec reports a 2xx write that changed nothing as ok with 0 changes', async () => {
-  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, target: 'local', changes: 0 }), { status: 200 });
-  const res = await internalExec(env(), 'https://b.example.com', {
-    sql: 'UPDATE novel_series SET author = ?1 WHERE id = ?2', params: ['x', 'y'], table: 'novel_series',
-  });
-  assert.deepEqual(res, { ok: true, changes: 0 });
+// The return type IS the contract, and 6fe6f18 broke it. Widening internalExec
+// from `boolean` to `{ ok, changes }` for one caller made every other caller's
+// `if (!ok)` dead — an object is always truthy — so a failed forward reported
+// success with no local write and no outbox retry, at six call sites, and both
+// `tsc` and the suite stayed green. Pinned per outcome, as a boolean.
+test('internalExec answers a boolean, because the fallback depends on it being falsy', async () => {
+  const payload = { sql: 'UPDATE chapter_pages SET r2_key = ?1', params: ['k'], table: 'chapter_pages' };
+  const cases = [
+    ['a 2xx write that changed a row', () => new Response(JSON.stringify({ ok: true, changes: 3 }), { status: 200 }), true],
+    ['a 2xx write that matched nothing', () => new Response(JSON.stringify({ ok: true, changes: 0 }), { status: 200 }), true],
+    ['a non-2xx', () => new Response('{}', { status: 500 }), false],
+    ['an unreachable peer', () => Promise.reject(new Error('connection refused')), false],
+  ];
+  for (const [label, fetchImpl, expected] of cases) {
+    globalThis.fetch = async () => (typeof fetchImpl === 'function' ? fetchImpl() : fetchImpl);
+    const res = await internalExec(env(), 'https://b.example.com', payload);
+    assert.equal(typeof res, 'boolean', `${label}: expected a boolean, got ${typeof res}`);
+    assert.equal(res, expected, label);
+    // The mistake a call site makes is reaching for `.ok`. On the boolean
+    // contract that is undefined, so it can never be mistaken for success.
+    assert.equal(res.ok, undefined, label);
+  }
   delete globalThis.fetch;
 });
 
-test('internalExec returns ok:false without key or peer', async () => {
+test('internalExec is false without a key or without a peer', async () => {
+  const payload = { sql: '', params: [], table: 'chapter_pages' };
+  assert.equal(await internalExec(env({ DB_FORWARD_KEY: undefined }), 'https://b.example.com', payload), false);
+  assert.equal(await internalExec(env(), '', payload), false);
+});
+
+// The row count has exactly one caller, and it has to ask for it by name.
+test('internalExecCounted is the opt-in that carries the owner\'s row count', async () => {
+  const payload = { sql: 'UPDATE novel_series SET author = ?1 WHERE id = ?2', params: ['x', 'y'], table: 'novel_series' };
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, target: 'local', changes: 3 }), { status: 200 });
+  assert.deepEqual(await internalExecCounted(env(), 'https://b.example.com', payload), { ok: true, changes: 3 });
+  // 0 changes on a 2xx is the signal that the write reached a shard holding no
+  // such row — forwarded, and matched nothing.
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true, target: 'local', changes: 0 }), { status: 200 });
+  assert.deepEqual(await internalExecCounted(env(), 'https://b.example.com', payload), { ok: true, changes: 0 });
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  assert.deepEqual(await internalExecCounted(env(), 'https://b.example.com', payload), { ok: false, changes: 0 });
   assert.deepEqual(
-    await internalExec(env({ DB_FORWARD_KEY: undefined }), 'https://b.example.com', { sql: '', params: [], table: 'chapter_pages' }),
-    { ok: false, changes: 0 },
+    await internalExecCounted(env({ DB_FORWARD_KEY: undefined }), 'https://b.example.com', payload),
+    { ok: false, changes: 0 }
   );
-  assert.deepEqual(
-    await internalExec(env(), '', { sql: '', params: [], table: 'chapter_pages' }),
-    { ok: false, changes: 0 },
-  );
+  delete globalThis.fetch;
 });
 
 test('internalQuery returns rows on 200', async () => {

@@ -227,7 +227,7 @@ export const flushOutbox = async (env: Env, limit = 50): Promise<{ flushed: numb
         await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
         continue;
       }
-      const { ok } = await internalExec(env, row.owner_url, { sql: row.sql, params, table: row.table_name });
+      const ok = await internalExec(env, row.owner_url, { sql: row.sql, params, table: row.table_name });
       if (ok) {
         await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
         flushed++;

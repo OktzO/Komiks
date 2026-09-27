@@ -155,10 +155,28 @@ const forwardKey = (env: Env): string | undefined => env.DB_FORWARD_KEY as strin
 
 // Write-forward to a peer worker's internal /db/exec. Reports false on
 // missing key, missing peer, or non-2xx (caller falls back to local).
-// `changes` is the owner's own row count: a forwarded UPDATE that matched
-// nothing on the owner still answers 2xx with ok:true, so without it a write
-// aimed at the wrong shard is indistinguishable from one that landed.
+//
+// The return type is a plain boolean and has to stay one. Every caller is
+// `const ok = await internalExec(...); if (!ok) { local write; enqueue outbox }`,
+// and a result object is always truthy — so widening this to
+// `{ ok, changes }` for one caller turned that check into dead code at every
+// caller that was not updated, and a failed forward reported success with no
+// local write and no retry. `tsc` cannot see it (`!someObject` is legal) and no
+// test covered the fallback, so it shipped. A caller that needs the owner's row
+// count asks for it by name via `internalExecCounted` instead, which keeps the
+// always-truthy shape out of the shared helper.
 export const internalExec = async (
+  env: Env,
+  peerUrl: string,
+  payload: { sql: string; params: unknown[]; table: string }
+): Promise<boolean> => (await internalExecCounted(env, peerUrl, payload)).ok;
+
+/** `internalExec` plus the owner's own row count, for the one caller that has to
+ *  tell "forwarded and matched a row" from "forwarded and matched nothing": a
+ *  write aimed at the wrong shard still answers 2xx, so without the count the
+ *  two are indistinguishable. See `internalExec` for why this is a second
+ *  function rather than a wider return type. */
+export const internalExecCounted = async (
   env: Env,
   peerUrl: string,
   payload: { sql: string; params: unknown[]; table: string }

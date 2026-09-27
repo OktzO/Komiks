@@ -4,7 +4,7 @@ import { NOVEL_SOURCES, getNovelAdapter } from '@manga-platform/sources/novel';
 import type { NovelAdapterEnv, NovelSeries, NovelSourceAdapter } from '@manga-platform/sources/novel';
 import type { Env } from './context';
 import { sha256Hex } from './context';
-import { internalExec, ownerFor } from './peers';
+import { internalExecCounted, ownerFor } from './peers';
 import { novelDbFor } from './novelShard';
 import { enqueueOutbox } from './dbWrite';
 import { uploadNovelCover } from './novelCover';
@@ -49,8 +49,12 @@ export const seriesIdFor = (source: string, sourceSeriesId: string): string =>
 /** What tier-2 is allowed to fill — the three columns spec §6.2 names. */
 type GapColumn = 'cover_fallback' | 'synopsis' | 'author';
 /** The tier-1 series page also carries `status`, which no search card and no
- *  tier-2 source has. */
-type DetailColumn = GapColumn | 'status';
+ *  tier-2 source has. Exported as data because routes/internal.ts derives the
+ *  /db/exec allowlist for novel_series from every column list FILL_GAPS_SQL can
+ *  be called with, and a hand-kept copy of the vocabulary there would rot into
+ *  either rejecting the ingest's own writes or accepting more than they are. */
+export const NOVEL_DETAIL_COLUMNS = ['cover_fallback', 'synopsis', 'author', 'status'] as const;
+export type DetailColumn = (typeof NOVEL_DETAIL_COLUMNS)[number];
 
 /** A blank tier-1 column is the only thing tier-2 is allowed to fill. The
  *  cover is a gap only when neither cover_ref nor cover_fallback is set —
@@ -413,14 +417,14 @@ const writeOwned = async (
     if (res === null) return { ok: false, changes: 0 };
     return { ok: res.success, changes: res.meta?.changes ?? 0 };
   }
-  const forwarded = await internalExec(env, owner.url, { sql, params, table: 'novel_series' }).catch(() => null);
+  const forwarded = await internalExecCounted(env, owner.url, { sql, params, table: 'novel_series' }).catch(() => null);
   if (forwarded?.ok) return forwarded;
   // A failed forward is not a failed write: the outbox is the retry path, so the
   // row is expected to land even though no owner has confirmed a row count.
   return enqueueOutbox(env, owner.url, 'novel_series', sql, params).then((ok) => ({ ok, changes: ok ? 1 : 0 }));
 };
 
-const UPSERT_SERIES_SQL =
+export const UPSERT_SERIES_SQL =
   'INSERT INTO novel_series (id, source_series_id, source, title, author, genre, status, cover_ref, cover_fallback, synopsis, created_at, updated_at)'
   + ' VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)'
   + ' ON CONFLICT(source, source_series_id) DO UPDATE SET'
@@ -437,7 +441,7 @@ const UPSERT_SERIES_SQL =
   + ' synopsis = COALESCE(NULLIF(excluded.synopsis, \'\'), novel_series.synopsis),'
   + ' updated_at = excluded.updated_at';
 
-const FILL_GAPS_SQL = (cols: DetailColumn[]): string =>
+export const FILL_GAPS_SQL = (cols: DetailColumn[]): string =>
   `UPDATE novel_series SET ${cols.map((c, i) => `${c} = COALESCE(NULLIF(${c}, ''), ?${i + 1})`).join(', ')}`
   + ` WHERE id = ?${cols.length + 1}`;
 
