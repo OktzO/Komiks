@@ -154,10 +154,6 @@ router.get('/novel/series/:slug/chapter/:chapterId', async (c) => {
     content: chapter.content,
     scraped_at: chapter.scraped_at,
   };
-  c.executionCtx.waitUntil(
-    c.env.CACHE_KV.put(`novel:chapter:${slug}:${chapterId}`, JSON.stringify(data), { expirationTtl: 300 })
-      .catch(() => {})
-  );
 
   // Never scraped inline: a stale body is served now and refreshed after the
   // response. Only the owning shard refreshes, and only into its own D1.

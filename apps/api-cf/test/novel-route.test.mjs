@@ -113,17 +113,20 @@ const appFor = () => {
 // and the assertions stay about the route rather than about forwarding.
 const envFor = (over = {}) => {
   const store = new Map();
+  const kv = {
+    puts: [],
+    async get(key, type) {
+      const raw = store.get(key);
+      return raw === undefined ? null : (type === 'json' ? JSON.parse(raw) : raw);
+    },
+    async put(key, value) { kv.puts.push(key); store.set(key, value); },
+    async delete(key) { store.delete(key); },
+  };
   return {
     PEER_URLS: 'https://w0.test',
     PEER_INDEX: '0',
     DB_FORWARD_KEY: 'forward-secret',
-    CACHE_KV: {
-      async get(key, type) {
-        const raw = store.get(key);
-        return raw === undefined ? null : (type === 'json' ? JSON.parse(raw) : raw);
-      },
-      async put(key, value) { store.set(key, value); },
-    },
+    CACHE_KV: kv,
     ...over,
   };
 };
@@ -428,6 +431,16 @@ test('a failing refresh is swallowed so the stale body still reaches the client'
 
 // Registration in index.ts is otherwise unverified: a wrong mount prefix or a
 // missed app.route() leaves every route above green and every URL 404.
+test('a chapter read writes no KV entry at all', async () => {
+  // The write was ~20KB of prose per read, against a 1000/day free-tier budget,
+  // for a key nothing in the repo ever read.
+  const { client } = stubD1({ series: [SERIES], chapters: [chapter()] });
+  const env = envFor({ DB: client });
+  const { res } = await call('/api/novel/series/novelid-tekaburu/chapter/tekaburu%2F1', env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(env.CACHE_KV.puts, [], 'a read must not spend a KV write');
+});
+
 test('the router is mounted on the real app under /api/novel', async () => {
   const { client } = stubD1({ series: [SERIES] });
   const { res, body } = await call('/api/novel/catalog?limit=9999', envFor({ DB: client }), { app: apiApp });
