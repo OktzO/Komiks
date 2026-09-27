@@ -46,7 +46,9 @@ test('db/exec rejects without forward key', async () => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sql: 'SELECT 1', params: [], table: 'chapter_pages' }),
   }, stubEnv());
-  assert.equal(res.status, 401);
+  // 403, not 401: this surface has no browser-facing login to point at, and
+  // /db/query, /kv/get and /admin/inventory all answer 403 for a bad key.
+  assert.equal(res.status, 403);
 });
 
 test('db/exec rejects DROP/ALTER/TRUNCATE on allowlisted table', async () => {
