@@ -628,7 +628,7 @@ test('a complete series is not re-fetched on a later tick', async () => {
   await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
   assert.deepEqual(adapter.calls.filter(([m]) => m === 'getSeries'), [], 'nothing is missing, so no detail fetch');
   const update = trace.find((r) => r.sql.startsWith('UPDATE novel_series SET cover_fallback'));
-  assert.doesNotMatch(update?.sql ?? '', /author = |status = |synopsis = /, 'only the cover column the card still has');
+  assert.equal(update, undefined, 'and no write: a column the card still carries but the owner already has is not a gap');
 });
 
 test('a failing getSeries still inserts the series from the search card', async () => {
@@ -877,6 +877,57 @@ test('a gap fill for a series this shard owns is never routed by the patch value
   }
 });
 
+test('a gap fill is routed by the series id, not by the patch value bound first', async () => {
+  const elsewhere = shardOf('fill-owner');
+  const id = `novelid-${elsewhere}`;
+  const ownerIndex = murmur3_32(id) % 4;
+  const author = valueOnOtherShard(id, 'Pengarang');
+  assert.notEqual(murmur3_32(author) % 4, ownerIndex, 'the patch value hashes to a different shard');
+
+  const { client } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: elsewhere })] });
+  const { forwarded, restore } = capturingPeers({
+    ownerRows: {
+      [id]: { ...SERIES, id, source_series_id: elsewhere, source: 'novelid', author: null, synopsis: null, cover_fallback: null },
+    },
+  });
+  try {
+    await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+  } finally {
+    restore();
+  }
+  assert.equal(forwarded.length, 1, 'the fill is the one forwarded write');
+  assert.ok(forwarded[0].url.startsWith(`https://w${ownerIndex}.test/`), 'it went to the shard that owns the series id');
+  assert.ok(forwarded[0].body.sql.startsWith('UPDATE novel_series SET'), 'and it is a fill, not an upsert');
+  assert.equal(forwarded[0].body.params.at(-1), id, 'the id is the WHERE parameter');
+});
+
+test('a fill that reached a shard holding no such row is not counted as filled', async () => {
+  const elsewhere = shardOf('fill-miss');
+  const id = `novelid-${elsewhere}`;
+  const { client } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: elsewhere })] });
+  // changes: 0 is what the owner reports for an UPDATE that matched nothing.
+  const { forwarded, restore } = capturingPeers({
+    execChanges: 0,
+    ownerRows: {
+      [id]: { ...SERIES, id, source_series_id: elsewhere, source: 'novelid', author: null, synopsis: null, cover_fallback: null },
+    },
+  });
+  try {
+    const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+    assert.equal(forwarded.length, 1, 'the write was still attempted');
+    assert.equal(res.filled, 0, 'but a fill that changed no row is not a fill');
+    assert.equal(res.inserted, 0);
+  } finally {
+    restore();
+  }
+});
+
 test('a series this shard owns still goes straight to the local D1', async () => {
 
   const mine = [];
@@ -923,6 +974,111 @@ test('a re-sync gap-fills an existing series instead of overwriting it', async (
   assert.ok(update, 'the cover was filled through fillSeriesGaps');
   assert.doesNotMatch(update.sql, /synopsis|author/, 'a populated column is not written');
   assert.deepEqual(update.args, ['https://img.test/halal.jpg', stored.id]);
+});
+
+// A row the crawler does not own used to be invisible to it, so every 12-hour
+// tick re-ran the INSERT path for it: the B2 cover was uploaded again, and a
+// failed getSeries wrote the search card's nulls over the author and synopsis
+// tier-2 had filled. The pre-INSERT read goes to the owner, and a detail update
+// never clobbers a populated column.
+const b2AccountEnv = (over = {}) => ({
+  B2_ACCOUNTS: JSON.stringify([
+    { name: 'b1', bucket: 'manga-images', keyId: 'k1', appKey: 'a1', region: 'us-east-005', host: 's3.us-east-005.backblazeb2.com' },
+  ]),
+  ...over,
+});
+
+const storedOnPeer = (elsewhere, over = {}) => ({
+  ...SERIES,
+  id: `novelid-${elsewhere}`,
+  source_series_id: elsewhere,
+  source: 'novelid',
+  cover_ref: null,
+  cover_fallback: null,
+  ...over,
+});
+
+test('a row already on the owner is gap-filled, not re-upserted, on a failing getSeries', async () => {
+  const elsewhere = shardOf('owner-row');
+  const id = `novelid-${elsewhere}`;
+  const stored = storedOnPeer(elsewhere, {
+    author: 'Nobody',
+    synopsis: 'Filled by tier 2',
+    status: 'Ongoing',
+    cover_ref: 'novel/covers/' + id,
+    cover_fallback: 'https://i2.wp.com/novelid.org/uploads/halal.webp',
+  });
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: elsewhere, coverUrl: 'https://i2.wp.com/novelid.org/uploads/thumb.webp' })] }, {
+    seriesThrows: new Error('novelid getSeries: 500'),
+  });
+  const { client: kvClient } = { client };
+  const { forwarded, queries, coverUploads, restore } = capturingPeers({    ownerRows: { [id]: stored },
+    serveCover: true,
+  });
+  try {
+    const res = await syncCatalog({
+      ...fourPeers(), ...b2AccountEnv(), DB: client, CACHE_KV: envFor(kvClient).env.CACHE_KV,
+      DB_FORWARD_KEY: 'forward-secret',
+    }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+    assert.equal(res.inserted, 0, 'the row already exists on the owner');
+    assert.equal(queries.length, 1, 'and this shard asked the owner, not its own D1');
+    assert.equal(queries[0].params[0], id);
+    assert.deepEqual(forwarded, [], 'nothing to write: the owner already has a cover, an author and a synopsis');
+    assert.deepEqual(coverUploads, [], 'the cover is not uploaded again every 12 hours');
+  } finally {
+    restore();
+  }
+  assert.equal(
+    trace.filter((r) => r.sql.includes('INSERT INTO novel_series')).length,
+    0,
+    'the ON CONFLICT path is never reached',
+  );
+});
+
+test('a partial owner row is filled with a COALESCE update that writes no null over a populated column', async () => {
+  const elsewhere = shardOf('owner-partial');
+  const id = `novelid-${elsewhere}`;
+  const stored = storedOnPeer(elsewhere, {
+    author: 'Nobody',
+    synopsis: 'Filled by tier 2',
+    status: null,
+  });
+  const { client } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit({ sourceSeriesId: elsewhere })] }, {
+    seriesThrows: new Error('novelid getSeries: 500'),
+  });
+  const { forwarded, restore } = capturingPeers({ ownerRows: { [id]: stored } });
+  try {
+    const res = await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter),
+    });
+    assert.equal(res.inserted, 0);
+    assert.equal(forwarded.length, 1);
+    const sql = forwarded[0].body.sql;
+    assert.ok(sql.startsWith('UPDATE novel_series SET'), 'a fill, not an upsert: ' + sql);
+    assert.doesNotMatch(sql, /author = |synopsis = /, 'the two tier-2 fills are not in the SET list at all');
+    assert.match(sql, /cover_fallback = COALESCE\(NULLIF\(cover_fallback, ''\), \?1\)/);
+    assert.equal(forwarded[0].body.params.at(-1), id);
+  } finally {
+    restore();
+  }
+});
+
+test('an upsert that does reach a shard holding the row still cannot null a populated column', async () => {
+  // The owner read is the first line of defence; this is the one that holds when
+  // it fails and the row only turns up at INSERT time.
+  const { client, trace } = stubD1();
+  const { adapter } = catalogAdapter({ 0: [catalogHit()] }, { seriesThrows: new Error('novelid getSeries: 500') });
+  await syncCatalog({ ...onePeer(), DB: client }, { seeds: ['x'], pagesPerSeed: 1, resolve: onlyNovelId(adapter) });
+  const row = trace.find((r) => r.sql.includes('INSERT INTO novel_series'));
+  for (const col of ['author', 'genre', 'status', 'cover_ref', 'cover_fallback', 'synopsis']) {
+    assert.match(
+      row.sql,
+      new RegExp(`${col} = COALESCE\\(NULLIF\\(excluded\\.${col}, ''\\), novel_series\\.${col}\\)`),
+      `${col} must not be overwritten with the incoming null`,
+    );
+  }
 });
 
 test('a metadata source is never crawled for the catalogue', async () => {

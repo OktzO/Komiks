@@ -5,6 +5,7 @@ import type { NovelAdapterEnv, NovelSeries, NovelSourceAdapter } from '@manga-pl
 import type { Env } from './context';
 import { sha256Hex } from './context';
 import { internalExec, ownerFor } from './peers';
+import { novelDbFor } from './novelShard';
 import { enqueueOutbox } from './dbWrite';
 import { uploadNovelCover } from './novelCover';
 import { retryUpstream } from './retry';
@@ -384,8 +385,17 @@ const UPSERT_SERIES_SQL =
   'INSERT INTO novel_series (id, source_series_id, source, title, author, genre, status, cover_ref, cover_fallback, synopsis, created_at, updated_at)'
   + ' VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)'
   + ' ON CONFLICT(source, source_series_id) DO UPDATE SET'
-  + ' title = excluded.title, author = excluded.author, genre = excluded.genre, status = excluded.status,'
-  + ' cover_ref = excluded.cover_ref, cover_fallback = excluded.cover_fallback, synopsis = excluded.synopsis,'
+  + ' title = excluded.title,'
+  // Same discipline as fillSeriesGaps: the search card carries no synopsis and a
+  // failed getSeries carries no author or status, so an unguarded upsert writes
+  // those nulls over whatever tier-2 filled. The pre-INSERT owner read is the
+  // first line of defence; this is the one that holds when that read fails.
+  + ' author = COALESCE(NULLIF(excluded.author, \'\'), novel_series.author),'
+  + ' genre = COALESCE(NULLIF(excluded.genre, \'\'), novel_series.genre),'
+  + ' status = COALESCE(NULLIF(excluded.status, \'\'), novel_series.status),'
+  + ' cover_ref = COALESCE(NULLIF(excluded.cover_ref, \'\'), novel_series.cover_ref),'
+  + ' cover_fallback = COALESCE(NULLIF(excluded.cover_fallback, \'\'), novel_series.cover_fallback),'
+  + ' synopsis = COALESCE(NULLIF(excluded.synopsis, \'\'), novel_series.synopsis),'
   + ' updated_at = excluded.updated_at';
 
 const FILL_GAPS_SQL = (cols: DetailColumn[]): string =>
@@ -421,9 +431,13 @@ const fetchDetail = async (
  * null author, a null status and no synopsis for good. It is called once per row
  * that is still missing them, never on a row that is already complete.
  *
- * An existing row is only ever gap-filled, never re-upserted: `upsertSeries`
- * overwrites author/synopsis/cover_fallback on conflict, so re-syncing from a
- * search payload (which carries no synopsis) would wipe what tier-2 filled in.
+ * An existing row is only ever gap-filled, never re-upserted. A search payload
+ * carries no synopsis and a failed `getSeries` carries no author or status, so
+ * re-syncing from one would wipe what tier-2 filled in. Two things hold that
+ * line, and neither is trusted alone: the pre-INSERT read asks the owner, so a
+ * row this shard does not own is still recognised as existing; and the upsert's
+ * own conflict clause cannot write a null over a populated column, so the line
+ * survives a read that failed.
  */
 export const syncCatalog = async (
   env: Env,
@@ -458,18 +472,23 @@ export const syncCatalog = async (
             out.skipped++;
             continue;
           }
-          const owner = ownerFor(env, id);
           // Whether the row already exists is the owner's business, not this
-          // shard's: only the owner D1 can answer, so a forwarded write asks it.
-          const existing = owner.self ? await novelDb(env.DB).getSeriesBySlug(id) : null;
+          // shard's, so the read goes through novelDbFor — the local D1 when
+          // this shard owns the row, the owner's read-forward when it does not.
+          // Reading locally only made a peer-owned row look absent on every
+          // tick, which sent the same series down the INSERT path forever: the
+          // B2 cover was re-uploaded every 12 hours, and a failed getSeries
+          // re-upserted the search card's nulls over tier-2's fills.
+          const existing = await novelDbFor(env, id).getSeriesBySlug(id);
           if (existing) {
             // The search card is the weaker source, so it only fills what the
-            // series page did not supply.
+            // series page did not supply — and only the columns the owner still
+            // has blank, so a complete row costs no write at all.
             const patch: Partial<Record<DetailColumn, string>> = {
               ...patchFrom(hit),
               ...patchFrom(needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null),
             };
-            const cols = (Object.keys(patch) as DetailColumn[]).filter((c) => patch[c] !== undefined);
+            const cols = (Object.keys(patch) as DetailColumn[]).filter((c) => patch[c] !== undefined && isBlank(existing[c]));
             if (
               cols.length > 0
               && (await writeOwned(env, id, FILL_GAPS_SQL(cols), [...cols.map((c) => patch[c] as string), id])).changes > 0
