@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  NOVELID_SEARCH_PAGE_SIZE,
   buildBabNumber,
   buildChapterSourceId,
   buildChapterUrl,
@@ -115,6 +116,18 @@ test('parseChapterListHtml against the real series page fixture', () => {
   assert.equal(episodes[29].number, 30);
   // Upstream emits a doubled slash; the stored href must be usable as-is.
   assert.equal(episodes[1].href, 'https://novelid.org/novel/halal-tapi-asing/bab/2/');
+});
+
+test('the search fixture holds exactly one upstream page of cards', () => {
+  // NOVELID_SEARCH_PAGE_SIZE is hardcoded at 18 because novelid serves fixed
+  // 18-card search pages, and the adapter converts an offset into a page number
+  // with it. If upstream changes the page size, the offset -> page mapping is
+  // wrong and search silently returns the wrong window rather than failing, so
+  // the committed fixture has to disagree loudly.
+  const cards = searchFixture.match(/class='genre-item-box'/g) ?? [];
+  assert.equal(cards.length, NOVELID_SEARCH_PAGE_SIZE);
+  // And the constant is what the adapter actually divides by.
+  assert.equal(parseSearchHtml(searchFixture).length, NOVELID_SEARCH_PAGE_SIZE);
 });
 
 test('parseSearchHtml against the real search page fixture', () => {

@@ -44,6 +44,15 @@ const RULES = [
     re: /GOCSPX-[A-Za-z0-9_-]{20,}/g,
   },
   {
+    // AIza is the other credential the same Google console hands out — the one
+    // this gate exists for, since a Google OAuth secret reached README.md — and
+    // this repo does Google sign-in. The length bound keeps the bare prefix in
+    // prose out while still catching every real key (39 chars, `-` and `_`
+    // allowed).
+    name: 'google-api-key',
+    re: /AIza[0-9A-Za-z_-]{30,}/g,
+  },
+  {
     // ponytail: covers legacy sk-<48> and sk-proj-…. The lookbehind must exclude
     // '-' as well as alnum, or a hyphenated slug like risk-sk-<32> matches.
     // Ceiling is one vendor's key family per entry; widen only when one lands

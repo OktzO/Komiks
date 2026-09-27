@@ -43,6 +43,23 @@ test('flags a Google OAuth client secret', () => {
   assert.deepEqual(rulesOf(text), ['google-oauth-client-secret']);
 });
 
+test('flags a Google API key', () => {
+  // The same console that issued the GOCSPX secret that reached README.md also
+  // issues these, and this repo does Google sign-in. AIza is a Google-only
+  // prefix, so the shape alone carries the signal — the length bound keeps
+  // `AIzaSomethingElse` in prose out.
+  for (const text of [
+    'GOOGLE_MAPS_KEY=AIzaSyD-1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVw\n', // noqa:secretscan
+    '{ "apiKey": "AIzaSyD-1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVw" }\n', // noqa:secretscan
+    'AIzaSyD-1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVw\n', // noqa:secretscan
+  ]) {
+    assert.deepEqual(rulesOf(text), ['google-api-key'], text);
+  }
+  // Too short to be a real key, and the word alone is prose.
+  assert.deepEqual(rulesOf('AIzaSyShort\n'), []);
+  assert.deepEqual(rulesOf('The AIza prefix is what to look for.\n'), []);
+});
+
 test('flags a generic sk- key', () => {
   const text = 'export OPENAI_KEY=sk-Ab3dEf6hIj9lMn2pQr4sTv7wXy0zAcDeFgHiJkLmNoPqRsTu\n'; // noqa:secretscan
   assert.deepEqual(rulesOf(text), ['sk-key']);
