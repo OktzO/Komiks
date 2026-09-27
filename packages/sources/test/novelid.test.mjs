@@ -137,19 +137,57 @@ test('parseSearchHtml against the real search page fixture', () => {
   assert.ok(items[0].title.length > 0);
   // Search cards carry `href` before `class`; a split on the class name drops it.
   assert.ok(items.every((i) => i.slug && i.title));
-  assert.ok(items.every((i) => !i.coverUrl || !i.coverUrl.includes('?')), 'cover query stripped');
+});
+
+// A novelid search card has no cover image. Its only <img> is the author avatar
+// in div.genre-item-image, which is why the first-<img-src> rule shipped an
+// author's portrait as every catalogue row's cover_fallback. The real cover is
+// a background-image on the series page, which parseSeriesHtml already reads, so
+// the search side has to emit nothing and let syncCatalog's
+// `detail?.coverUrl ?? hit.coverUrl` chain resolve to it.
+test('a novelid search card yields no coverUrl, because its only image is the author avatar', () => {
+  const items = parseSearchHtml(searchFixture);
+  assert.equal(items.length, 18);
+  // The trap is still present in the fixture: an <img src> in every card, and it
+  // is an avatar. A future parser that re-adds a card-image rule has to fail
+  // here rather than pass because the fixture lost the trap.
+  const cardImages = [...searchFixture.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)]
+    .map((m) => m[1])
+    .filter((src) => src.includes('/uploads/author/'));
+  assert.equal(cardImages.length, 18, 'fixture still carries 18 author-avatar images');
+  assert.deepEqual(
+    items.map((i) => i.coverUrl),
+    items.map(() => undefined),
+    'no card supplies a cover, so syncCatalog resolves detail?.coverUrl first'
+  );
+});
+
+test('adapter.search reports no coverUrl, so syncCatalog falls through to the series page', async () => {
+  const adapter = novelidAdapter();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(searchFixture, { status: 200 });
+  try {
+    const hits = await adapter.search({ q: 'a', limit: 18 });
+    assert.equal(hits.length, 18);
+    assert.ok(
+      hits.every((s) => !s.coverUrl),
+      'search hits carry no cover, so `detail?.coverUrl ?? hit.coverUrl` takes the series page'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('parseSearchHtml skips the commented-out label the live cards ship', () => {
   const html = `<a href='/novel/x' class='genre-item-box'><div class='genre-content-item'>
-    <div class='genre-item-image'><img src='https://novelid.org/uploads/a.jpg?resize=120,160'></div>
+    <div class='genre-item-image'><img src='https://i2.wp.com/novelid.org/uploads/author/7/2026/01/a.webp?resize=120,160'></div>
     <div class='genre-item-info'><p class='genre-item-title'>Judul Asli</p>
     <!--          <p class='genre-item-label'>Fantasy</p>-->
     <div class='genre-label'> <span class='genre-item-label'> Religi </span> </div></div></div></a>`;
   const items = parseSearchHtml(html);
   assert.equal(items.length, 1);
   assert.equal(items[0].title, 'Judul Asli');
-  assert.equal(items[0].coverUrl, 'https://novelid.org/uploads/a.jpg');
+  assert.equal(items[0].coverUrl, undefined, 'an avatar in genre-item-image is not a cover');
   assert.equal(items[0].genre, 'Religi');
 });
 

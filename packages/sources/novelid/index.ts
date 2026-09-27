@@ -56,7 +56,9 @@ export const novelidAdapter = (env?: NovelidEnv) => {
         title: item.title,
         slug: item.slug,
         genres: item.genre ? [item.genre] : undefined,
-        coverUrl: item.coverUrl,
+        // No coverUrl: a novelid search card's only image is the author avatar
+        // (see parseSearchHtml), so emitting one would put a portrait of the
+        // author on the catalogue card. The series page carries the real cover.
       }));
     },
 

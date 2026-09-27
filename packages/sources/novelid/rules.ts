@@ -21,7 +21,6 @@ export const NOVELID_PATTERNS = {
   detailAuthor: /<p\b[^>]*\bclass\s*=\s*["'][^"']*\bweb-author\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i,
   detailSynopsis: /<p\b[^>]*\bclass\s*=\s*["'][^"']*\bdetail-desc-info\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i,
   detailCover: /style\s*=\s*["'][^"']*background-image\s*:\s*url\(([^)"']+)["']?[^>]*>/i,
-  coverImage: /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/i,
   episodeItemTitle: /episode-item-title[^>]*>\s*([^<]*)</i,
   genreTitle: /genre-item-title[^>]*>\s*([^<]*)</i,
   genreLabel: /genre-item-label[^>]*>\s*([^<]*)</i,
@@ -141,10 +140,20 @@ const absolute = (href: string): string =>
 export interface ParsedNovelidSearchItem {
   slug: string;
   title: string;
-  coverUrl: string | null;
   genre: string | null;
 }
 
+/**
+ * A novelid search card has no cover, so it emits none.
+ *
+ * The single `<img>` a `genre-item-box` card carries sits in
+ * `div.genre-item-image` and points at `/uploads/author/…` — the author's
+ * avatar, not the book. Reading it as a cover shipped a portrait of the author
+ * on every catalogue card. The real cover is a `background-image` on the series
+ * page, which `parseSeriesHtml` reads via `detailCover`; emitting nothing here
+ * is what lets `syncCatalog`'s `detail?.coverUrl ?? hit.coverUrl` chain reach
+ * it.
+ */
 export const parseSearchHtml = (html: string): ParsedNovelidSearchItem[] => {
   const items: ParsedNovelidSearchItem[] = [];
   for (const m of html.matchAll(NOVELID_CARDS.search)) {
@@ -155,7 +164,6 @@ export const parseSearchHtml = (html: string): ParsedNovelidSearchItem[] => {
     items.push({
       slug,
       title,
-      coverUrl: stripCoverQuery(NOVELID_PATTERNS.coverImage.exec(m[1])?.[1]),
       genre: cardText(NOVELID_PATTERNS.genreLabel, m[1]) || null,
     });
   }
