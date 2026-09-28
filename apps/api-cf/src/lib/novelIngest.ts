@@ -7,6 +7,7 @@ import { sha256Hex } from './context';
 import { internalExecCounted, ownerFor } from './peers';
 import { novelDbFor } from './novelShard';
 import { enqueueOutbox } from './dbWrite';
+import { CRON_STEP_BUDGETS } from './cronBudget';
 import { uploadNovelCover } from './novelCover';
 import { retryUpstream } from './retry';
 
@@ -148,14 +149,21 @@ export const fillMetadataGaps = async (
  * `content_hash` guard would happily record the change.
  */
 
-/** Subrequests the cron invocation may spend on chapter bodies.
+/** Subrequests this step of the cron may spend on chapter bodies.
  *
- *  The Workers free plan allows 50 per invocation and this pass shares one with
- *  the outbox flush and the eviction sweep, so 44 is what is left. A paid plan
- *  allows 1000 — raise NOVEL_REFRESH_BUDGET for it, not the window alone,
- *  because the window is clamped to what one visit can spend inside the budget.
+ *  One share of the invocation's 50, alongside the outbox flush, the catalogue
+ *  crawl, the eviction sweep and the homepage feed — see cronBudget.ts. The
+ *  previous 44 was "the cap minus the outbox", which left nothing for the steps
+ *  scheduled after this one. A paid plan allows 1000 — raise
+ *  NOVEL_REFRESH_BUDGET for it, not the window alone, because the window is
+ *  clamped to what one visit can spend inside the budget.
  */
-export const REFRESH_SUBREQUEST_BUDGET = 44;
+export const REFRESH_SUBREQUEST_BUDGET = CRON_STEP_BUDGETS.refresh;
+
+/** Subrequests the catalogue crawl may spend, from the same plan. The crawl and
+ *  the refresh run in one invocation on the elected crawler, so the crawl cannot
+ *  borrow the refresh's share. */
+export const CATALOG_SUBREQUEST_BUDGET = CRON_STEP_BUDGETS.catalog;
 
 /** What a visit costs outside the window: the cursor get and put, the chapter
  *  list, the chapter upsert (a select plus a write) and the updated_at touch. */
@@ -180,9 +188,10 @@ export const refreshWindowFor = (env: Env): number => {
 
 /** Series visits one tick may make at this window. The window alone does not
  *  bound the invocation: the cron walks every stale row inside one, so 20 rows
- *  at a 38-chapter window is 880 subrequests. Rows past this count are not even
- *  read — listStaleSeries returns the oldest first and a visited row has its
- *  updated_at bumped, so they come back next tick instead of being dropped. */
+ *  at the full window is the whole share times twenty. Rows past this count are
+ *  not even read — listStaleSeries returns the oldest first and a visited row
+ *  has its updated_at bumped, so they come back next tick instead of being
+ *  dropped. */
 export const refreshVisitsFor = (env: Env): number =>
   Math.max(1, Math.floor(budgetFor(env) / (REFRESH_VISIT_COST + refreshWindowFor(env))));
 
@@ -544,9 +553,9 @@ const fetchDetail = async (
 export const syncCatalog = async (
   env: Env,
   opts: {
-    /** Upstream requests this pass may spend. Defaults to the same budget the
-     *  chapter refresh uses, so one Worker invocation cannot exceed the plan's
-     *  subrequest limit on either path. */
+    /** Upstream requests this pass may spend. Defaults to the crawl's own share
+     *  of the invocation's plan — the chapter refresh runs in the same callback
+     *  on the elected crawler and draws from the same 50. */
     budget?: number;
     resolve?: (key: string) => NovelSourceAdapter | null;
   } = {}
@@ -555,7 +564,7 @@ export const syncCatalog = async (
   // and the adapter's robots.txt KV cache never engaged on this path.
   const resolve = opts.resolve ?? ((k: string) => getNovelAdapter(k, novelAdapterEnv(env)));
   const out: SyncCatalogResult = { inserted: 0, filled: 0, skipped: 0, pages: 0, cursor: 0, complete: false };
-  const budget = Math.max(1, opts.budget ?? budgetFor(env));
+  const budget = Math.max(1, opts.budget ?? CATALOG_SUBREQUEST_BUDGET);
   let spent = 0;
 
   let offset = await readCatalogCursor(env);

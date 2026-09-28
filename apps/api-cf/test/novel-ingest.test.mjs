@@ -21,6 +21,12 @@ import {
   seriesIdFor,
   syncCatalog,
 } from '../src/lib/novelIngest.ts';
+import {
+  CRON_STEP_BUDGETS,
+  CRON_STEPS_TOTAL,
+  CRON_SUBREQUEST_CAP,
+  CRON_SUBREQUEST_HEADROOM,
+} from '../src/lib/cronBudget.ts';
 
 const SERIES = {
   id: 'tekaburu',
@@ -378,7 +384,9 @@ test('refreshStaleSeries stops at limit and counts only what it refreshed', asyn
     getChapterContent: (id) => ({ html: `<p>${id}</p>` }),
   });
 
-  const { env } = envFor(client, { NOVEL_REFRESH_WINDOW: '16' });
+  // The budget is set here so the visit count is this test's subject rather than
+  // whatever the cron's default share happens to buy.
+  const { env } = envFor(client, { NOVEL_REFRESH_WINDOW: '16', NOVEL_REFRESH_BUDGET: '44' });
   const pass = await refreshStaleSeries(env, 86400, 2, resolve);
   assert.equal(pass.refreshed, 2, "stopped at limit");
   assert.deepEqual(asked, ['s0', 's1'], 'rows are processed oldest-first, up to limit');
@@ -400,7 +408,7 @@ test('one failing row does not end the batch', async () => {
     },
     getChapterContent: (id) => ({ html: `<p>${id}</p>` }),
   });
-  const { env } = envFor(client, { NOVEL_REFRESH_WINDOW: '1' });
+  const { env } = envFor(client, { NOVEL_REFRESH_WINDOW: '1', NOVEL_REFRESH_BUDGET: '44' });
   const pass = await refreshStaleSeries(env, 86400, 5, resolve);
   assert.equal(pass.refreshed, 2, "the failed row is not counted, the rest are");
 });
@@ -432,41 +440,55 @@ const windowAdapter = (n, getChapterContent) => chapterAdapter(
 );
 
 // The Workers free plan allows 50 subrequests per Worker invocation and this
-// pass runs inside the hourly cron invocation, so the window has to come out of
-// a budget rather than be a constant. REFRESH_VISIT_COST is what one visit
-// spends outside the window, mirrored in subrequestBudgetFor's arithmetic below.
+// pass runs inside the hourly cron invocation alongside four other steps, so the
+// window has to come out of that plan's share rather than be a constant.
+// REFRESH_VISIT_COST is what one visit spends outside the window, mirrored in
+// refreshVisitsFor's arithmetic below.
 const VISIT_COST = 6;
-const FREE_PLAN_LIMIT = 50;
+const FREE_PLAN_LIMIT = CRON_SUBREQUEST_CAP;
 
 const windowFor = (env) => refreshWindowFor(env);
 
 test('the default window is derived from the subrequest budget, not hardcoded', () => {
   const plain = {};
-  assert.equal(windowFor(plain), 38, '50 minus the crons other work, minus what a visit costs');
-  assert.equal(REFRESH_SUBREQUEST_BUDGET, 44);
+  assert.equal(windowFor(plain), CRON_STEP_BUDGETS.refresh - VISIT_COST);
+  assert.equal(REFRESH_SUBREQUEST_BUDGET, CRON_STEP_BUDGETS.refresh);
   assert.equal(refreshVisitsFor(plain), 1, 'and one visit is all the budget buys at that window');
-  assert.ok(REFRESH_VISIT_COST + windowFor(plain) <= FREE_PLAN_LIMIT, 'never over the free plan limit');
+  assert.ok(
+    REFRESH_VISIT_COST <= CRON_STEP_BUDGETS.refresh,
+    'a visit can never cost more than the share it is drawn from',
+  );
+  // The share is what is left of the plan's cap after the other four steps and
+  // the reserve, so the refresh cannot grow back into the eviction sweep and the
+  // homepage feed.
+  assert.ok(
+    CRON_STEPS_TOTAL + CRON_SUBREQUEST_HEADROOM <= CRON_SUBREQUEST_CAP,
+    'and the whole invocation fits, not just this step',
+  );
 });
 
-test('the window is configuration, and no value of it can exceed the plan', () => {
+test('the window is configuration, and no value of it can exceed the share', () => {
+  const ceiling = CRON_STEP_BUDGETS.refresh - VISIT_COST;
   assert.equal(windowFor({ NOVEL_REFRESH_WINDOW: '5' }), 5);
-  // Clamped: a 50-chapter window is 56 subrequests, over the free plan's 50.
-  assert.equal(windowFor({ NOVEL_REFRESH_WINDOW: '50' }), 38);
-  assert.equal(windowFor({ NOVEL_REFRESH_WINDOW: '9999' }), 38);
+  // Clamped: a 50-chapter window is 56 subrequests, over both this step's share
+  // and the free plan's 50.
+  assert.equal(windowFor({ NOVEL_REFRESH_WINDOW: '50' }), ceiling);
+  assert.equal(windowFor({ NOVEL_REFRESH_WINDOW: '9999' }), ceiling);
   // A paid plan raises the budget, and only then does a bigger window fit.
   assert.equal(windowFor({ NOVEL_REFRESH_BUDGET: '1000', NOVEL_REFRESH_WINDOW: '500' }), 500);
   for (const junk of ['', '0', '-4', 'lots', 'NaN', undefined, null, {}]) {
-    assert.equal(windowFor({ NOVEL_REFRESH_WINDOW: junk }), 38, `rejects ${JSON.stringify(junk)}`);
+    assert.equal(windowFor({ NOVEL_REFRESH_WINDOW: junk }), ceiling, `rejects ${JSON.stringify(junk)}`);
   }
   assert.equal(windowFor({ NOVEL_REFRESH_BUDGET: '99999', NOVEL_REFRESH_WINDOW: '99999' }), 994);
 });
 
 test('a small window buys more visits inside the same budget', () => {
-  assert.equal(refreshVisitsFor({ NOVEL_REFRESH_WINDOW: '1' }), 6, 'floor(44 / (6 + 1))');
-  assert.equal(refreshVisitsFor({ NOVEL_REFRESH_WINDOW: '16' }), 2);
-  assert.equal(refreshVisitsFor({ NOVEL_REFRESH_WINDOW: '1e9' }), 1, 'and never zero: a series must still advance');
+  const visits = (w) => refreshVisitsFor({ NOVEL_REFRESH_WINDOW: String(w), NOVEL_REFRESH_BUDGET: '44' });
+  assert.equal(visits(1), Math.floor(44 / (6 + 1)));
+  assert.equal(visits(16), 2);
+  assert.equal(visits('1e9'), 1, 'and never zero: a series must still advance');
   for (const w of [1, 4, 16, 38, 500]) {
-    const v = refreshVisitsFor({ NOVEL_REFRESH_WINDOW: String(w), NOVEL_REFRESH_BUDGET: '1000' });
+    const v = visits(w);
     assert.ok(
       v * (VISIT_COST + Math.min(w, 994)) <= 1000,
       `${v} visits at window ${w} must fit the budget`,
@@ -568,7 +590,10 @@ test('the next visit resumes at the cursor and the last window is not truncated'
   const { client } = stubD1();
   const { env, cursor } = envFor(client);
   const w = windowFor(env);
-  const adapter = windowAdapter(w * 2 + 20, bodyFor());
+  // Two full windows then a tail of 3, so the last visit is short whatever the
+  // cron's window happens to be today.
+  const tail = 3;
+  const adapter = windowAdapter(w * 2 + tail, bodyFor());
 
   const first = await refreshSeries(env, SERIES, adapter);
   assert.equal(first.nextOffset, w);
@@ -580,7 +605,7 @@ test('the next visit resumes at the cursor and the last window is not truncated'
   assert.equal(second.fetched, w);
 
   const third = await captureLog(() => refreshSeries(env, SERIES, adapter));
-  assert.equal(third.result.fetched, 20, 'the tail window is short');
+  assert.equal(third.result.fetched, tail, 'the tail window is short');
   assert.equal(third.result.exhausted, true, 'a short window means the list ended inside it');
   assert.equal(third.result.nextOffset, null, 'nothing left to resume');
   assert.match(third.lines.join('\n'), /series complete/);
@@ -591,23 +616,25 @@ test('a budget stop ends the window and is never counted as a chapter miss', asy
   const { client, trace } = stubD1();
   const { env } = envFor(client);
   let n = 0;
+  // The stop lands inside the window whatever the cron's window is today.
+  const stop = Math.max(2, windowFor(env) - 2);
   const adapter = chapterAdapter({}, { chapters: manySummaries(200), getChapterContent: () => {
     n++;
-    if (n > 10) throw new Error('Too many subrequests.');
-    return { html: `<p>${n}</p>` };
+    if (n > stop) throw new Error('Too many subrequests.');
+    return { html: `<p>${n}</p>`};
   } });
 
   const { lines, result } = await captureLog(() => refreshSeries(env, SERIES, adapter));
   assert.equal(result.budget, 1, 'the swallowed budget error is counted on its own');
   assert.equal(result.missing, 0, 'and not as a missing chapter');
-  assert.equal(result.fetched, 10);
-  assert.equal(result.nextOffset, 10, 'the cursor points at the chapter that was never fetched');
+  assert.equal(result.fetched, stop);
+  assert.equal(result.nextOffset, stop, 'the cursor points at the chapter that was never fetched');
   assert.equal(result.exhausted, false);
   const logged = lines.join('\n');
   assert.match(logged, /truncated/);
   assert.match(logged, /1 budget-stopped/);
   assert.doesNotMatch(logged, /series complete/, 'a truncated run must not read as a complete one');
-  assert.equal(inserted(trace).length, 10);
+  assert.equal(inserted(trace).length, stop);
 });
 
 test('an aborted fetch stops the window, a 404 does not', async () => {
@@ -645,7 +672,10 @@ test('refreshStaleSeries counts a truncated pass apart from a complete one', asy
     getChapterContent: bodyFor(),
   });
 
-  const { lines, result } = await captureLog(() => refreshStaleSeries({ ...env, NOVEL_REFRESH_WINDOW: '4' }, 86400, 5, resolve));
+  // The budget is this test's own: at the cron's default share a window of 4
+  // buys a single visit, and the subject here is how a pass classifies each of
+  // three rows, not how many the budget allows.
+  const { lines, result } = await captureLog(() => refreshStaleSeries({ ...env, NOVEL_REFRESH_WINDOW: '4', NOVEL_REFRESH_BUDGET: '44' }, 86400, 5, resolve));
   assert.equal(result.refreshed, 3, 'all three rows were visited');
   assert.equal(result.complete, 2, 'two short lists are complete passes');
   assert.equal(result.truncated, 1, 'the 200-chapter one stopped at the window');
@@ -1292,8 +1322,11 @@ test('a forwarded write can only ever reach the shard that owns the series id', 
   });
   const { forwarded, restore } = capturingExec();
   try {
+    // 12 series at the crawl's own per-series cost is well over the default
+    // share, and a pass that only reached the first two would never take the
+    // forwarded branch — which is the half of the routing under test.
     await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
-      resolve: onlyNovelId(adapter),
+      budget: 200, resolve: onlyNovelId(adapter),
     });
   } finally {
     restore();
