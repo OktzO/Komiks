@@ -4,6 +4,7 @@ import { ThemeSwitcher } from '@/components/ThemeSwitcher';
 
 const LINKS = [
   { href: '/search', label: 'Cari' },
+  { href: '/novel', label: 'Novel' },
   { href: '/bookmark', label: 'Bookmark' },
   { href: '/history', label: 'Riwayat' },
   { href: '/status', label: 'Status' },
