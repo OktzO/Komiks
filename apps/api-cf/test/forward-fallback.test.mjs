@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { ownerFor } from '../src/lib/peers.ts';
 import { execOnUserOwner } from '../src/lib/userShard.ts';
 import { createSession, revokeSessionForUser, revokeAllSessionsForUser } from '../src/lib/auth.ts';
-import { flushOutbox } from '../src/lib/dbWrite.ts';
+import { flushOutbox, OUTBOX_FLUSH_BUDGET } from '../src/lib/dbWrite.ts';
 
 const srcFiles = (dir, out = []) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -271,6 +271,62 @@ test('the outbox retries a write the owner would not accept, and stops retrying 
   try {
     assert.deepEqual(await flushOutbox(env), { flushed: 1, pending: 0 });
     assert.equal(outbox.length, 0, 'accepted, so it is dequeued');
+  } finally {
+    accepting.restore();
+  }
+});
+
+// A retry row costs one forward plus one D1 write, and the Workers free plan
+// allows 50 subrequests for the whole invocation — which the cron shares with
+// the novel refresh. Draining `limit` rows in one pass therefore kills the
+// invocation part-way: "Too many subrequests" is not a catchable error, the
+// runtime drops the request, so the rows stay queued *and* nothing scheduled
+// after the flush ever runs. A 59-row backlog held 591 rows that way for a week.
+// The pass has to fit its own budget and leave the rest of the backlog to the
+// next invocation, so progress is bounded per hour and unbounded over time.
+test('a backlog larger than one invocation drains inside the subrequest budget', async () => {
+  const { client, outbox, trace } = stubD1();
+  const backlog = 59;
+  for (let id = 1; id <= backlog; id++) {
+    outbox.push({
+      id,
+      owner_url: URLS[1],
+      table_name: 'chapter_pages',
+      sql: 'UPDATE chapter_pages SET last_access = ?1',
+      params: JSON.stringify([id]),
+      attempts: 0,
+    });
+  }
+  const env = envFor(client);
+  const accepting = acceptsForwards();
+  const perPass = [];
+  try {
+    let passes = 0;
+    let before = backlog;
+    while (outbox.length > 0) {
+      trace.length = 0;
+      accepting.seen.length = 0;
+      const res = await flushOutbox(env);
+      // One SELECT and one COUNT for the pass, then a forward and a D1 write per
+      // row. Every one of those is a subrequest of the shared invocation budget.
+      const spent = trace.length + accepting.seen.length;
+      perPass.push(spent);
+      assert.ok(
+        spent <= OUTBOX_FLUSH_BUDGET,
+        `pass ${passes} spent ${spent} subrequests, over the ${OUTBOX_FLUSH_BUDGET} it is allowed`,
+      );
+      assert.ok(res.flushed > 0, `pass ${passes} forwarded nothing, so the backlog is not draining`);
+      assert.equal(
+        res.pending,
+        before - res.flushed,
+        `pass ${passes} left ${res.pending} of ${before} rows and claims to have flushed ${res.flushed}`,
+      );
+      before = res.pending;
+      passes++;
+      assert.ok(passes <= backlog, 'the backlog must not need one invocation per row forever');
+    }
+    assert.ok(passes > 1, 'a backlog this size cannot drain in a single pass, or the test proves nothing');
+    assert.equal(outbox.length, 0, 'and it does drain, one slice per invocation');
   } finally {
     accepting.restore();
   }

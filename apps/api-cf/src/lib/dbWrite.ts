@@ -208,7 +208,32 @@ export const enqueueOutbox = async (
   }
 };
 
-export const flushOutbox = async (env: Env, limit = 50): Promise<{ flushed: number; pending: number }> => {
+/** Subrequests one flush pass may spend.
+ *
+ *  A retry row costs a forward plus a D1 write, and the Workers free plan allows
+ *  50 for the whole cron invocation — which the novel refresh already budgets 44
+ *  of. "Too many subrequests" is not catchable: the runtime drops the invocation,
+ *  so a pass that runs the whole backlog first drains nothing *and* kills every
+ *  step scheduled after it. Bounding the pass turns an unbounded queue into a
+ *  bounded one: what is left is the next hour's work. A paid plan allows 1000 —
+ *  raise this, not the row cap, and the cap follows.
+ */
+export const OUTBOX_FLUSH_BUDGET = 6;
+
+/** One row's share of that budget, plus the SELECT and the COUNT the pass pays
+ *  for itself. */
+const OUTBOX_ROW_COST = 2;
+const OUTBOX_PASS_COST = 2;
+
+const flushRowsFor = (budget: number): number =>
+  Math.max(1, Math.floor((budget - OUTBOX_PASS_COST) / OUTBOX_ROW_COST));
+
+export const flushOutbox = async (
+  env: Env,
+  opts: { limit?: number; budget?: number } = {}
+): Promise<{ flushed: number; pending: number }> => {
+  const budget = Math.max(OUTBOX_PASS_COST, opts.budget ?? OUTBOX_FLUSH_BUDGET);
+  const limit = Math.max(1, Math.min(opts.limit ?? Number.MAX_SAFE_INTEGER, flushRowsFor(budget)));
   let flushed = 0;
   try {
     const peers = getPeers(env);
