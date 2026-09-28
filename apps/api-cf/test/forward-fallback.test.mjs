@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { ownerFor } from '../src/lib/peers.ts';
 import { execOnUserOwner } from '../src/lib/userShard.ts';
 import { createSession, revokeSessionForUser, revokeAllSessionsForUser } from '../src/lib/auth.ts';
-import { flushOutbox, OUTBOX_FLUSH_BUDGET } from '../src/lib/dbWrite.ts';
+import { flushOutbox, OUTBOX_FLUSH_BUDGET, OUTBOX_MAX_ATTEMPTS } from '../src/lib/dbWrite.ts';
 
 const srcFiles = (dir, out = []) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -94,7 +94,15 @@ const stubD1 = ({ failLocal = false } = {}) => {
           return null;
         },
         async all() {
-          if (sql.includes('FROM _outbox')) return { results: outbox.slice(0, rec.args.at(-1)) };
+          if (sql.includes('FROM _outbox')) {
+            // SQLite orders before the LIMIT, so the stub has to as well —
+            // otherwise every ordering change the flush makes looks like a
+            // no-op here and the tests below would pass either way.
+            const rows = sql.includes('ORDER BY attempts')
+              ? [...outbox].sort((a, b) => a.attempts - b.attempts || a.id - b.id)
+              : [...outbox];
+            return { results: rows.slice(0, rec.args.at(-1)) };
+          }
           return { results: [] };
         },
         async run() {
@@ -329,6 +337,108 @@ test('a backlog larger than one invocation drains inside the subrequest budget',
     assert.equal(outbox.length, 0, 'and it does drain, one slice per invocation');
   } finally {
     accepting.restore();
+  }
+});
+
+// `ORDER BY id ASC LIMIT 2` is head-of-line blocking. Rows are enqueued in the
+// order the work arrived, so the rows for a peer that is configured but
+// unreachable own the lowest ids — and a two-row slice means they *are* the
+// slice, on every tick, for as many ticks as the attempt cap allows. Nothing
+// behind them ever gets a turn: one down peer held a 59-row queue for 50 hours
+// while the peer next door was healthy the whole time.
+test('a row for a peer that is down backs off instead of blocking the rows behind it', async () => {
+  const { client, outbox } = stubD1();
+  const dead = URLS[3];
+  const row = (id, owner_url) => ({
+    id,
+    owner_url,
+    table_name: 'chapter_pages',
+    sql: 'UPDATE chapter_pages SET last_access = ?1',
+    params: JSON.stringify([id]),
+    attempts: 0,
+  });
+  outbox.push(row(1, dead), row(2, dead));
+  for (let id = 3; id <= 6; id++) outbox.push(row(id, URLS[1]));
+
+  const env = envFor(client);
+  const original = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input?.url ?? input);
+    asked.push(url);
+    if (url.startsWith(dead)) return new Response('unreachable', { status: 503 });
+    return new Response(JSON.stringify({ ok: true, target: 'local', changes: 1 }), { status: 200 });
+  };
+  try {
+    const first = await flushOutbox(env);
+    assert.equal(first.flushed, 0, 'the first pass is the slice the dead rows occupy');
+    assert.deepEqual(
+      outbox.map((r) => [r.id, r.attempts]),
+      [[1, 1], [2, 1], [3, 0], [4, 0], [5, 0], [6, 0]],
+      'and the failure is counted against the two rows that earned it',
+    );
+
+    // The next pass has to look past them: nothing behind a failing target has
+    // failed, so it is the only work that can be done.
+    const second = await flushOutbox(env);
+    assert.equal(second.flushed, 2, 'the healthy peer drains while its neighbour is down');
+    assert.deepEqual(outbox.map((r) => r.id), [1, 2, 5, 6]);
+
+    const third = await flushOutbox(env);
+    assert.equal(third.flushed, 2, 'and the rest of it goes the same way');
+    assert.deepEqual(outbox.map((r) => r.id), [1, 2], 'only the dead peer is left');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a row that exhausts its attempts is quarantined rather than retried forever', async () => {
+  const { client, outbox } = stubD1();
+  const dead = URLS[3];
+  outbox.push({
+    id: 1,
+    owner_url: dead,
+    table_name: 'chapter_pages',
+    sql: 'UPDATE chapter_pages SET last_access = ?1',
+    params: JSON.stringify([1]),
+    attempts: OUTBOX_MAX_ATTEMPTS - 1,
+  });
+  outbox.push({
+    id: 2,
+    owner_url: URLS[1],
+    table_name: 'chapter_pages',
+    sql: 'UPDATE chapter_pages SET last_access = ?1',
+    params: JSON.stringify([2]),
+    attempts: 0,
+  });
+
+  const env = envFor(client);
+  const original = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input?.url ?? input);
+    if (url.startsWith(dead)) return new Response('unreachable', { status: 503 });
+    return new Response(JSON.stringify({ ok: true, target: 'local', changes: 1 }), { status: 200 });
+  };
+  const errors = [];
+  const realError = console.error;
+  console.error = (...a) => { errors.push(a.join(' ')); };
+  try {
+    const last = await flushOutbox(env);
+    assert.equal(last.flushed, 1, 'the healthy row went, and the exhausted one spent its final attempt');
+    assert.deepEqual(outbox.map((r) => [r.id, r.attempts]), [[1, OUTBOX_MAX_ATTEMPTS]]);
+
+    // Quarantine, not a longer sentence: the slot is released rather than kept
+    // by a target that is never coming back.
+    const after = await flushOutbox(env);
+    assert.equal(after.flushed, 0);
+    assert.deepEqual(outbox.map((r) => r.id), []);
+    assert.ok(
+      errors.some((line) => line.includes('id=1') && line.includes(String(OUTBOX_MAX_ATTEMPTS))),
+      `and the drop is logged, not silent — got ${JSON.stringify(errors)}`,
+    );
+  } finally {
+    console.error = realError;
+    globalThis.fetch = original;
   }
 });
 

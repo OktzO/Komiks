@@ -1,5 +1,6 @@
 import type { Context, Env } from './context';
 import { getPeers, internalExec } from './peers';
+import { CRON_STEP_BUDGETS } from './cronBudget';
 
 const OUTBOX_CAP = 1000;
 const OUTBOX_TTL_DAYS = 7;
@@ -211,14 +212,17 @@ export const enqueueOutbox = async (
 /** Subrequests one flush pass may spend.
  *
  *  A retry row costs a forward plus a D1 write, and the Workers free plan allows
- *  50 for the whole cron invocation — which the novel refresh already budgets 44
- *  of. "Too many subrequests" is not catchable: the runtime drops the invocation,
- *  so a pass that runs the whole backlog first drains nothing *and* kills every
- *  step scheduled after it. Bounding the pass turns an unbounded queue into a
- *  bounded one: what is left is the next hour's work. A paid plan allows 1000 —
- *  raise this, not the row cap, and the cap follows.
+ *  50 for the whole cron invocation. "Too many subrequests" is not catchable:
+ *  the runtime drops the invocation, so a pass that runs the whole backlog
+ *  first drains nothing *and* kills every step scheduled after it. Bounding the
+ *  pass turns an unbounded queue into a bounded one: what is left is the next
+ *  hour's work. A paid plan allows 1000 — raise this, not the row cap, and the
+ *  cap follows.
  */
-export const OUTBOX_FLUSH_BUDGET = 6;
+export const OUTBOX_FLUSH_BUDGET = CRON_STEP_BUDGETS.outbox;
+
+/** Attempts a row gets before it is quarantined rather than retried. */
+export const OUTBOX_MAX_ATTEMPTS = 50;
 
 /** One row's share of that budget, plus the SELECT and the COUNT the pass pays
  *  for itself. */
@@ -227,6 +231,27 @@ const OUTBOX_PASS_COST = 2;
 
 const flushRowsFor = (budget: number): number =>
   Math.max(1, Math.floor((budget - OUTBOX_PASS_COST) / OUTBOX_ROW_COST));
+
+/** Selection order for a flush pass: fewest attempts first, then oldest.
+ *
+ *  `id ASC` on its own is head-of-line blocking. Rows are enqueued in the order
+ *  the work arrived, so the rows for a peer that is configured but unreachable
+ *  own the lowest ids — and a slice two rows wide means those rows *are* the
+ *  slice, on every tick, for as many ticks as the attempt cap allows. Nothing
+ *  behind them is ever attempted: one down peer held a 59-row queue for 50
+ *  hours while the peer beside it was healthy throughout. The healthy rows could
+ *  not be rescued by raising the slice either, since a bigger slice spends the
+ *  budget on forwards that return nothing.
+ *
+ *  Ordering by `attempts` puts a row that has just failed behind everything that
+ *  has not, so a reachable peer drains one slice at a time however long its
+ *  neighbour has been down. A row at the cap is then only reached once nothing
+ *  else is left to try, and the drop is logged — the queue is left to a target
+ *  that is never coming back, which is the same starvation with a longer
+ *  sentence in front of it.
+ */
+const OUTBOX_SELECT = 'SELECT id, owner_url, table_name, sql, params, attempts FROM _outbox'
+  + ' ORDER BY attempts ASC, id ASC LIMIT ?1';
 
 export const flushOutbox = async (
   env: Env,
@@ -237,9 +262,8 @@ export const flushOutbox = async (
   let flushed = 0;
   try {
     const peers = getPeers(env);
-    const { results } = await env.DB.prepare(
-      'SELECT id, owner_url, table_name, sql, params, attempts FROM _outbox ORDER BY id ASC LIMIT ?1'
-    ).bind(limit).all<{ id: number; owner_url: string; table_name: string; sql: string; params: string; attempts: number }>();
+    const { results } = await env.DB.prepare(OUTBOX_SELECT)
+      .bind(limit).all<{ id: number; owner_url: string; table_name: string; sql: string; params: string; attempts: number }>();
     for (const row of results ?? []) {
       if (!peers.some((p) => p.url === row.owner_url)) {
         await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
@@ -256,8 +280,8 @@ export const flushOutbox = async (
       if (ok) {
         await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
         flushed++;
-      } else if (row.attempts >= 50) {
-        console.error(`[outbox] dropping id=${row.id} table=${row.table_name} after 50 attempts`);
+      } else if (row.attempts >= OUTBOX_MAX_ATTEMPTS) {
+        console.error(`[outbox] dropping id=${row.id} table=${row.table_name} after ${OUTBOX_MAX_ATTEMPTS} attempts`);
         await env.DB.prepare('DELETE FROM _outbox WHERE id = ?1').bind(row.id).run().catch(() => {});
       } else {
         await env.DB.prepare('UPDATE _outbox SET attempts = attempts + 1 WHERE id = ?1').bind(row.id).run().catch(() => {});
