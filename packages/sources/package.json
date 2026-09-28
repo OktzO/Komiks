@@ -13,7 +13,7 @@
     "./novel": "./novel.ts"
   },
   "scripts": {
-    "test": "tsx test/thrive.test.mjs && tsx test/bacakomik.test.mjs && tsx test/manhwaindo.test.mjs && tsx test/webtoon.test.mjs && tsx test/novelid.test.mjs && tsx test/novel-metadata.test.mjs"
+    "test": "tsx test/thrive.test.mjs && tsx test/bacakomik.test.mjs && tsx test/manhwaindo.test.mjs && tsx test/webtoon.test.mjs && tsx test/novelid.test.mjs && tsx test/novel-metadata.test.mjs && tsx test/shinigami.test.mjs && tsx test/single-fetch.test.mjs && tsx test/status.test.mjs"
   },
   "dependencies": {
     "@manga-platform/shared": "0.1.0",

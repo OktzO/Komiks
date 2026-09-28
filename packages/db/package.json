@@ -14,6 +14,7 @@
     "tsx": "^4.23.12"
   },
   "scripts": {
-    "test": "tsx test/matching.test.mjs && tsx test/novel.test.mjs && bun test test/novel-stale.test.mjs"
+    "test": "tsx test/matching.test.mjs && tsx test/novel.test.mjs && tsx test/bookmark.test.mjs && tsx test/migrate-script.test.mjs && tsx test/storage-rename.test.mjs && tsx test/user-profile.test.mjs && bun test test/novel-stale.test.mjs",
+    "test:sqlite": "tsx test/admin-inventory.test.mjs"
   }
 }
