@@ -36,6 +36,10 @@ jobs:
       # The scan itself stays in secrets.yml. Only its test runs here, so a
       # rule set that has stopped matching anything cannot pass unnoticed.
       - run: node --test scripts/scan-secrets.test.mjs
+      # The gate the lint step below depends on has its own tests, and nothing
+      # else runs them — a gate that silently stopped gating is the failure
+      # mode the secrets scan test above exists to catch.
+      - run: node --test scripts/ci-baseline.test.mjs
 
   node22:
     runs-on: ubuntu-latest
@@ -56,6 +60,9 @@ jobs:
       # Astro!"), so the web suite and build cannot share the Node 20 job.
       - run: npm --prefix apps/web test
       - run: npm --prefix apps/web run build
+      # node:sqlite exists only from Node 22, so this one db test cannot be in
+      # packages/db's own test script without breaking the Node 20 job.
+      - run: npm --prefix packages/db run test:sqlite
       # astro check exits 1 for "there are errors" without saying which, so
       # this cannot be a plain run. scripts/ci-baseline.mjs pins the one
       # pre-existing error by position and fails on any other position — and
