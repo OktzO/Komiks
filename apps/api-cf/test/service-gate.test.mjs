@@ -147,3 +147,51 @@ test('E2E: SERVICE_TOKEN kosong → gate TIDAK AKTIF (fail-open, dev-friendly)',
   assert.equal((await go('/api/admin/monitoring', {}, env)).status, 200);
   assert.equal((await go('/api/unknown-path', {}, env)).status, 200);
 });
+// ── Novel content is public-read, admin sync stays sensitive ────────────────────
+test('classifyServiceTier: novel content reads as public, like a manga series', () => {
+  // Novel catalogue, series and chapter prose are the same class of content as
+  // /api/series, so a browser guest with a valid Origin must reach them without a
+  // service token. Without this the /novel page could only ever render its
+  // server-fetched props and its island fetch 403'd by construction.
+  assert.equal(classifyServiceTier('/api/novel/catalog', 'GET'), 'public-read');
+  assert.equal(classifyServiceTier('/api/novel/series/novelid-x', 'GET'), 'public-read');
+  assert.equal(classifyServiceTier('/api/novel/series/novelid-x/chapters', 'GET'), 'public-read');
+  assert.equal(classifyServiceTier('/api/novel/series/novelid-x/chapter/x%2F1', 'GET'), 'public-read');
+});
+
+test('classifyServiceTier: a non-GET novel path is not public-read', () => {
+  // The tier is read-only by construction; anything that mutates must not inherit it.
+  assert.notEqual(classifyServiceTier('/api/novel/catalog', 'POST'), 'public-read');
+  assert.notEqual(classifyServiceTier('/api/novel/catalog', 'DELETE'), 'public-read');
+});
+
+test('classifyServiceTier: the novel admin sync stays sensitive, never public', () => {
+  // /api/admin must be claimed by the sensitive branch ahead of the novel prefix,
+  // or the forced-sync endpoint would become publicly readable.
+  assert.equal(classifyServiceTier('/api/admin/novel/catalog/sync', 'POST'), 'sensitive');
+  assert.equal(classifyServiceTier('/api/admin/novel/catalog/sync', 'GET'), 'sensitive');
+  assert.notEqual(classifyServiceTier('/api/admin/novel/catalog/sync', 'GET'), 'public-read');
+});
+
+test('serviceGateMw: a browser guest can read the novel catalogue with an Origin', async () => {
+  const res = await go('/api/novel/catalog', { headers: { Origin: 'https://oktzz.xyz' } });
+  assert.equal(res.status, 200);
+});
+
+test('serviceGateMw: the novel catalogue is still refused without Origin or token', async () => {
+  const res = await go('/api/novel/catalog');
+  assert.equal(res.status, 403);
+});
+
+test('serviceGateMw: the novel admin sync needs the service token, not just an Origin', async () => {
+  const withOrigin = await go('/api/admin/novel/catalog/sync', {
+    method: 'POST',
+    headers: { Origin: 'https://oktzz.xyz' },
+  });
+  assert.equal(withOrigin.status, 403, 'a valid Origin alone must not unlock the sync');
+  const withToken = await go('/api/admin/novel/catalog/sync', {
+    method: 'POST',
+    headers: { Origin: 'https://oktzz.xyz', 'x-service-token': 'test-service-token' },
+  });
+  assert.equal(withToken.status, 200);
+});

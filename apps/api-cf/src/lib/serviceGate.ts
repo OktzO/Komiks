@@ -71,6 +71,13 @@ export const classifyServiceTier = (path: string, method: string): ServiceTier =
     path.startsWith('/api/reader') ||
     path.startsWith('/api/homepage') ||
     path.startsWith('/api/manga') ||
+    // Novel catalogue, series and chapter prose are the same class of public
+    // content as a manga series page, so they gate identically — except that
+    // only GET is public. Every novel route is a read, so the method guard costs
+    // nothing, and a future write added under this prefix cannot inherit the
+    // public tier by accident. Admin sync and every other /api/admin route stay
+    // `sensitive` above.
+    (path.startsWith('/api/novel') && m === 'GET') ||
     path.startsWith('/api/source-status') ||
     (path.startsWith('/api/user') && m === 'GET')
   ) {
