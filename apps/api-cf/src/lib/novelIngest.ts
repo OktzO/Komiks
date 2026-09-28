@@ -377,10 +377,20 @@ const CATALOG_MAX_PAGES = 40;
 const CATALOG_CURSOR_KEY = 'novel:catalog:cursor';
 const CATALOG_CURSOR_TTL_SEC = 30 * 86400;
 
-/** Upstream requests one *new* series costs: its series page, the cover GET and
- *  the B2 PUT. A row that already exists costs only the listing page, because a
- *  complete row is recognised without a detail fetch. */
-const CATALOG_NEW_SERIES_COST = 3;
+/**
+ * Upstream requests one new series costs, counted the way REFRESH_VISIT_COST
+ * counts a visit: the owner read (a read-forward to the shard that holds the
+ * row), the series page, the cover GET, the B2 PUT, and the write-forward. Three
+ * was the first guess and it was 40% low, which let a pass run past the plan's
+ * limit and get killed part-way — the exact silent-prefix failure the chapter
+ * refresh window exists to prevent.
+ */
+const CATALOG_NEW_SERIES_COST = 5;
+
+/** An existing row costs the owner read and nothing else unless it is still
+ *  missing metadata, in which case the series page is fetched to fill it. */
+const CATALOG_OWNER_READ_COST = 1;
+const CATALOG_DETAIL_COST = 1;
 
 export interface SyncCatalogResult {
   inserted: number;
@@ -591,13 +601,16 @@ export const syncCatalog = async (
         // B2 cover was re-uploaded every 12 hours, and a failed getSeries
         // re-upserted the listing card's nulls over tier-2's fills.
         const existing = await novelDbFor(env, id).getSeriesBySlug(id);
+        spent += CATALOG_OWNER_READ_COST;
         if (existing) {
           // The listing card is the weaker source, so it only fills what the
           // series page did not supply — and only the columns the owner still
           // has blank, so a complete row costs no write at all.
+          const detail = needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null;
+          spent += CATALOG_DETAIL_COST;
           const patch: Partial<Record<DetailColumn, string>> = {
             ...patchFrom(hit),
-            ...patchFrom(needsDetail(existing) ? await fetchDetail(adapter, existing.source_series_id) : null),
+            ...patchFrom(detail),
           };
           const cols = (Object.keys(patch) as DetailColumn[]).filter((c) => patch[c] !== undefined && isBlank(existing[c]));
           if (

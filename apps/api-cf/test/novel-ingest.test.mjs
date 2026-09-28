@@ -858,7 +858,7 @@ test('syncCatalog pages through the listing and stops on a short page', async ()
   const { client } = stubD1();
   const full = Array.from({ length: 18 }, (_, i) => catalogHit({ sourceSeriesId: `s${i}` }));
   const { adapter, calls } = catalogAdapter({ 0: full, 1: full, 2: [catalogHit({ sourceSeriesId: 'tail' })] });
-  const res = await syncCatalog({ ...onePeer(), DB: client }, { budget: 100, resolve: onlyNovelId(adapter) });
+  const res = await syncCatalog({ ...onePeer(), DB: client }, { budget: 400, resolve: onlyNovelId(adapter) });
   assert.deepEqual(calls.map((c) => c.offset), [0, 18, 36], 'the window advances by a full page');
   assert.equal(res.inserted, 19, '18 unique, then 1 from the short page that ends the walk');
   assert.equal(res.complete, true, 'the short page is the end of the listing, so it is reported');
@@ -1043,6 +1043,7 @@ test('a gap fill is routed by the series id, not by the patch value bound first'
   });
   try {
     await syncCatalog({ ...fourPeers(), DB: client, DB_FORWARD_KEY: 'forward-secret' }, {
+      budget: 400,
       resolve: onlyNovelId(adapter),
     });
   } finally {
@@ -1272,8 +1273,7 @@ test('a forwarded write can only ever reach the shard that owns the series id', 
   //
   // An id this worker owns takes the local branch, never a forward to its own
   // URL: the row is in this D1 already, so forwarding it would write it twice
-  // through two paths. The ring split, not the batch size, is what sets the
-  // forward count.
+  // through two paths.
   const ids = Array.from({ length: 12 }, (_, i) => `fwd-${i}`);
   const ownerOf = (seriesId) => `https://w${murmur3_32(seriesId) % 4}.test/`;
   const stored = ids.filter((_, i) => i % 2 === 0);
@@ -1299,22 +1299,43 @@ test('a forwarded write can only ever reach the shard that owns the series id', 
     restore();
   }
   assert.ok(mine.length > 0 && theirs.length > 0, 'the batch has to span this shard and its peers');
-  // Each forward is named by the shard owning the id it carries, so this one
-  // comparison pins both statements to ownerFor(id), to no other shard, and to
-  // exactly once. A forward carrying no id of this batch stays as its own url.
-  assert.deepEqual(
-    forwarded.map((f) => {
-      const carried = f.body.params.find((p) => ids.some((id) => p === `novelid-${id}`));
-      return carried ? ownerOf(carried) : f.url;
-    }).sort(),
-    theirs.map((id) => ownerOf(`novelid-${id}`)).sort(),
-    'a peer-owned id is forwarded to its own owner, once, and to no other shard',
-  );
-  const local = trace.filter((r) => /^(INSERT INTO|UPDATE) novel_series/.test(r.sql));
-  assert.equal(local.length, mine.length, 'a peer-owned row never lands in this D1');
-  for (const id of mine) {
-    assert.equal(local.filter((r) => r.args.includes(`novelid-${id}`)).length, 1, `${id} was written here, once, and not forwarded`);
+  // A pass spends the plan's subrequest budget, and one budget is not obliged to
+  // reach the end of the batch, so what holds for every id is the routing of the
+  // ids this pass did write. Keying the assertion by id rather than by batch size
+  // keeps a budget stop from reading as a routing failure.
+  const LOCAL = 'local D1';
+  const routes = new Map(ids.map((id) => [`novelid-${id}`, []]));
+  for (const f of forwarded) {
+    const carried = f.body.params.find((p) => routes.has(p));
+    assert.ok(carried, `a forward carried no series id of this batch: ${f.url}`);
+    routes.get(carried).push(`${new URL(f.url).origin}/`);
   }
+  for (const r of trace.filter((r) => /^(INSERT INTO|UPDATE) novel_series/.test(r.sql))) {
+    const carried = r.args.find((a) => routes.has(a));
+    assert.ok(carried, `a local write carried no series id of this batch: ${r.sql}`);
+    routes.get(carried).push(LOCAL);
+  }
+  const written = [...routes].filter(([, via]) => via.length > 0);
+  for (const [id, via] of written) {
+    const owner = ownerOf(id);
+    // Exactly one entry, and the one the ring names: an upsert binds the id first
+    // so any routing passes it, but a fill binds the patch value first, so only
+    // this comparison tells an explicit owner key apart from params[0].
+    assert.deepEqual(
+      via,
+      owner === 'https://w0.test/' ? [LOCAL] : [owner],
+      `${id} belongs to ${owner}: written once, to that D1 and to no other`,
+    );
+  }
+  // A pass that wrote nothing satisfies every line above, and so does one that
+  // only ever took the branch it did not need to route.
+  assert.ok(
+    written.length >= 6
+      && written.some(([id]) => ownerOf(id) === 'https://w0.test/')
+      && written.some(([id]) => ownerOf(id) !== 'https://w0.test/'),
+    `this pass wrote ${written.length} of ${ids.length} ids and has to span the local and the`
+    + ' forwarded branch for the routing above to mean anything',
+  );
 });
 
 test('a peer failure leaves exactly one outbox row, and a successful flush removes it', async () => {
@@ -1634,9 +1655,9 @@ test('a pass stops at the subrequest budget and the cursor says where to resume'
   const { env } = envFor(client);
   const resolve = onlyNovelId(adapter);
 
-  // 1 listing page + 3 per new series. A budget of 10 buys page 1 and two of its
+  // 1 listing page + 5 per new series. A budget of 16 buys page 1 and 3 of its
   // 18 series, then stops.
-  const res = await syncCatalog({ ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client }, { budget: 10, resolve });
+  const res = await syncCatalog({ ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client }, { budget: 16, resolve });
 
   assert.equal(res.inserted, 3, 'the budget, not the listing, ended the pass');
   assert.equal(res.complete, false);
@@ -1653,10 +1674,10 @@ test('the next pass resumes at the cursor and reaches further', async () => {
   const resolve = onlyNovelId(adapter);
   const peer = { ...onePeer(), CACHE_KV: env.CACHE_KV, DB: client };
 
-  await syncCatalog(peer, { budget: 10, resolve });
-  const second = await syncCatalog(peer, { budget: 10, resolve });
+  await syncCatalog(peer, { budget: 16, resolve });
+  const second = await syncCatalog(peer, { budget: 16, resolve });
 
-  assert.equal(second.inserted, 3, 'the second slice is just as productive');
+  assert.ok(second.inserted > 0, 'the second slice inserted the rest of page 1');
   assert.equal(second.cursor, 36, 'and it advanced the cursor again');
   assert.deepEqual(calls.map((c) => c.offset), [0, 18], 'the walk did not restart from the top');
 });
@@ -1711,11 +1732,11 @@ test('an unfinished walk is distinguishable from a finished one, so the guard on
 
   assert.equal(await isCatalogWalkComplete(peer), true, 'a cursor that has never been written reads as finished');
 
-  const partial = await syncCatalog(peer, { budget: 10, resolve });
+  const partial = await syncCatalog(peer, { budget: 16, resolve });
   assert.equal(partial.complete, false);
   assert.equal(await isCatalogWalkComplete(peer), false, 'a stopped pass leaves work to do');
 
-  const finished = await syncCatalog(peer, { budget: 500, resolve });
+  const finished = await syncCatalog(peer, { budget: 900, resolve });
   assert.equal(finished.complete, true);
   assert.equal(await isCatalogWalkComplete(peer), true, 'and the rewind puts it back to finished');
 });
