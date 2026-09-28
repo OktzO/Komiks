@@ -33,8 +33,18 @@ const D1_META = {
  *  fails. The fallback is a safety net, not a replica: syncCatalog's owner gate
  *  means a peer's series is absent here, so a down owner 404s that series
  *  rather than serving a guess. The net earns its keep after a PEER_URLS change
- *  re-partitions the ring, where the former owner still holds the row. */
-const peerReadD1 = (env: Env, peerUrl: string): D1Database => {
+ *  re-partitions the ring, where the former owner still holds the row.
+ *
+ *  `onUnreachable` turns the net off and reports instead. A merge has no such
+ *  excuse: it asks a peer for a peer's rows, and answering with this worker's
+ *  own rows would make an unreadable shard look answered — invisibly, since the
+ *  ids it invents are this shard's own and dedupe away.
+ */
+const peerReadD1 = (
+  env: Env,
+  peerUrl: string,
+  onUnreachable?: (peerUrl: string) => void
+): D1Database => {
   const local = <T>(sql: string, args: unknown[]) => {
     const stmt = env.DB.prepare(sql);
     const bound = args.length > 0 ? stmt.bind(...args) : stmt;
@@ -45,6 +55,10 @@ const peerReadD1 = (env: Env, peerUrl: string): D1Database => {
     if (table && FORWARDABLE.has(table)) {
       const rows = await internalQuery<T>(env, peerUrl, sql, args, table).catch(() => null);
       if (rows !== null) return rows;
+      if (onUnreachable) {
+        onUnreachable(peerUrl);
+        return [];
+      }
     }
     const res = await local(sql, args).all<T>().catch(() => null);
     return res?.results ?? [];
@@ -80,9 +94,20 @@ export const novelDbFor = (env: Env, seriesId: string) => {
   return novelDb(owner.self ? env.DB : peerReadD1(env, owner.url));
 };
 
-/** novelDb bound to one specific peer's D1, for queries with no single owner. */
-export const novelDbOn = (env: Env, peerUrl: string): ReturnType<typeof novelDb> =>
-  novelDb(peerUrl === '' ? env.DB : peerReadD1(env, peerUrl));
+/** novelDb bound to one specific peer's D1, for queries with no single owner.
+ *  Every origin it is given is pushed to `unreachable` when that shard cannot be
+ *  read, so a caller that merges shards can say which ones it is missing instead
+ *  of answering for them. */
+export const novelDbOn = (
+  env: Env,
+  peerUrl: string,
+  unreachable?: string[]
+): ReturnType<typeof novelDb> =>
+  novelDb(
+    peerUrl === ''
+      ? env.DB
+      : peerReadD1(env, peerUrl, unreachable ? (url) => { if (!unreachable.includes(url)) unreachable.push(url); } : undefined)
+  );
 
 /** Every shard except this one. The catalog is not sharded by key, so listing it
  *  means asking all of them. */

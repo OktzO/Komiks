@@ -100,28 +100,37 @@ router.get('/novel/catalog', async (c) => {
   const payload = await readThrough(c, `novel:catalog:${genre ?? ''}:${page}:${limit}`, 600, async () => {
     // The catalogue shards by series, so it has no single owner: every shard's
     // window is merged here, otherwise a worker would list only its own quarter.
-    const shards = ['', ...peerUrls(c.env)].map((url) => novelDbOn(c.env, url));
+    const unreadable: string[] = [];
+    const shards = ['', ...peerUrls(c.env)].map((url) => novelDbOn(c.env, url, unreadable));
     const window = Math.min(MERGE_WINDOW, offset + limit);
     const [rows, counts] = await Promise.all([
       Promise.all(shards.map((db) => db.listSeries({ genre, limit: window, offset: 0 }))),
       Promise.all(shards.map((db) => db.countSeries(genre))),
     ]);
+    if (unreadable.length > 0) {
+      console.error(
+        `[novel] catalog: ${unreadable.length} of ${shards.length} shard(s) unreachable,`
+        + ` serving a partial catalogue: ${unreadable.join(', ')}`
+      );
+    }
     const seen = new Set<string>();
     const merged = rows.flat().filter((s) => (seen.has(s.id) ? false : (seen.add(s.id), true)));
     merged.sort(byNewest);
     const onPage = merged.slice(offset, offset + limit);
-    // The raw per-shard sum is not the catalogue size: after a PEER_URLS change a
-    // series sits on two shards, so the list above shows it once while the sum
-    // counts it twice and the derived page count is wrong. While every shard
-    // answered with a short window the merge saw the whole catalogue, so the
-    // deduped id set is the exact size. A saturated window cannot see the
-    // duplicates outside it, so there the sum is the best available estimate —
-    // clamped to what the merge can actually return.
+    // The per-shard sum is the catalogue size, and the pager's last page is
+    // derived from it, so it must not be the size of the window the merge could
+    // read. Clamping it to shards × window is what answered 0 and 4 where the
+    // catalogue held 98: one shard's own rows, read through a one-row window.
+    // The raw sum is not the catalogue size either — after a PEER_URLS change a
+    // series sits on two shards, so the list shows it once while the sum counts
+    // it twice. While every shard answered with a short window the merge saw the
+    // whole catalogue, so the deduped id set is exact; a saturated window cannot
+    // see the duplicates outside it, and there the sum is the answer.
     const counted = new Set<string>();
     for (const shardRows of rows) for (const s of shardRows) counted.add(s.id);
     const saturated = rows.some((shardRows) => shardRows.length >= window);
     const total = saturated
-      ? Math.min(counts.reduce((sum, n) => sum + n, 0), shards.length * window)
+      ? counts.reduce((sum, n) => sum + n, 0)
       : counted.size;
     return {
       data: await Promise.all(onPage.map(async (s) => ({ ...s, cover_url: await coverUrlFor(c.env, s) }))),

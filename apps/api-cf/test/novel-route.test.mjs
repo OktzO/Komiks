@@ -133,13 +133,24 @@ const envFor = (over = {}) => {
 
 // Answers /api/_internal/db/query for the listed peer origins, which is how
 // novelShard.ts reaches a shard it does not own. Anything else 500s, which is
-// what makes a missing forward visible as a 404.
+// what makes a missing forward visible as a 404. A listed list query is windowed
+// exactly as a real D1 would, because the merge asks every shard for the same
+// window and the whole point of a multi-shard test is a shard with more rows
+// than the window.
 const peerForward = (byOrigin) => (input, init) => {
   const origin = new URL(String(input)).origin;
   const body = JSON.parse(init.body);
   const rows = byOrigin[origin]?.[body.table];
   if (!rows) return Promise.resolve(new Response('', { status: 500 }));
-  const results = body.sql.includes('COUNT(*)') ? [{ c: rows.length }] : rows;
+  let results = rows;
+  if (!body.sql.includes('COUNT(*)')) {
+    const nums = body.params.filter((p) => typeof p === 'number');
+    const limit = nums[0] ?? rows.length;
+    const offset = nums[1] ?? 0;
+    results = rows.slice(offset, offset + limit);
+  } else {
+    results = [{ c: rows.length }];
+  }
   return Promise.resolve(new Response(JSON.stringify({ ok: true, results }), {
     headers: { 'content-type': 'application/json' },
   }));
@@ -503,4 +514,77 @@ test('total counts what the merged list can actually reach, never a double count
   assert.equal(res.status, 200);
   assert.equal(body.data.length, 1, 'the duplicated row is deduped out of the list');
   assert.equal(body.total, 1, 'and counted once, not once per shard holding it');
+});
+
+// The distribution production was measured at, one shard holding nothing at all:
+// manga-api (akun-1) 0 / manga-api-2 39 / manga-api-3 24 / manga-api-4 35. The
+// pager derives its last page from `total`, so what has to be right is the size
+// of the catalogue, not of the window the merge could read. `total` used to be
+// clamped to shards × window, which turned 98 into 4 on a limit=1 read and into
+// 0 on the origin whose own shard was empty — and 4 pages of 4 rows is a
+// catalogue a reader can page to the end of without ever seeing the other 94.
+test('total is the catalogue size across the shard set, not the size of the merge window', async () => {
+  const rowsFor = (n, tag) => Array.from({ length: n }, (_, i) => series(`novelid-${tag}-${i}`, { updated_at: 1000 - i }));
+  const local = [];
+  const w1 = rowsFor(39, 'b');
+  const w2 = rowsFor(24, 'c');
+  const w3 = rowsFor(35, 'd');
+  const { client } = stubD1({ series: local });
+  const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '0' });
+  const shards = {
+    'https://w1.test': { novel_series: w1 },
+    'https://w2.test': { novel_series: w2 },
+    'https://w3.test': { novel_series: w3 },
+  };
+
+  const first = await call('/api/novel/catalog?limit=1', env, { fetchImpl: peerForward(shards) });
+  assert.equal(first.res.status, 200);
+  assert.equal(first.body.total, 98, 'every shard row is counted, on a one-row read');
+  assert.equal(first.body.data.length, 1, 'and the read itself is still the page size');
+
+  const full = await call('/api/novel/catalog?limit=50', env, { fetchImpl: peerForward(shards) });
+  assert.equal(full.body.total, 98, 'the same catalogue size on a wide read');
+  assert.equal(full.body.data.length, 50, 'the wide read merges what the window reached');
+});
+
+// One shard's read-forward is refused — a missing or rotated DB_FORWARD_KEY is
+// exactly this, and a worker's internal route answers 403 rather than erroring —
+// and novelShard's read facade falls back to the *local* D1. For a single-series
+// read that net is right (the row may be a re-partition leftover), but a
+// catalogue merge asks a peer for a peer's rows: answering it with this worker's
+// own rows means the shard is silently absent while the response still looks
+// complete, and its COUNT is counted again. The merge has to report the hole
+// instead of covering it.
+test('a shard that cannot be read contributes nothing, and is not answered with the local rows', async () => {
+  const local = [series('novelid-local-a', { updated_at: 900 }), series('novelid-local-b', { updated_at: 800 })];
+  const w1 = [series('novelid-w1', { updated_at: 700 })];
+  const w3 = [series('novelid-w3', { updated_at: 600 })];
+  const { client } = stubD1({ series: local });
+  const env = envFor({ DB: client, PEER_URLS: FOUR_PEERS, PEER_INDEX: '0' });
+  const errors = [];
+  const log = console.error;
+  console.error = (...args) => { errors.push(args.join(' ')); };
+  let result;
+  try {
+    // w2 answers 403 and w3 is not listed at all, so both holes are exercised.
+    const forward = (input, init) => {
+      const origin = new URL(String(input)).origin;
+      if (origin === 'https://w2.test') return Promise.resolve(new Response('{"error":"forbidden"}', { status: 403 }));
+      return peerForward({ 'https://w1.test': { novel_series: w1 } })(input, init);
+    };
+    result = await call('/api/novel/catalog?limit=1', env, { fetchImpl: forward });
+  } finally {
+    console.error = log;
+  }
+
+  assert.equal(result.res.status, 200, 'a hole in the ring still serves what is readable');
+  assert.equal(result.body.total, 3, 'the count is the readable catalogue, not the window and not a double count');
+  assert.ok(
+    errors.some((line) => line.includes('w2.test') && line.includes('unreachable')),
+    `the unreadable shards are named in the log, got: ${JSON.stringify(errors)}`,
+  );
+  assert.ok(
+    errors.some((line) => line.includes('w3.test')),
+    `a shard that is not even reachable is named too, got: ${JSON.stringify(errors)}`,
+  );
 });
