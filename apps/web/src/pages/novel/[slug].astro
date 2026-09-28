@@ -9,11 +9,19 @@ import { chapterNumberOf, novelCatalogUrl, parseNovelGenres } from '@/lib/novelR
 export const prerender = false;
 
 // Async-first: the detail payload carries the series AND its first chapter
-// window, so one 300ms-budgeted call covers the whole page. A settled rejection
+// window, so one budgeted call covers the whole page. A settled rejection
 // that is NOT an upstream 404 is an outage, not a missing series — see
 // [type]/[slug]/[chapterId].astro:59. Only a real 404 sets 404, so a Worker
 // outage can never tell a crawler the content does not exist.
-const BUDGET_MS = 300;
+//
+// Unlike the catalogue grid, nothing on this page recovers a lost race: the
+// chapter list below is an island that fetches itself, but the series header
+// is server-rendered only. 300ms lost roughly half of these renders to a
+// skeleton with no author, no synopsis and no read button, because the read
+// costs two cross-worker hops — the origins pool and then the series — and
+// they came to ~250-350ms together. The budget has to clear the whole chain
+// or the page has to render it; there is nothing in between to do that.
+const BUDGET_MS = 900;
 
 const slug = Astro.params.slug ?? '';
 
