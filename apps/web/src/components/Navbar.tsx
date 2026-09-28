@@ -7,7 +7,6 @@ const LINKS = [
   { href: '/bookmark', label: 'Bookmark' },
   { href: '/history', label: 'Riwayat' },
   { href: '/status', label: 'Status' },
-  { href: '/novel', label: 'Novel' },
 ] as const;
 
 export function Navbar() {
