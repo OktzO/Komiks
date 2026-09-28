@@ -36,6 +36,21 @@ test('resolveNovelRoute declines anything outside /novel', () => {
   }
 });
 
+// The chapter page resolves its two segments through this helper and then hands
+// the id to getNovelChapter, which encodes it into the API path. An id still
+// encoded at that point becomes "tekaburu%252F1" and 404s every chapter, so the
+// decoded id is the contract the reader depends on.
+test('a chapter id from the resolver survives the API path encoding', () => {
+  const route = resolveNovelRoute('/novel/abc/tekaburu%2F1');
+  assert.equal(route.kind, 'chapter');
+  const id = route.kind === 'chapter' ? route.chapterId : '';
+  assert.equal(
+    `/api/novel/series/${encodeURIComponent('abc')}/chapter/${encodeURIComponent(id)}`,
+    '/api/novel/series/abc/chapter/tekaburu%2F1',
+    'the API sees one level of encoding, the composite id whole',
+  );
+});
+
 test('isNovelPath separates the novel module from the manga shell', () => {
   assert.equal(isNovelPath('/novel/abc'), true);
   assert.equal(isNovelPath('/novel'), true);

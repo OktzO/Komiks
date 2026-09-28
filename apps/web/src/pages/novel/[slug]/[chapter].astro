@@ -3,7 +3,7 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 import NotFoundPage from '@/components/pages/NotFoundPage';
 import { NovelReader } from '@/components/NovelReader';
 import { getNovelChapter, getNovelSeries, isNotFound } from '@/lib/api';
-import { chapterNumberOf } from '@/lib/novelRoutes';
+import { chapterNumberOf, resolveNovelRoute } from '@/lib/novelRoutes';
 
 export const prerender = false;
 
@@ -21,9 +21,14 @@ const CHAPTER_BUDGET_MS = 400;
 const budget = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
   Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
 
-const slug = Astro.params.slug ?? '';
-// Composite "{seriesSlug}/{babNumber}" — bound whole as one encoded segment.
-const chapterId = Astro.params.chapter ?? '';
+// Both segments come from the shared resolver, which decodes each one exactly
+// once and survives a malformed escape. Astro.params is the *raw* segment, so a
+// composite chapter id still reads as "slug%2F1" here — and getNovelChapter
+// encodes it for the API path, so encoding the raw value a second time asked
+// for "slug%252F1" and 404'd every chapter.
+const route = resolveNovelRoute(Astro.url.pathname);
+const slug = route.kind === 'chapter' ? route.slug : '';
+const chapterId = route.kind === 'chapter' ? route.chapterId : '';
 
 const settled = await Promise.race([
   getNovelChapter(slug, chapterId)
