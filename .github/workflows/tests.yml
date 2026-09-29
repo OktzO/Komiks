@@ -45,12 +45,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pinned to the floor rather than latest 22.x, because 22.12 is the
-      # oldest version that astro accepts: an accidental use of a newer Node
-      # API then fails here instead of on a deploy machine.
+      # Pinned to the floor rather than latest 22.x, so an accidental use of a
+      # newer Node API fails here instead of on a deploy machine. The floor is
+      # 22.13, not astro's 22.12: node:sqlite was still behind
+      # --experimental-sqlite up to 22.12, so the db test below dies with
+      # ERR_UNKNOWN_BUILTIN_MODULE there. Unflagged in 22.13.0.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.12'
+          node-version: '22.13'
           cache: npm
       - uses: oven-sh/setup-bun@v2
         with:
@@ -60,7 +62,7 @@ jobs:
       # Astro!"), so the web suite and build cannot share the Node 20 job.
       - run: npm --prefix apps/web test
       - run: npm --prefix apps/web run build
-      # node:sqlite exists only from Node 22, so this one db test cannot be in
+      # node:sqlite needs 22.13 unflagged, so this one db test cannot be in
       # packages/db's own test script without breaking the Node 20 job.
       - run: npm --prefix packages/db run test:sqlite
       # astro check exits 1 for "there are errors" without saying which, so

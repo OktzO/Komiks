@@ -21,6 +21,14 @@ import { test } from 'node:test';
 import { getNovelChapter, getNovelSeries, isNotFound } from '../src/lib/api';
 import { chapterNumberOf, resolveNovelRoute } from '../src/lib/novelRoutes';
 
+// `bun test` is the runner for this suite, so `Bun.Transpiler` is the transpiler
+// that is actually there. Only the one call this file makes is declared: the
+// package pulls no bun types, and a full `@types/bun` for a single constructor
+// would be a dependency bought for a declaration.
+declare const Bun: {
+  Transpiler: new (opts: { loader: 'ts' }) => { transformSync: (code: string) => string };
+};
+
 const PAGE = '../src/pages/novel/[slug]/[chapter].astro';
 
 const frontmatter = (): string => {
@@ -31,16 +39,11 @@ const frontmatter = (): string => {
   return body.replace(/^import .*$/gm, '').replace(/^export /gm, '');
 };
 
+/** The frontmatter as a function body — a string, which is what `new Function`
+ *  takes as its last argument. */
 const page = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   `return (async () => {\n${frontmatter()}\n})()`,
-) as unknown as (
-  astro: unknown,
-  getNovelChapter: unknown,
-  getNovelSeries: unknown,
-  isNotFound: unknown,
-  chapterNumberOf: unknown,
-  resolveNovelRoute: unknown,
-) => Promise<unknown>;
+);
 
 /** Astro's stub, faithful on the one point that matters: `params` carries the
  *  raw segment while `url.pathname` carries the same string still encoded. A
