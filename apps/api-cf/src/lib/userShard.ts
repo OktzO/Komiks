@@ -1,5 +1,4 @@
 import type { Env } from './context';
-import { db } from '@manga-platform/db';
 import { ownerFor, internalExec, internalQuery } from './peers';
 import { enqueueOutbox } from './dbWrite';
 
@@ -67,5 +66,3 @@ export const queryOnUserOwner = async <T>(
     return null;
   }
 };
-
-export const localDb = (env: Env) => db(env.DB);

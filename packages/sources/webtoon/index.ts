@@ -8,37 +8,6 @@ import { mapStatusText } from '@manga-platform/shared/status';
 import { WEBTOON_BASE, WEBTOON_API, fetchJson, fetchHtml, fetchRobots, isPathAllowed, extractTitleNo, buildSearchUrl, buildSeriesDetailUrl, buildEpisodeViewerUrl } from './client.js';
 import type { WebtoonFetchEnv, RobotsResult } from './client.js';
 
-interface WebtoonSeriesItem {
-  titleNo: number;
-  titleName: string;
-  authorName: string;
-  thumbnailUrl: string;
-  genreName: string;
-  serviceUrl: string;
-  status?: string;
-  dailyPassYn?: string;
-  ageGrade?: string;
-}
-
-interface WebtoonSeriesDetail {
-  titleNo: number;
-  titleName: string;
-  authorName: string;
-  introduction: string;
-  thumbnailUrl: string;
-  genreName: string;
-  serviceUrl: string;
-  status: string;
-  dailyPassYn: string;
-  ageGrade: string;
-  likeCount: number;
-  viewCount: number;
-  updateDay: string;
-  completed: boolean;
-  cartoonType: string;
-  representTagList?: string[];
-}
-
 interface MobileSeriesItem {
   id: number;
   title: string;
@@ -128,32 +97,22 @@ const parseSeriesDetailHtml = (html: string): SeriesDetailHtml => {
   const thumbMatch = html.match(/<div[^>]*class="[^"]*thmb[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/);
   const thumbnail = ogImageMatch?.[1] ?? thumbMatch?.[1] ?? '';
   
-  // Status from p.day_info
+  // Status from p.day_info. Same mapper as the API path — the ternaries here
+  // were a second copy of it that ended in 'ongoing' for an unrecognised label.
   const statusMatch = html.match(/<p[^>]*class="[^"]*day_info[^"]*"[^>]*>([\s\S]*?)<\/p>/);
   const statusText = statusMatch ? statusMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-  const status = statusText.toLowerCase().includes('up') || statusText.toLowerCase().includes('ongoing') || statusText.toLowerCase().includes('연재')
-    ? 'ongoing'
-    : statusText.toLowerCase().includes('end') || statusText.toLowerCase().includes('completed') || statusText.toLowerCase().includes('완결')
-      ? 'completed'
-      : statusText.toLowerCase().includes('hiatus') || statusText.toLowerCase().includes('휴재')
-        ? 'hiatus'
-        : 'ongoing';
+  const status = mapWebtoonStatus(statusText, false);
 
   return { title, author, artist, genre: genres.join(', '), description, thumbnail, status };
 };
 
-const parseChapterNumber = (title: string): number => {
-  const m = title.match(/(\d+(?:\.\d+)?)/);
-  return m ? parseFloat(m[1]) : 0;
-};
-
+// `completed` is a separate boolean on the API, so it wins over the label. The
+// label itself goes through the shared mapper: this adapter used to fall back to
+// 'ongoing', which is exactly the invented status the whole path exists to
+// avoid — a series with no status line rendered as "Ongoing" instead of "-".
 const mapWebtoonStatus = (status: string, completed: boolean): Series['status'] => {
   if (completed) return 'completed';
-  const s = status?.toLowerCase() ?? '';
-  if (s.includes('ongoing') || s.includes('연재') || s.includes('update') || s.includes('up')) return 'ongoing';
-  if (s.includes('completed') || s.includes('완결') || s.includes('finish') || s.includes('end')) return 'completed';
-  if (s.includes('hiatus') || s.includes('휴재') || s.includes('pause')) return 'hiatus';
-  return 'ongoing';
+  return mapStatusText(status);
 };
 
 const mapWebtoonType = (genre: string): Series['type'] => {
@@ -254,7 +213,6 @@ export const webtoonAdapter = (env?: WebtoonFetchEnv) => {
           const detail = parseSeriesDetailHtml(html);
           
           // Get episodes for link and genre info
-          const episodeUrl = buildSeriesDetailUrl('webtoon', sourceId);
           const episodeData = await fetchJson<{ result: { episodeList: MobileEpisode[] } }>(`${WEBTOON_API}/webtoon/${sourceId}/episodes?pageSize=1`);
           const firstEp = episodeData?.result?.episodeList?.[0];
           
@@ -270,6 +228,8 @@ export const webtoonAdapter = (env?: WebtoonFetchEnv) => {
             cover_image: sanitizeCoverUrl(detail.thumbnail),
             genres: detail.genre ? detail.genre.split(',').map(g => g.trim()).filter(Boolean) : undefined,
             type: mapWebtoonType(detail.genre),
+            // parseSeriesDetailHtml already mapped the label; the cast was
+            // passing an unmapped string straight into Series.status.
             status: detail.status as Series['status'],
             author: detail.author || detail.artist || null,
             language: 'id',

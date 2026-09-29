@@ -7,8 +7,8 @@ import { getDb } from '../lib/context';
 import type { Env, Context } from '../lib/context';
 import { allowedOriginFor } from '../lib/context';
 import { retryUpstream } from '../lib/retry';
-import { readThroughCache, matchEdgeCache, putEdgeCache, waitForLockClear } from '../lib/readThroughCache';
-import { resolveB2Accounts, pickB2AccountIdx, b2AccountForIdx, type B2Account } from '../lib/b2Config.ts';
+import { readThroughCache, matchEdgeCache } from '../lib/readThroughCache';
+import { resolveB2Accounts, pickB2AccountIdx, b2AccountForIdx } from '../lib/b2Config.ts';
 import { addB2Usage, addB2UsageGlobal, usageRatio } from '../lib/b2Usage';
 import { enqueueOutbox } from '../lib/dbWrite';
 import { ownerFor, internalExec, internalQuery, peerKvGet } from '../lib/peers';
@@ -607,6 +607,9 @@ export const enrichChapterCounts = async (
   const targets = rows.map((r) => ({ source: r.source, sourceSlug: r.source_slug }));
   if (targets.length === 0) return;
   // Slug kanonik utk FK chapters.series_slug → series.slug (bukan source slug).
+  // `getSeriesById` bisa gagal; tanpa slug kanonik tidak ada FK yang benar untuk
+  // dituju, jadi chapter hasil scrape dibuang daripada ditulis ke slug source —
+  // yangFK-nya ke series lain, atau ditolak D1.
   const canon = await db.getSeriesById(mangaId).catch(() => null);
   const canonSlug = canon?.slug ?? null;
   const counted = await Promise.allSettled(
@@ -627,20 +630,20 @@ export const enrichChapterCounts = async (
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
     const hit = counted[i];
-    if (hit?.status === 'fulfilled') {
-      upsertStmts.push(
-        c.env.DB.prepare(
-          `INSERT INTO manga_source_link (manga_id, source, source_slug, has_chapter_list, chapter_count, last_scraped_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-           ON CONFLICT(source, source_slug) DO UPDATE SET
-             manga_id = excluded.manga_id,
-             has_chapter_list = excluded.has_chapter_list,
-             chapter_count = excluded.chapter_count,
-             last_scraped_at = excluded.last_scraped_at`
-        ).bind(mangaId, t.source, t.sourceSlug, 1, hit.value.count, hit.value.lastScrapedAt)
-      );
-      c.executionCtx.waitUntil(db.upsertChapters({ seriesSlug: t.sourceSlug, chapters: hit.value.chapters }).catch(() => {}));
-    }
+      if (hit?.status === 'fulfilled' && canonSlug) {
+        upsertStmts.push(
+          c.env.DB.prepare(
+            `INSERT INTO manga_source_link (manga_id, source, source_slug, has_chapter_list, chapter_count, last_scraped_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(source, source_slug) DO UPDATE SET
+               manga_id = excluded.manga_id,
+               has_chapter_list = excluded.has_chapter_list,
+               chapter_count = excluded.chapter_count,
+               last_scraped_at = excluded.last_scraped_at`
+          ).bind(mangaId, t.source, t.sourceSlug, 1, hit.value.count, hit.value.lastScrapedAt)
+        );
+        c.executionCtx.waitUntil(db.upsertChapters({ seriesSlug: canonSlug, chapters: hit.value.chapters }).catch(() => {}));
+      }
   }
   if (upsertStmts.length > 0) {
     await c.env.DB.batch(upsertStmts).catch(() => []);

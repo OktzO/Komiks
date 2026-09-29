@@ -1,11 +1,7 @@
-import { useEffect, useRef, useState, useTransition } from 'react';
-import { SOURCE_ORDER, sourceLabel } from './SourceBadge';
-import { isValidType, typedChapterUrl, typedUrl, type ComicType } from '@/lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { sourceLabel } from './SourceBadge';
+import { safeType, typedChapterUrl, typedUrl } from '@/lib/api';
 import { chooseSource, orderedSources, type SourceLink as ChoiceLink } from '@/lib/sourceChoice';
-
-// Type tak dikenal/absen → 'manga' (route kanonik redirect ke type benar).
-const safeType = (t?: string | null): ComicType =>
-  isValidType(t ?? '') ? (t as ComicType) : 'manga';
 
 // Source switcher. Two modes:
 // - 'detail': a "Source" button under the manga title. Tap → dropdown panel

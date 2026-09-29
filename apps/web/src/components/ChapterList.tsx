@@ -1,10 +1,6 @@
 import { useMemo, useState } from 'react';
 import { WindowedList } from './WindowedList';
-import { isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
-
-// Type wajib (semua caller pass). Nilai aneh → 'manga' (route kanonik redirect).
-const safeType = (t?: string | null): ComicType =>
-  isValidType(t ?? '') ? (t as ComicType) : 'manga';
+import { safeType, typedChapterUrl } from '@/lib/api';
 
 interface Ch { id: string; chapter_number: number; title?: string | null; published_at?: number | null; pages_count?: number }
 

@@ -3,7 +3,6 @@ import type {
   Series,
   Chapter,
   ChapterPage,
-  Bookmark,
   ReadingHistory,
   LbSettings,
   LbAccount,
@@ -639,7 +638,13 @@ export const db = (client: D1Database): Db => {
     // Hot-path dedup: after a series is upserted, find duplicates.
     //   exact match -> auto-merge (keep row with most chapters)
     //   fuzzy >= 0.92 (or ambiguous exact/queue) -> manga_merge_queue for admin
-    async dedupeOnIndex({ source, sourceSlug, title, altTitles }: { source: string; sourceSlug: string; title: string; altTitles?: string[] }) {
+    // ponytail: `altTitles` is accepted and ignored. `matchCandidate` only
+    // scores the incoming `title`, though it reads every candidate's alt_titles
+    // — so a series whose *alternate* title is the match never merges. Feeding
+    // it through means scoring the new row's alt titles too, which can lower a
+    // fuzzy score and change what auto-merges. Not a cleanup; needs a decision
+    // about the merge threshold.
+    async dedupeOnIndex({ source, sourceSlug, title }: { source: string; sourceSlug: string; title: string; altTitles?: string[] }) {
       const all = await this.getAllSeriesTitles();
       if (!all.length) return { merged: false, queued: false };
       const candidates: MatchCandidate[] = all.map((s) => ({

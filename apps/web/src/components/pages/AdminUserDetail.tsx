@@ -1,12 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { fetchMe, apiGet, roleLabel, isValidType, typedUrl, type AuthUser, type ComicType } from '@/lib/api';
+import { fetchMe, apiGet, roleLabel, safeType, typedUrl, type AuthUser } from '@/lib/api';
 import { Card, CardHead, fmtNum, EmptyState } from '@/components/admin/charts';
-
-// Admin bookmarks API belum kirim `type` — safeType(undefined) → '/manga'
-// (route kanonik redirect ke type benar). Field opsional siap saat API nambah.
-const safeType = (t?: string | null): ComicType =>
-  isValidType(t ?? '') ? (t as ComicType) : 'manga';
 
 type UserDetail = {
   id: number;

@@ -37,8 +37,6 @@ let readSource = '';
 let candidates: string[] = [];
 if (resolved) {
   const src0 = resolved.recommendedSource ?? resolved.source;
-  const link = resolved.sources.find((l) => l.source === src0);
-  const sourceSlug = link?.sourceSlug ?? resolved.sourceSlug;
   // Chapter id hidup di namespace per-source; urutan chosen → kanonik (sama
   // dgn server loop) — dipakai juga oleh island saat self-fetch.
   candidates = [...new Set([src0, resolved.source])];

@@ -17,15 +17,15 @@ export function Reader({
   apiUrl,
   nextChapterId,
   mode: modeProp,
-  onModeChange,
   onActivePage,
 }: {
   source: string;
   pages: { proxyUrl: string; imgUrl?: string | null; b2Url?: string | null }[];
   apiUrl: string;
   nextChapterId?: string | null;
+  // Mode is owned by ReaderShell, which is also where the toggle lives. Reader
+  // has no control of its own, so it takes no callback for one.
   mode?: 'scroll' | 'page';
-  onModeChange?: (m: 'scroll' | 'page') => void;
   onActivePage?: (i: number) => void;
 }) {
   const [idx, setIdx] = useState(0);

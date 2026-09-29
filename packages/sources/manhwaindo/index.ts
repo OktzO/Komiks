@@ -94,8 +94,8 @@ const parseChapterList = (html: string, seriesSlug: string): Chapter[] => {
   const listBlock = html.match(/<div[^>]*class="[^"]*eplister[^"]*"[^>]*id="chapterlist"[\s\S]*?<\/ul>/)?.[0]
     ?? html.match(/id="chapterlist"[\s\S]*?<\/ul>/)?.[0] ?? '';
   if (!listBlock) return [];
-  const items = Array.from(listBlock.matchAll(/<li([^>]*)>([\s\S]*?)<\/li>/g));
-  return items.map(([, attrs, li]) => {
+  const items = Array.from(listBlock.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g));
+  return items.map(([, li]) => {
     const href = li.match(/href="([^"]+)"[^>]*>/)?.[1] ?? '';
     const id = href.split('/').filter(Boolean).pop() ?? '';
     const title = li.match(/<span class="chapternum">([^<]+)<\/span>/)?.[1]?.replace(/^Chapter\s*/i, '').trim() ?? null;

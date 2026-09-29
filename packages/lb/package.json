@@ -8,7 +8,6 @@
     ".": "./index.ts",
     "./crypto": "./crypto.ts",
     "./accounts": "./accounts.ts",
-    "./router": "./router.ts",
     "./provision": "./provision.ts"
   },
   "dependencies": {
@@ -18,6 +17,10 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240802.0",
     "typescript": "^5.9.3",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "tsx": "^4.23.12"
+  },
+  "scripts": {
+    "test": "tsx test/crypto.test.mjs && tsx test/accounts.test.mjs && tsx test/provision.test.mjs"
   }
 }

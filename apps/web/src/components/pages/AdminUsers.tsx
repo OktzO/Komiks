@@ -14,11 +14,6 @@ type UserSummary = {
   bookmark_count: number;
 };
 
-function formatDate(ts: number | null): string {
-  if (!ts) return '—';
-  return new Date(ts * 1000).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
 function fmtRel(ts: number | null): string {
   if (!ts) return '—';
   const d = Math.max(0, Math.floor(Date.now() / 1000 - ts));

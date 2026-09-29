@@ -3,7 +3,7 @@
 // source-of-truth = KV + tabel b2_usage global.
 import type { Context, Env } from './context';
 import { writeWithFallback } from './dbWrite';
-import { internalExec, internalQuery } from './peers';
+import { internalExec } from './peers';
 
 const primaryOrigin = (env: Env): string | null => {
   try {
@@ -159,22 +159,6 @@ export const addB2UsageGlobal = async (c: Context, accountName: string, delta: n
   }
 };
 
-export const getB2UsageGlobal = async (c: Context, accountName: string): Promise<number | null> => {
-  try {
-    const row = await c.env.DB.prepare('SELECT bytes FROM b2_usage WHERE account_name = ?1')
-      .bind(accountName)
-      .first<{ bytes: number }>();
-    if (typeof row?.bytes === 'number') return row.bytes;
-  } catch {}
-  const origin = primaryOrigin(c.env);
-  if (!origin) return null;
-  const rows = await internalQuery<{ bytes: number }>(
-    c.env, origin, 'SELECT bytes FROM b2_usage WHERE account_name = ?1', [accountName], 'b2_usage'
-  ).catch(() => null);
-  const bytes = rows?.[0]?.bytes;
-  return typeof bytes === 'number' ? bytes : null;
-};
-
 export const decB2UsageGlobal = async (env: Env, accountName: string, delta: number): Promise<void> => {
   const origin = primaryOrigin(env);
   if (!origin || delta <= 0) return;
@@ -183,15 +167,4 @@ export const decB2UsageGlobal = async (env: Env, accountName: string, delta: num
     params: [delta, Math.floor(Date.now() / 1000), accountName],
     table: 'b2_usage',
   }).catch(() => {});
-};
-
-export const setB2UsageGlobal = async (c: Context, accountName: string, bytes: number): Promise<void> => {
-  try {
-    await writeWithFallback(
-      c,
-      'b2_usage',
-      'INSERT INTO b2_usage (account_name, bytes, updated_at) VALUES (?, ?, ?) ON CONFLICT(account_name) DO UPDATE SET bytes = excluded.bytes, updated_at = excluded.updated_at',
-      [accountName, bytes, Math.floor(Date.now() / 1000)]
-    );
-  } catch {}
 };

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { identifyImage } from '@manga-platform/vision';
 import type { Env, Context } from '../lib/context';
-import { getDb, json, sha256Hex } from '../lib/context';
+import { getDb, json } from '../lib/context';
 import { resolveB2Accounts, pickB2AccountIdx, type B2Account } from '../lib/b2Config.ts';
 import { b2PutObject } from '../lib/s3Upload.ts';
 import { addB2Usage, addB2UsageGlobal } from '../lib/b2Usage';

@@ -45,12 +45,6 @@ export const parseB2Accounts = (raw: string | undefined): B2Account[] => {
   return out;
 };
 
-// Legacy single-config accessor — returns first account or null.
-export const parseB2Config = (raw: string | undefined): B2Account | null => {
-  const arr = parseB2Accounts(raw);
-  return arr.length > 0 ? arr[0] : null;
-};
-
 // Resolve account by r2_account_idx value from D1 chapter_pages.
 // -1 → B2-A (index 0), -2 → B2-B (index 1), etc.
 // Returns null if idx out of range.

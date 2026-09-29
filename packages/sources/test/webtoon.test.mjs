@@ -102,3 +102,24 @@ test('search function exists', () => {
   const adapter = webtoonAdapter();
   assert.ok(typeof adapter.search === 'function');
 });
+
+// Webtoons labels status in Korean as often as English, and the API's own
+// `completed` boolean is a separate signal from the label. Both used to collapse
+// to 'ongoing' when the label was absent, which is the invented status the
+// shared mapper exists to prevent.
+test('status: Korean labels map, and a missing label is unknown, not ongoing', () => {
+  const adapter = webtoonAdapter();
+  const status = (patch) => adapter.getSeriesFromFixtureForTest({
+    ...mobileSeriesDetailFixture,
+    status: undefined,
+    ...patch,
+  }).status;
+
+  assert.equal(status({ status: '연재' }), 'ongoing');
+  assert.equal(status({ status: '완결' }), 'completed');
+  assert.equal(status({ status: '휴재' }), 'hiatus');
+  assert.equal(status({ status: 'UP' }), 'ongoing');
+  assert.equal(status({ status: '' }), 'unknown');
+  // The boolean is its own signal and outranks a missing label.
+  assert.equal(status({ status: undefined, completed: true }), 'completed');
+});

@@ -29,6 +29,11 @@ jobs:
       - run: npm --prefix apps/api-cf test
       - run: npm --prefix packages/db test
       - run: npm --prefix packages/sources test
+      # These two had test files and no test script, so nothing ran them: a suite
+      # that cannot fail is not a suite. Both declare tsx now, so they go through
+      # their own package script like every other package above.
+      - run: npm --prefix packages/lb test
+      - run: npm --prefix packages/vision test
       # packages/shared has tests but no test script and no tsx of its own;
       # borrowing db's workspace copy is the shortest path that runs. Give it a
       # devDependency when a lockfile bump is worth the churn.

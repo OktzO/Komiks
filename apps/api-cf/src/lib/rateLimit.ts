@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from 'hono';
-import type { Env, Context } from './context';
+import type { Env } from './context';
 
 // ─── In-memory rate limiter (no KV) ─────────────────────────────────────────
 //

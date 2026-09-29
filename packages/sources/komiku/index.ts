@@ -154,7 +154,10 @@ const parseDetailHtml = (html: string): { title: string; synopsis: string | null
   return { title, synopsis: synopsisDecoded, cover_image: cover, author, status, type, genres, alt_titles };
 };
 
-export const komikuAdapter = (env?: AdapterEnv) => {
+// ponytail: `env` is unused. The interface takes env on every method so a
+// browser-backed adapter can satisfy it; komiku only needs a UA header, which it
+// builds itself. Drop the param when the interface allows a narrower adapter.
+export const komikuAdapter = (_env?: AdapterEnv) => {
   return {
     sourceKey: 'komiku' as const,
 

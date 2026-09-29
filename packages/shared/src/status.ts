@@ -4,9 +4,15 @@
 // DB CHECK series.status tidak menerima 'unknown' (upsertSeries men-sanitize).
 export type MappedStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 
-const COMPLETED_RE = /(^|\W)(end|tamat|selesai|completed|complete|finished|tamat)(\W|$)/;
-const HIATUS_RE = /(^|\W)(hiatus|on-hold|on hold|paused|drop|discarded)(\W|$)/;
-const ONGOING_RE = /(ongoing|berjalan|active|still publishing|belum tamat)/;
+// 한국어 masuk di sini, bukan di adapter: webtoons.com dan platform Korea lain
+// menandai status dengan 연재/완결/휴재, dan adapter yang menebak sendiri pasti
+// keluar dari aturan "jangan pernah default ongoing".
+const COMPLETED_RE = /(^|\W)(end|tamat|selesai|completed|complete|finished|완결)(\W|$)/;
+const HIATUS_RE = /(^|\W)(hiatus|on-hold|on hold|paused|drop|discarded|휴재)(\W|$)/;
+// "UP" is webtoons' own word for releasing (day_info reads "UP" / "END"), so it
+// joins the list. Word-bounded: the webtoon adapter previously matched a bare
+// `.includes('up')`, which also fired on any label containing those letters.
+const ONGOING_RE = /(ongoing|berjalan|active|still publishing|belum tamat|연재|\bup\b)/;
 
 export const mapStatusText = (raw: string | null | undefined): MappedStatus => {
   const s = (raw ?? '').toLowerCase().trim();

@@ -70,7 +70,8 @@ const toSeries = (d: ThriveDetail): Series => {
   } as Series;
 };
 
-export const thriveAdapter = (env?: ThriveAdapterEnv) => {
+// ponytail: `env` is unused — see the same note on komikuAdapter.
+export const thriveAdapter = (_env?: ThriveAdapterEnv) => {
   // Local function (NOT a `this._fetchDetail` method): survives detached
   // invocation (`const d = adapter.getSeriesDetail; d()`), which would
   // otherwise drop `this` → TypeError → recorded as healthCheck failure.

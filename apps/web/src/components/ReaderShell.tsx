@@ -2,13 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Reader } from './Reader';
 import { SourceSwitcher } from './SourceSwitcher';
 import { WindowedList } from './WindowedList';
-import { getChapters, getChapter, imgOriginFor, isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
-
-// Canonical URL emisi: type tak dikenal → fallback 'manga' (route kanonik
-// redirect ke type benar). Definisi lokal — lib/api.ts tak boleh diedit di
-// task ini.
-const safeType = (t?: string | null): ComicType =>
-  isValidType(t ?? '') ? (t as ComicType) : 'manga';
+import { getChapters, getChapter, imgOriginFor, safeType, typedChapterUrl } from '@/lib/api';
 
 interface PageUrl {
   proxyUrl: string;
@@ -428,7 +422,6 @@ export function ReaderShell({
             apiUrl={apiUrl}
             nextChapterId={nextCh?.id ?? null}
             mode={mode}
-            onModeChange={setMode}
             onActivePage={setActiveIdx}
           />
         )}

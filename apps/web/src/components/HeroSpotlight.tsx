@@ -1,5 +1,3 @@
-import { SOURCE_ORDER, sourceLabel } from './SourceBadge';
-
 export function HeroSpotlight() {
   return (
     <section className="relative overflow-hidden pt-12 pb-10 md:pt-20 md:pb-16 text-center">

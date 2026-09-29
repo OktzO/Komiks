@@ -51,10 +51,6 @@ export const apiCspHosts = (): string[] => {
 // API_URL: worker API utama. Production via PUBLIC_API_URL (Pages env).
 export const API_URL = envPublic('PUBLIC_API_URL') || 'http://localhost:8787';
 
-// Image proxy fallback base: situs sendiri (oktzz.xyz). Dipakai bila pool
-// origin /img kosong (semua worker lain down). Priority utama: round-robin.
-export const IMG_BASE_URL = envPublic('PUBLIC_SITE_URL') || 'https://oktzz.xyz';
-
 // Auth API: primary akun-2, fallback akun-3, last resort akun-1 (main).
 // Sticky origin via sessionStorage — setelah login, semua /api/auth/* +
 // /api/user/* calls ikut origin yang dipilih (D1 split per-akun, data user
@@ -408,7 +404,7 @@ const getNextRrIndex = (len: number): number => {
 // utama (akun-1, = API_URL) yang sering penuh (test + web lain di akun itu).
 // Hash deterministik per path → halaman selalu ke worker yang sama (Workers
 // Cache per-worker hangat). `retry > 0` → geser ke worker lain (failover saat
-// worker down/429). Pool kosong → fallback IMG_BASE_URL (oktzz.xyz).
+// worker down/429). Pool kosong → fallback ke API worker yang punya /img.
 // sessionStorage 'origins' dihapus getOrigins() tiap 60s — simpan module cache
 // supaya tidak flip balik ke akun-1 di tengah sesi; warm ulang async bila kosong.
 let imgOriginsFallback: string[] | null = null;
@@ -433,8 +429,8 @@ export const imgOriginFor = (imgPath: string, retry = 0): string => {
       imgOriginsWarming = true;
       getOrigins().catch(() => {}).finally(() => { imgOriginsWarming = false; });
     }
-    // ⚠️ Fallback = API worker yang punya route /img — BUKAN IMG_BASE_URL
-    // (oktzz.xyz). Setelah cutover, oktzz.xyz = Worker Astro tanpa /img → 404.
+    // ⚠️ Fallback = API worker yang punya route /img — BUKAN oktzz.xyz.
+    // Setelah cutover, oktzz.xyz = Worker Astro tanpa /img → 404.
     if (AUTH_API_URL && AUTH_API_URL !== API_URL) return AUTH_API_URL;
     return API_URL;
   }

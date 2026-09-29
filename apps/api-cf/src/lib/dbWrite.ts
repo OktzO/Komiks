@@ -42,18 +42,6 @@ export const trackWriteSize = async (
   }
 };
 
-// Returns true if THIS account should overflow (its D1 is full).
-// Used by akun-1 to decide: write to local DB or forward to akun-2.
-export const isOverflowing = async (c: Context): Promise<boolean> => {
-  try {
-    const usage = await c.env.CACHE_KV.get(USAGE_KEY, { type: 'json' }) as { bytes: number } | null;
-    if (!usage) return false;
-    return usage.bytes > OVERFLOW_THRESHOLD_BYTES;
-  } catch {
-    return false;
-  }
-};
-
 // Forward a write to the other account's Worker via internal HTTP endpoint.
 // Requires secret DB_FORWARD_ENDPOINT + DB_FORWARD_KEY set in this Worker.
 // Used by akun-1 when its DB is full → forward to akun-2 (or vice versa).
@@ -132,23 +120,6 @@ export const writeWithFallback = async (
     return { ok: false, target: 'local', error: 'local write returned success=false' };
   } catch (err) {
     return { ok: false, target: 'local', error: String(err) };
-  }
-};
-
-// Mirror a write to local DB (read consistency for akun-1 reads).
-// Not HTTP — direct DB write (already in this Worker).
-const mirrorLocal = async (
-  c: Context,
-  table: string,
-  sql: string,
-  params: unknown[]
-): Promise<void> => {
-  try {
-    const stmt = c.env.DB.prepare(sql);
-    const bound = params.length > 0 ? stmt.bind(...params) : stmt;
-    await bound.run();
-  } catch {
-    // best-effort — read consistency not guaranteed
   }
 };
 

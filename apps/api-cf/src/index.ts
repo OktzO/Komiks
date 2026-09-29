@@ -33,7 +33,6 @@ import { writeWithFallback, flushOutbox } from './lib/dbWrite';
 import { fetchHomepageFromSources } from './routes/homepage';
 import { peerKvSet } from './lib/peers';
 import { resolveB2Accounts } from './lib/b2Config';
-import { client as dbClient } from '@manga-platform/db';
 
 // CORS: allow credentials only when origin matches the allowlist.
 // Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
@@ -95,7 +94,12 @@ app.use('/api/auth/*', noStoreMw);
 app.use('/api/user/*', noStoreMw);
 app.use('/api/admin/*', noStoreMw);
 app.use('/api/scrape/*', noStoreMw);
-app.use('/api/admin', rateLimitAdmin);
+// WAJIB `/api/admin/*`, bukan `/api/admin`. Hono mencocokkan `use(path)` hanya
+// pada path persis: `/api/admin` cocok untuk `/api/admin` saja, bukan
+// `/api/admin/overview`. Global rateLimit di bawah self-skip prefix /api/admin,
+// jadi tanpa `/*` di sini 16 dari 18 route admin tidak punya limiter sama sekali
+// — dashboard, users, settings, log, saved semua terbuka penuh.
+app.use('/api/admin/*', rateLimitAdmin);
 app.use('/api/_internal/*', rateLimitInternal);
 app.route('/api/_internal', internalRouter);
 app.use('/img/*', rateLimitImg);
@@ -118,7 +122,8 @@ app.route('/api/admin/lb', lbAdminRouter);
 app.route('/api/admin/merge', mergeAdminRouter);
 app.route('/api/admin', inventoryAdminRouter);
 // Admin monitoring: read-only endpoints (overview, providers, scrape-jobs, db-usage, users).
-// requireAdminSession (session.role===admin) enforced inside router. rateLimitAdmin applies to all /api/admin/*.
+// requireAdminSession (session.role===admin) enforced inside router. rateLimitAdmin
+// applies to every /api/admin/* sub-path — see the `/*` note above.
 app.route('/api/admin', monitoringAdminRouter);
 app.route('/api/admin', dashboardAdminRouter);
 app.route('/api/admin', savedAdminRouter);
@@ -137,11 +142,10 @@ app.use('/api/identify', rateLimitIdentify);
 app.route('/api', identifyRouter);
 
 // Scrape routes: admin key auth is enforced inside the router (requireAdminKey).
-// The admin rate limit (600/min) is registered here; note the global 60/min
-// limiter above still applies first, so effectively scrape is capped at 60/min
-// unless the global limiter is restructured. This is intentional for now —
-// scrape is an admin-only, low-frequency operation.
-app.use('/api/scrape', rateLimitAdmin);
+// `/*` so the limit also covers GET /api/scrape/:job_id, which the exact-path
+// form missed. The global 60/min limiter still applies first, so scrape ends up
+// capped at 60/min in practice — intentional, it is admin-only and infrequent.
+app.use('/api/scrape/*', rateLimitAdmin);
 app.route('/api', scrapeRouter);
 
 app.onError((err, c) => {
@@ -246,7 +250,6 @@ const snapshotUsage = async (env: Env): Promise<void> => {
   try {
     const fakeCtx = { env, executionCtx: { waitUntil: (p: Promise<unknown>) => void p } } as unknown as Context;
     const now = Math.floor(Date.now() / 1000);
-    const dbLocal = dbClient(env.DB);
     const tables = ['series', 'chapters', 'chapter_pages', 'users', 'bookmarks', 'reading_history', 'sessions', 'source_health', 'manga_source_link', 'scrape_jobs', 'lb_usage'];
     let rows = 0;
     for (const t of tables) {

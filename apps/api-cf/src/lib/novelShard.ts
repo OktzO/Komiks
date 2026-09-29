@@ -45,7 +45,7 @@ const peerReadD1 = (
   peerUrl: string,
   onUnreachable?: (peerUrl: string) => void
 ): D1Database => {
-  const local = <T>(sql: string, args: unknown[]) => {
+  const local = (sql: string, args: unknown[]) => {
     const stmt = env.DB.prepare(sql);
     const bound = args.length > 0 ? stmt.bind(...args) : stmt;
     return bound;

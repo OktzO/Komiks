@@ -1,9 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAuthApiUrl, isValidType, typedChapterUrl, type ComicType } from '@/lib/api';
-
-// History API kirim `type` per row (nullable) — lama/legacy row → 'manga'.
-const safeType = (t?: string | null): ComicType =>
-  isValidType(t ?? '') ? (t as ComicType) : 'manga';
+import { getAuthApiUrl, safeType, typedChapterUrl } from '@/lib/api';
 
 type HistoryChapter = { id: string; series_slug: string; chapter_number: number; title?: string | null; type?: string | null };
 

@@ -8,6 +8,10 @@
     ".": "./index.ts"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "tsx": "^4.23.12"
+  },
+  "scripts": {
+    "test": "tsx --test test/phash.test.mjs"
   }
 }
