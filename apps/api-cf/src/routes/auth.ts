@@ -73,6 +73,20 @@ function resolveFrontendOrigin(c: Context): string {
   return c.env.ALLOWED_ORIGINS?.split(',')[0]?.trim() ?? '/';
 }
 
+// Redirect URI OAuth harus menunjuk origin FRONTEND (oktzz.xyz), bukan worker
+// API. Alasannya cookie: __Host-session itu host-only, jadi hanya bisa disetel
+// oleh domain yang mengirim respons. Kalau callback mendarat di worker API,
+// cookie-nya hidup di domain worker — dan proxy BFF di oktzz.xyz tidak akan
+// pernah menerimanya, sehingga setiap request terautentikasi jadi 401.
+//
+// Dulu nilai ini diturunkan dari `new URL(c.req.url).origin`, yang menunjuk
+// domain worker karena proxy meneruskan ke sana. Sekarang diambil dari
+// ALLOWED_ORIGINS entry pertama, yang ada di keempat worker.
+//
+// WAJIB sama persis dengan yang terdaftar di Google Cloud Console
+// (https://oktzz.xyz/api/auth/google/callback — diverifikasi 2026-10-02).
+const oauthRedirectUri = (c: Context): string => `${resolveFrontendOrigin(c)}/api/auth/google/callback`;
+
 // --- Cloudflare Turnstile ---
 // verifyTurnstile dipindah ke lib/turnstile.ts (dipakai juga serviceGate tier SENSITIVE).
 
@@ -96,7 +110,6 @@ router.get('/google', async (c: Context) => {
     return c.json({ error: 'captcha verification failed' }, 403);
   }
 
-  const base = new URL(c.req.url).origin;
   const state = crypto.randomUUID();
   const origin = resolveFrontendOrigin(c);
   const redirect = safePath(c.req.query('redirect'));
@@ -104,7 +117,7 @@ router.get('/google', async (c: Context) => {
   c.header('Set-Cookie', await setStateCookie(c, { state, origin, redirect }));
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: `${base}/api/auth/google/callback`,
+    redirect_uri: oauthRedirectUri(c),
     response_type: 'code',
     scope: 'openid email profile',
     access_type: 'offline',
@@ -134,9 +147,10 @@ router.get('/google/callback', async (c: Context) => {
   const clientSecret = c.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) return c.json({ error: 'google oauth not configured' }, 500);
 
-  const base = new URL(c.req.url).origin;
-
-  // 2. Exchange code → access token
+  // 2. Exchange code → access token. redirect_uri harus identik dengan yang
+  // dikirim di langkah authorize — Google mencocokkan string-nya persis, dan
+  // ketidakcocokan di sini muncul sebagai redirect_uri_mismatch dari token
+  // endpoint, bukan dari halaman consent.
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -144,7 +158,7 @@ router.get('/google/callback', async (c: Context) => {
       client_id: clientId,
       client_secret: clientSecret,
       code,
-      redirect_uri: `${base}/api/auth/google/callback`,
+      redirect_uri: oauthRedirectUri(c),
       grant_type: 'authorization_code',
     }),
   });

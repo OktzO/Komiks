@@ -310,11 +310,11 @@ function parseCookie(header: string): Record<string, string> {
 }
 
 export function setSessionCookie(token: string): string {
-  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${SESSION_TTL}`;
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${SESSION_TTL}`;
 }
 
 export function clearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`;
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`;
 }
 
 // ── OAuth state cookie (signed, nol KV) ─────────────────────────────────────
@@ -340,7 +340,7 @@ export async function setStateCookie(
     exp: Math.floor(Date.now() / 1000) + STATE_TTL,
   };
   const token = await signToken(c.env, JSON.stringify(payload));
-  return `${STATE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${STATE_TTL}`;
+  return `${STATE_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${STATE_TTL}`;
 }
 
 export async function verifyStateCookie(c: Context): Promise<OAuthStatePayload | null> {
@@ -353,7 +353,7 @@ export async function verifyStateCookie(c: Context): Promise<OAuthStatePayload |
 }
 
 export function clearStateCookie(): string {
-  return `${STATE_COOKIE}=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0`;
+  return `${STATE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`;
 }
 
 // ── Sessions list/revoke (sharded) ──────────────────────────────────────────
