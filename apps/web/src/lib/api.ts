@@ -354,7 +354,9 @@ const fallbackOrigins = (): { url: string }[] => {
   return [...out.values()];
 };
 
-const getOrigins = async (): Promise<{ url: string }[]> => {
+// Exported: proxy BFF (src/pages/api/[...path].ts) butuh daftar origin worker
+// API untuk meneruskan request. Runner dan failover tetap milik modul ini.
+export const getOrigins = async (): Promise<{ url: string }[]> => {
   const cached = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('origins') : null;
   if (cached) {
     try {
