@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
+import type { AuthUser } from '@/lib/api';
 import { MangaCard } from '@/components/MangaCard';
-import { getAuthApiUrl } from '@/lib/api';
 
 type BookmarkRow = {
   slug: string;
@@ -38,7 +38,7 @@ export default function BookmarksPage() {
 
   const load = async (): Promise<{ guest: boolean; items: BookmarkRow[] | null }> => {
     try {
-      const base = await getAuthApiUrl();
+      const base = '';
       const r = await fetch(`${base}/api/user/bookmarks`, { credentials: 'include', signal: AbortSignal.timeout(8000) });
       if (r.status === 401) return { guest: true, items: null };
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -60,7 +60,7 @@ export default function BookmarksPage() {
   const clearAll = async () => {
     setClearing(true);
     try {
-      const base = await getAuthApiUrl();
+      const base = '';
       const r = await fetch(`${base}/api/user/bookmarks`, { method: 'DELETE', credentials: 'include', signal: AbortSignal.timeout(8000) });
       if (r.status === 401) { window.location.href = '/login'; return; }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);

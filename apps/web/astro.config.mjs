@@ -14,6 +14,10 @@ export default defineConfig({
     imageService: 'passthrough',
   }),
   integrations: [react()],
+  // The stylesheet is one 14 KB file and it blocks the first paint. Inlining it
+  // into <head> deletes that round trip; the bytes ride along with the HTML the
+  // browser is already downloading.
+  build: { inlineStylesheets: 'always' },
   vite: {
     css: {
       postcss: './postcss.config.mjs',

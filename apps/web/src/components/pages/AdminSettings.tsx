@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { fetchMe, apiGet, apiPost, getAuthApiUrl, roleLabel, type AuthUser } from '@/lib/api';
+import { fetchMe, apiGet, apiPost, roleLabel, type AuthUser } from '@/lib/api';
 import type { AdminInventory } from '@manga-platform/shared/types';
 import { Card, CardHead, StatCard, EmptyState, AreaChart, StorageDonut, fmtNum } from '@/components/admin/charts';
 import {
@@ -444,7 +444,7 @@ export default function AdminSettingsPage() {
     setSubmittingProvision(true);
     setProvisionStatus(null);
     try {
-      const base = await getAuthApiUrl();
+      const base = '';
       const res = await fetch(`${base}/api/admin/lb/accounts/provision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -521,7 +521,7 @@ export default function AdminSettingsPage() {
     }
     setSubmittingAccount(true);
     try {
-      const base = await getAuthApiUrl();
+      const base = '';
       const res = await fetch(`${base}/api/admin/lb/accounts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -570,7 +570,7 @@ export default function AdminSettingsPage() {
     const draft = originDraftFrom((name) => data.get(name));
     setSubmittingOrigin(true);
     try {
-      const base = await getAuthApiUrl();
+      const base = '';
       const res = await fetch(`${base}/api/admin/lb/origins`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -1,9 +1,8 @@
 // Astro server-render pass-through → attr harus lowercase HTML-valid (React TS tidak
-// mengenalnya; spread tanpa cast lolos excess-property check).
 const NO_REF = { referrerpolicy: "no-referrer" };
 import { useEffect, useState } from 'react';
-import { getAuthApiUrl, safeType, typedChapterUrl } from '@/lib/api';
 import { sanitizeCoverUrl } from '@manga-platform/shared/http';
+import { safeType, typedChapterUrl } from '@/lib/api';
 
 interface HistoryItem {
   id: string;
@@ -39,7 +38,7 @@ export function ContinueReadingRail() {
     // 2. Fetch authenticated history in background
     (async () => {
       try {
-        const base = await getAuthApiUrl();
+        const base = '';
         const res = await fetch(`${base}/api/user/history`, {
           credentials: 'include',
           cache: 'no-store',

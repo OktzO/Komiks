@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { getAuthApiUrl } from '@/lib/api';
 
 // Bookmark toggle — small black box per manga tile (reader + detail pages).
 // Login is detected via GET /me (guest-friendly: 200 + {data:null}); only the
@@ -23,7 +22,7 @@ export function BookmarkButton({ slug, size = 'md', title, cover, source }: { sl
     let alive = true;
     (async () => {
       try {
-        const base = await getAuthApiUrl();
+        const base = '';
         const me = await fetch(`${base}/api/user/me`, {
           credentials: 'include',
           signal: AbortSignal.timeout(8000),
@@ -59,7 +58,7 @@ export function BookmarkButton({ slug, size = 'md', title, cover, source }: { sl
     const prevOn = on;
     setOn(!prevOn); // optimistic
     try {
-      const base = await getAuthApiUrl();
+      const base = '';
       if (!aliveRef.current) return;
       const r =
         prevOn

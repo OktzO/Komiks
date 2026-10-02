@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAuthApiUrl, safeType, typedChapterUrl } from '@/lib/api';
+import { safeType, typedChapterUrl } from '@/lib/api';
 
 type HistoryChapter = { id: string; series_slug: string; chapter_number: number; title?: string | null; type?: string | null };
 
@@ -21,7 +21,7 @@ export default function HistoryPage() {
     let alive = true;
     (async () => {
       try {
-        const base = await getAuthApiUrl();
+        const base = '';
         const res = await fetch(`${base}/api/user/history`, {
           credentials: 'include',
           cache: 'no-store',

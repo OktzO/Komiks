@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { getAuthApiUrl, setAuthOrigin } from '@/lib/api';
 
 // Cloudflare Turnstile widget — explicit render, biar kita kontrol reset.
 declare global {
@@ -64,24 +63,16 @@ function Turnstile({ onToken }: { onToken: (token: string | null) => void }) {
 }
 
 export function AuthForm() {
-  const [apiUrl, setApiUrl] = useState('');
   const [token, setToken] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    getAuthApiUrl().then((url) => {
-      if (!alive) return;
-      setApiUrl(url);
-      setAuthOrigin(url);
-    });
-    return () => { alive = false; };
-  }, []);
-
-  // Build Google OAuth URL dynamically — pass origin + redirect for state cookie.
-  // Turnstile token di-verify server-side sebelum redirect ke Google.
-  const googleUrl = apiUrl
-    ? `${apiUrl}/api/auth/google?origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}&redirect=${encodeURIComponent(typeof window !== 'undefined' ? window.location.pathname : '/')}${token ? `&turnstile_token=${encodeURIComponent(token)}` : ''}`
-    : '#';
+  // URL OAuth relatif: masuk ke proxy BFF, yang menyisipkan SERVICE_TOKEN
+  // sebelum meneruskan. Callback juga mendarat di oktzz.xyz, jadi cookie
+  // session milik oktzz.xyz — satu-satunya domain yang dikenal browser.
+  const googleUrl = `/api/auth/google?origin=${encodeURIComponent(
+    typeof window !== 'undefined' ? window.location.origin : ''
+  )}&redirect=${encodeURIComponent(
+    typeof window !== 'undefined' ? window.location.pathname : '/'
+  )}${token ? `&turnstile_token=${encodeURIComponent(token)}` : ''}`;
 
   const gateLocked = TURNSTILE_SITE_KEY !== '' && !token;
 
@@ -125,10 +116,10 @@ export function AuthForm() {
 
           <a
             href={googleUrl}
-            onClick={(e) => { if (!apiUrl || gateLocked) e.preventDefault(); }}
-            aria-disabled={!apiUrl || gateLocked}
+            onClick={(e) => { if (gateLocked) e.preventDefault(); }}
+            aria-disabled={gateLocked}
             className={`btn w-full !min-h-[48px] border border-border-default bg-primary/[0.04] text-primary text-[15px] font-semibold hover:bg-elevated hover:border-border-strong ${
-              !apiUrl || gateLocked ? 'pointer-events-none opacity-50' : ''
+              gateLocked ? 'pointer-events-none opacity-50' : ''
             }`}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">

@@ -48,49 +48,38 @@ export const apiCspHosts = (): string[] => {
   return raw.length > 0 ? raw : [...DEFAULT_API_CSP_ORIGINS];
 };
 
-// API_URL: worker API utama. Production via PUBLIC_API_URL (Pages env).
-export const API_URL = envPublic('PUBLIC_API_URL') || 'http://localhost:8787';
+// Base URL untuk pemanggilan API, bergantung di mana kodenya berjalan.
+//
+// SSR (server) boleh menembak worker API langsung: kodenya berjalan di worker
+// manga-web yang memegang SERVICE_TOKEN, dan lompatannya tidak menambah latency
+// (permintaan tetap harus masuk worker API). Ini juga satu-satunya tempat di
+// mana load-balancer round-robin dipakai — server stateless, jadi bisa merotasi
+// tiap request.
+//
+// Browser tidak boleh. Gate worker API kini token-only dan token itu tidak pernah
+// sampai ke client, jadi satu-satunya jalur yang tersisa adalah proxy BFF di
+// oktzz.xyz — yang persis sama dengan origin browser, makanya base-nya kosong dan
+// semua fetch jadi relative. Load balancing pindah ke proxy, yang tidak perlu
+// menyimpan state di sessionStorage dan bisa merotasi tiap request.
+const SSR_API_BASE = envPublic('PUBLIC_API_URL') || 'http://localhost:8787';
 
-// Auth API: primary akun-2, fallback akun-3, last resort akun-1 (main).
-// Sticky origin via sessionStorage — setelah login, semua /api/auth/* +
-// /api/user/* calls ikut origin yang dipilih (D1 split per-akun, data user
-// harus konsisten).
-const AUTH_API_URL = envPublic('PUBLIC_AUTH_API_URL') || API_URL;
-const AUTH_CACHE_KEY = 'auth_origin';
-// Module-level cache (5 min): hindari health-check berulang tiap mount
-// (BookmarkButton, Navbar, AuthForm, admin pages). Sticky sessionStorage
-// tetap prioritas utama; cache ini hanya menutup window sebelum login.
-let authOriginCache: { origin: string; at: number } | null = null;
+// Origin worker API untuk URL /img. BEDA dari base di atas: gambar dit-load
+// langsung oleh tag <img> ke worker, bukan lewat proxy — signature HMAC-nya
+// yang menjaganya, bukan token. Jadi di browser base untuk data tetap kosong
+// (lewat proxy) sementara URL gambar tetap menunjuk worker.
+const AUTH_API_URL = envPublic('PUBLIC_AUTH_API_URL') || SSR_API_BASE;
 
-export async function getAuthApiUrl(): Promise<string> {
-  if (typeof sessionStorage !== 'undefined') {
-    const cached = sessionStorage.getItem(AUTH_CACHE_KEY);
-    if (cached) return cached;
-  }
-  if (authOriginCache && Date.now() - authOriginCache.at < 300000) {
-    return authOriginCache.origin;
-  }
-  const candidate = AUTH_API_URL || API_URL;
-  try {
-    const res = await fetch(`${candidate}/api/health`, { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      authOriginCache = { origin: candidate, at: Date.now() };
-      return candidate;
-    }
-  } catch {}
-  authOriginCache = { origin: candidate, at: Date.now() };
-  return candidate;
-}
+export const SSR_API_BASE_EXPORT = SSR_API_BASE;
+export const BROWSER_API_BASE = '';
 
-// Set sticky origin after successful login (called by AuthForm post-callback).
-// MUST be called immediately after login so subsequent bookmark/me calls hit
-// the cookie-bearing origin (avoids cross-origin cookie 401 + D1-split
-// inconsistency).
-export function setAuthOrigin(origin: string): void {
-  if (typeof sessionStorage !== 'undefined') {
-    sessionStorage.setItem(AUTH_CACHE_KEY, origin);
-  }
-}
+export const API_URL = typeof window !== 'undefined' ? BROWSER_API_BASE : SSR_API_BASE;
+
+// Sticky auth origin DIHAPUS 2026-10-02. Semuanya hidup karena cookie session
+// berada di domain worker API, jadi browser harus tahu worker mana yang memegang
+// cookie itu — dan sessionStorage menyimpannya per tab. Sekarang cookie hidup di
+// oktzz.xyz, jadi setiap request terautentikasi otomatis masuk ke proxy yang
+// benar. Tidak ada lagi yang perlu diingat client, dan tidak ada lagi health-check
+// /api/health per mount.
 
 export interface Series {
   slug: string;
@@ -138,6 +127,9 @@ export const isNotFound = (e: unknown): boolean => e instanceof ApiError && e.st
 // triggering a 502 when the Worker API is slow on cold KV cache.
 async function api<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
+    // serviceHeaders() kosong di browser — token hanya ada di worker. Di
+    // browser base-nya sudah kosong, jadi fetch ini masuk ke proxy yang
+    // menyisipkan token.
     headers: serviceHeaders(),
     cache: 'no-store',
     signal: AbortSignal.timeout(12000),
@@ -471,6 +463,13 @@ const buildOriginOrder = (origins: { url: string }[]): { url: string }[] => {
 };
 
 export async function apiWithFailover<T>(path: string): Promise<T> {
+  // Browser: satu hop ke proxy BFF, yang sudah memutuskan worker mana
+  // yang melayani. Round-robin di client tidak lagi dibutuhkan — ia hanya bisa
+  // merotasi per tab lewat sessionStorage, sedangkan proxy stateless dan bisa
+  // merotasi tiap request. Menghapus cabang ini juga menghapus satu health-check
+  // per mount.
+  if (typeof window !== 'undefined') return api<T>(path);
+
   if (!ORIGIN_PATH_ALLOWLIST.some((p) => path.startsWith(p))) {
     return api<T>(path); // non-publik → main API saja
   }
@@ -522,7 +521,7 @@ export interface AuthUser {
 
 export const fetchMe = async (): Promise<AuthUser | null> => {
   try {
-    const base = await getAuthApiUrl();
+    const base = BROWSER_API_BASE;
     const res = await fetch(`${base}/api/user/me`, {
       credentials: 'include',
       cache: 'no-store',
@@ -538,7 +537,7 @@ export const fetchMe = async (): Promise<AuthUser | null> => {
 
 export const logout = async (): Promise<void> => {
   try {
-    const base = await getAuthApiUrl();
+    const base = BROWSER_API_BASE;
     await fetch(`${base}/api/auth/logout`, {
       method: 'POST',
       credentials: 'include',
@@ -552,7 +551,7 @@ export const logout = async (): Promise<void> => {
 export const patchMe = async (
   patch: Partial<Pick<MeResponse, 'display_name' | 'bio' | 'preferences'>>
 ): Promise<AuthUser> => {
-  const base = await getAuthApiUrl();
+  const base = BROWSER_API_BASE;
   const res = await fetch(`${base}/api/user/me`, {
     method: 'PATCH',
     credentials: 'include',
@@ -569,7 +568,7 @@ export const patchMe = async (
 };
 
 export const deleteMe = async (confirm: string): Promise<void> => {
-  const base = await getAuthApiUrl();
+  const base = BROWSER_API_BASE;
   const res = await fetch(`${base}/api/user/me`, {
     method: 'DELETE',
     credentials: 'include',
@@ -584,7 +583,7 @@ export const deleteMe = async (confirm: string): Promise<void> => {
 };
 
 export const clearHistory = async (): Promise<{ deleted: number }> => {
-  const base = await getAuthApiUrl();
+  const base = BROWSER_API_BASE;
   const res = await fetch(`${base}/api/user/history`, {
     method: 'DELETE',
     credentials: 'include',
@@ -596,7 +595,7 @@ export const clearHistory = async (): Promise<{ deleted: number }> => {
 };
 
 export const clearBookmarks = async (): Promise<{ deleted: number }> => {
-  const base = await getAuthApiUrl();
+  const base = BROWSER_API_BASE;
   const res = await fetch(`${base}/api/user/bookmarks`, {
     method: 'DELETE',
     credentials: 'include',
@@ -612,11 +611,8 @@ export const clearBookmarks = async (): Promise<{ deleted: number }> => {
 export const roleLabel = (role: string): string => (role === 'admin' ? 'Admin' : 'Member');
 
 // Cookie auth GET for admin monitoring endpoints (read-only, session.role===admin enforced server-side).
-// Uses getAuthApiUrl() so the session cookie is sent to the auth origin —
-// without this, admin endpoints can fail with 403/CORS when the main API_URL
-// differs from the origin that set the session cookie.
 export async function apiGet<T>(path: string): Promise<T> {
-  const base = await getAuthApiUrl();
+  const base = BROWSER_API_BASE;
   const res = await fetch(`${base}${path}`, {
     credentials: 'include',
     cache: 'no-store',
@@ -627,7 +623,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
-  const base = await getAuthApiUrl();
+  const base = BROWSER_API_BASE;
   const res = await fetch(`${base}${path}`, {
     method: 'POST',
     credentials: 'include',
@@ -641,7 +637,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
-  const base = await getAuthApiUrl();
+  const base = BROWSER_API_BASE;
   const res = await fetch(`${base}${path}`, {
     method: 'PATCH',
     credentials: 'include',
