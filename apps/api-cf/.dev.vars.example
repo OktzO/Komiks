@@ -18,3 +18,9 @@ CF_D1_ID=
 CF_KV_ID=
 # Kosong = inventory jatuh ke fallback lokal/derived (tanpa bacaan provider CF)
 CF_INVENTORY_TOKEN=
+
+# WAJIB di dev lokal sejak /img jadi fail-closed (2026-10-02): tanpa
+# SIGNED_IMG_SECRET semua gambar 403, karena tidak ada yang bisa diverifikasi.
+# Nilai harus sama persis dengan root .env dan sama di semua worker API.
+SERVICE_TOKEN=
+SIGNED_IMG_SECRET=

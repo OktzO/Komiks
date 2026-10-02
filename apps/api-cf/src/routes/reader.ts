@@ -925,28 +925,24 @@ const refererAllowed = (env: Env, referer: string | undefined): boolean => {
   catch { return true; }
 };
 
-// Fail-open saat SIGNED_IMG_SECRET belum di-set di worker ini: /img menerima
-// request tanpa signature (perilaku lama) + warning sekali per isolate.
-let warnedSignedImgUnset = false;
-
-// Anti-scraping /img: SIGNED_IMG_SECRET ter-set → request wajib membawa
-// signature valid (?exp=&sig=). Sig di-verify terhadap RAW pathname dari
-// browser — persis string yang di-sign saat mint (encoded chapterId, tanpa
-// query). Query `retry`/`exp`/`sig` tidak pernah ikut di-sign.
+// Anti-scraping /img. Fail-CLOSED: secret kosong → 403 untuk semua gambar.
+//
+// Sebelumnya fail-open (secret kosong → terima semua + warning sekali per
+// isolate). Begitu gate /api dikunci menjadi token-only, fail-open itu membuat
+// /img jadi pintu belakang scraper: tidak perlu token, cukup tahu pola URL.
+//
+// Tag <img> tidak bisa membawa header, jadi signature query adalah satu-satunya
+// credential yang tersedia di sini. Kalau secret tidak ada, tidak ada yang bisa
+// diverifikasi — jadi tidak ada yang boleh lolos. Dev lokal dilindungi oleh
+// SIGNED_IMG_SECRET di .dev.vars, bukan oleh kelonggaran produksi.
+//
+// Sig di-verify terhadap RAW pathname — persis string yang di-sign saat mint
+// (encoded chapterId, tanpa query). Query `retry`/`exp`/`sig` tidak ikut.
 const signedImgSecretOf = (env: Env): string => (env.SIGNED_IMG_SECRET as string | undefined)?.trim() || '';
 
 const hasValidImgSignature = async (c: Context): Promise<boolean> => {
   const secret = signedImgSecretOf(c.env);
-  if (!secret) {
-    if (!warnedSignedImgUnset) {
-      warnedSignedImgUnset = true;
-      console.warn(
-        '[img] SIGNED_IMG_SECRET belum di-set di worker ini — /img tanpa signature (fail-open, dev-friendly). ' +
-          'PRODUKSI: set secret (nilai sama di semua worker API) sebelum anti-scraping gambar aktif.'
-      );
-    }
-    return true; // dev: terima apa adanya (perilaku hari ini)
-  }
+  if (!secret) return false;
   const exp = Number(c.req.query('exp') ?? NaN);
   const sig = c.req.query('sig') ?? '';
   return verifyImgSig(secret, c.req.path, exp, sig, Math.floor(Date.now() / 1000), 60);
