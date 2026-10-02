@@ -115,11 +115,19 @@ Firebase + pemusatan auth state ditunda. Tidak ada di scope dokumen ini.
 
 Perubahan: `redirect_uri` → `https://oktzz.xyz/api/auth/google/callback`, dan request ke `/api/auth/google` + `/callback` lewat proxy (bukan direct).
 
-**Aksi manual yang dibutuhkan:** daftarkan ulang redirect URI tersebut di Google Cloud Console. Tanpa itu, Google menolak callback dan login mati total. Ini blocker — harus selesai sebelum deploy.
+**Sudah terverifikasi (2026-10-02).** Probe `accounts.google.com/o/oauth2/v2/auth` dengan `client_id` project:
+
+| `redirect_uri` | Hasil |
+|---|---|
+| `https://manga-api-2.tzok5555.workers.dev/api/auth/google/callback` | 302 → `signin/identifier` (terima) |
+| `https://oktzz.xyz/api/auth/google/callback` | 302 → `signin/identifier` (terima) |
+| control: `.../callback/PALING/SALAH` | 302 → `signin/oauth/error` (`redirect_uri_mismatch`) |
+
+Control test memastikan probe benar-benar membedakan, jadi hasil "terima" bukan false positive. Tidak ada yang perlu didaftarkan ulang.
 
 `__Host-oauth-state` (`auth.ts:343`) ikut turun ke `SameSite=Lax` bersama session cookie. Ini aman: callback OAuth adalah top-level GET navigation, dan `Lax` memang dikirim pada top-level navigasi. Yang tidak dikirim adalah navigasi lintas-site yang *menyematkan* request — tidak ada di flow ini. Kalau ternyata gagal, gejalanya callback 400 `invalid or missing state cookie`, dan ini penyebabnya.
 
-Alternatif tanpa Google Console: biarkan callback di worker API, lalu worker API redirect ke `oktzz.xyz/api/auth/session-exchange?code=...`, dan proxy yang menukar kode jadi cookie. Lebih banyak kode, tidak perlu sentuh Google Console. **Pilih ini kalau mengatur ulang Konsole merepotkan.**
+Tidak ada alternatif `session-exchange` yang perlu dikerjakan.
 
 ## 7. Sisi client
 
@@ -139,19 +147,23 @@ Komponen yang berubah dari `getAuthApiUrl()` ke base kosong:
 
 1. `wrangler secret put SIGNED_IMG_SECRET` di keempat worker API (nilai sama). **Sebelum anything else** — kalau lupa, `/img` fail-closed dan gambar break.
 2. `wrangler secret put SERVICE_TOKEN` di worker web (pastikan nilainya sama dengan yang sudah ada di API worker).
-3. Daftarkan redirect URI baru di Google Cloud Console, atau pilih alternatif §6.
+3. ~~Daftarkan redirect URI baru di Google Cloud Console~~ — **sudah terdaftar**, terverifikasi 2026-10-02 (§6).
 4. Deploy API worker (gate ketat + `/img` fail-closed + `corsMw` dihapus).
 5. Deploy web worker (proxy + client switch).
 6. Verifikasi: `curl -i https://manga-api-2.../api/series` → harus 403. `curl -i https://oktzz.xyz/api/series` → 200.
 
 Langkah 4 sebelum 5 intentional: versi lama masih jalan karena gate baru menolak semua yang non-token, jadi deploy web menyusul. Kalau deploy terbalik, web lama butuh token yang tak lagi ada jalannya.
 
+**Catatan `wrangler`:** `secret put` tanpa `--config` di `apps/api-cf/` diam-diam memakai `account_id` dari toml yang terakhir dibaca —easy salah akun. Selalu sertakan `--config apps/api-cf/wrangler.origin{2,3,4}.toml` per akun, atau `CLOUDFLARE_ACCOUNT_ID` eksplisit untuk `manga-web`.
+
+**Status secret saat spec ini ditulis (2026-10-02):** `SERVICE_TOKEN` + `SIGNED_IMG_SECRET` sudah terpasang di keempat worker API; `SERVICE_TOKEN` sudah ada di `manga-web`. Tidak ada secret baru yang perlu dibuat. Cloudflare secrets write-only, jadi nilai antar-worker tidak bisa diverifikasi lewat API — pembuktiannya lewat `curl https://oktzz.xyz/api/series` setelah deploy.
+
 ## 9. Risiko
 
 | Risiko | Mitigasi |
 |---|---|
 | `SIGNED_IMG_SECRET` lupa di-set | Langkah 1 runbook; `/img` 403 fail-closed bukan 500 |
-| Redirect URI Google tidak terdaftar | Login mati total — verifikasi manual setelah deploy |
+| Redirect URI Google tidak terdaftar | **Sudah terverifikasi terdaftar** (§6) — tapi tetap tes login sekali setelah deploy |
 | Cookie `SameSite=Lax` insufficient | Tidak — semua trafik same-origin; kalau ternyata ada path lintas domain, `Lax` masih cukup untuk GET navigasi |
 | Client island masih punya `credentials: 'include'` ke worker API | Dipertahankan — `SameSite=Lax` mengizinkan same-origin, dan `credentials: 'include'` tidak merusak same-origin |
 
