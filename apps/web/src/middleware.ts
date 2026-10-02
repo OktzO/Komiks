@@ -31,7 +31,11 @@ const SECURITY: Record<string, string> = {
   'Content-Security-Policy': CSP,
 };
 
-const NO_STORE = ['/bookmark', '/history', '/profile', '/login', '/admin'];
+// /api ikut no-store: proxy BFF meneruskan respons per-user (bookmark, /me,
+// admin) dan cache edge 300s di sini akan menahan satu respons untuk visitor
+// berikutnya. Worker API punya noStoreMw sendiri untuk prefix yang sama; ini
+// lapisan kedua, di sisi yang berbeda.
+const NO_STORE = ['/api', '/bookmark', '/history', '/profile', '/login', '/admin'];
 
 // Edge cache for the anonymous read paths. Every SSR page pays two sequential
 // upstream round trips (origins lookup, then the payload), which is where the
