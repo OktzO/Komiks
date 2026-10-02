@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
-import { Env, json, allowedOriginFor, Context } from './lib/context';
+import { Env, json, Context } from './lib/context';
 import { rateLimit, rateLimitIdentify, rateLimitAdmin, rateLimitImg, rateLimitInternal } from './lib/rateLimit';
 import { serviceGateMw } from './lib/serviceGate';
 import { router as healthRouter } from './routes/health';
@@ -34,38 +34,16 @@ import { fetchHomepageFromSources } from './routes/homepage';
 import { peerKvSet } from './lib/peers';
 import { resolveB2Accounts } from './lib/b2Config';
 
-// CORS: allow credentials only when origin matches the allowlist.
-// Fail-closed: if ALLOWED_ORIGINS is unset, no origin is echoed and no
-// credentials header is emitted.
+// CORS dihapus 2026-10-02. Sebelumnya corsmw hanya menulis header Access-Control
+// ke respons — request-nya tetap dieksekusi server-side, jadi ia tidak pernah
+// jadi pengaman, hanya hiasan. Origin yang "di-allowlist" bisa dipalsuin curl
+// tanpa alat apa pun, sehingga proteksi yang sebenarnya ada di serviceGate
+// (token-only), bukan di sini.
 //
-// CSRF guard: for state-changing methods, a cross-origin request whose Origin
-// fails the allowlist is REJECTED (403), not merely left without CORS headers.
-// SameSite=None cookie is sent on cross-site form POSTs, so the request would
-// otherwise execute server-side even though the browser can't read the reply.
-const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-
-const corsMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  const origin = c.req.header('origin');
-
-  if (origin && !SAFE_METHODS.has(c.req.method) && !allowedOriginFor(c.env, origin)) {
-    return c.json({ error: 'forbidden origin' }, 403);
-  }
-
-  if (origin && allowedOriginFor(c.env, origin)) {
-    c.res.headers.set('Access-Control-Allow-Origin', origin);
-    c.res.headers.set('Access-Control-Allow-Credentials', 'true');
-    c.res.headers.set('Vary', 'Origin');
-  }
-  c.res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
-  c.res.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-api-key');
-
-  if (c.req.method === 'OPTIONS') {
-    c.res.headers.set('Access-Control-Max-Age', '600');
-    return new Response(null, { status: 204, headers: c.res.headers });
-  }
-
-  await next();
-};
+// Setelah semua trafik browser melewati proxy BFF di manga-web, tidak ada lagi
+// panggilan lintas origin sama sekali, jadi middleware ini tidak punya
+// keystifan dan menghapusnya menutup kelas serangan CSRF secara utuh — bukan
+// hanya menyembunyikan gejalanya.
 
 // Security headers applied to every response. CSP is intentionally permissive
 // for an API (no inline assets served here); images are proxied through /api/reader.
@@ -88,7 +66,6 @@ const noStoreMw: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 export const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', securityHeadersMw);
-app.use('*', corsMw);
 app.use('/api/_internal/*', noStoreMw);
 app.use('/api/auth/*', noStoreMw);
 app.use('/api/user/*', noStoreMw);
