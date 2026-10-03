@@ -96,6 +96,21 @@ const FORWARDED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   'user-agent',
 ]);
 
+// IP asli client. Cloudflare tidak mengizinkan client men-set CF-Connecting-IP
+// (itu header platform, selalu diisi ulang dengan IP worker yang bicara), jadi
+// IP asli dibaca dari request masuk dan diteruskan sebagai header biasa.
+//
+// Penting untuk Turnstile: verifyTurnstile mengirim remoteip ke siteverify, dan
+// Turnstile membandingkannya dengan IP yang membuat token. Tanpa header ini
+// worker hanya melihat IP proxy, sehingga setiap token user ditolak —
+// gejalanya "captcha verification failed" padahal widget-nya sukses Solve.
+export const CLIENT_IP_HEADER = 'x-client-ip';
+
+export const clientIpOf = (req: Request): string | null => {
+  const raw = req.headers.get('cf-connecting-ip') ?? req.headers.get(CLIENT_IP_HEADER);
+  return raw?.trim() || null;
+};
+
 export const buildUpstreamHeaders = (req: Request, token: string): Headers => {
   const out = new Headers();
   for (const [key, value] of req.headers) {
@@ -103,6 +118,8 @@ export const buildUpstreamHeaders = (req: Request, token: string): Headers => {
     if (!FORWARDED_REQUEST_HEADERS.has(lower)) continue;
     out.set(lower, value);
   }
+  const ip = clientIpOf(req);
+  if (ip) out.set(CLIENT_IP_HEADER, ip);
   // Diset TERAKHIR supaya token worker pasti menang atas apa pun yang dikirim
   // client — bukan "kecuali kalau client tidak mengirim".
   out.set('x-service-token', token);

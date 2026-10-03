@@ -116,6 +116,11 @@ export function AuthForm() {
 
           <a
             href={googleUrl}
+            // Prefetch harus mati di link ini: Astro memakai prefetchAll + hover,
+            // jadi hover membakar satu GET /api/auth/google. Turnstile token
+            // single-use — request itu memakai token, lalu klik aslinya mengirim
+            // token yang sama dan siteverify menolak 'timeout-or-duplicate'.
+            data-astro-prefetch="false"
             onClick={(e) => { if (gateLocked) e.preventDefault(); }}
             aria-disabled={gateLocked}
             className={`btn w-full !min-h-[48px] border border-border-default bg-primary/[0.04] text-primary text-[15px] font-semibold hover:bg-elevated hover:border-border-strong ${

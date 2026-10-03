@@ -106,6 +106,19 @@ function oauthRedirectUri(c: Context): string {
 // --- Cloudflare Turnstile ---
 // verifyTurnstile dipindah ke lib/turnstile.ts (dipakai juga serviceGate tier SENSITIVE).
 
+// Turnstile mengikat token ke IP yang membuatnya. Request login datang lewat
+// proxy BFF, jadi cf-connecting-ip di worker API adalah IP proxy — kalau itu
+// yang dikirim sebagai remoteip, setiap token user ditolak хотя widget-nya sukses
+// Solve. Proxy meneruskan IP asli sebagai x-client-ip; ini membacanya, dengan
+// fallback ke cf-connecting-ip untuk request yang tidak lewat proxy (kron, uji).
+const clientIpOf = (c: Context): string | undefined =>
+  c.req.header('x-client-ip') ?? c.req.header('cf-connecting-ip') ?? undefined;
+
+// DIAGNOSTIK SEMENTARA — hapus setelah gate proven benar.
+// Kode error dikembalikan ke klien supaya "captcha verification failed" bisa
+// dibedakan dari token kedaluwarsa vs remoteip tidak cocok vs secret salah pairing.
+export const __turnstileDiag = new Map<string, { codes: string[]; ip: string }>();
+
 // --- Google OAuth ---
 
 // Initiate Google OAuth: frontend redirects here, we set a signed state cookie
@@ -120,10 +133,12 @@ router.get('/google', async (c: Context) => {
   const turnstileOk = await verifyTurnstile(
     c,
     c.req.query('turnstile_token') ?? undefined,
-    c.req.header('cf-connecting-ip'),
+    clientIpOf(c),
   );
   if (!turnstileOk) {
-    return c.json({ error: 'captcha verification failed' }, 403);
+    const ip = clientIpOf(c) ?? '(none)';
+    const codes = Array.from(__turnstileDiag.values()).slice(-1)[0]?.codes ?? [];
+    return c.json({ error: 'captcha verification failed', diag: { codes, ip, hasToken: !!c.req.query('turnstile_token') } }, 403);
   }
 
   const state = crypto.randomUUID();

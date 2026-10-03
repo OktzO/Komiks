@@ -17,10 +17,28 @@ export async function verifyTurnstile(c: Context, token: string | undefined, ip?
       body,
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return false;
-    const j = (await res.json()) as { success?: boolean };
-    return j.success === true;
-  } catch {
+    if (!res.ok) {
+      console.warn('[turnstile] siteverify HTTP', res.status);
+      return false;
+    }
+    const j = (await res.json()) as { success?: boolean; 'error-codes'?: string[] };
+    // DIAGNOSTIK SEMENTARA: simpan kode error terakhir supaya routes/auth.ts bisa
+    // membalikannya ke klien (hanya lewat /auth/google, bukan endpoint publik).
+    try {
+      const mod = await import('../routes/auth');
+      mod.__turnstileDiag?.set('last', { codes: j['error-codes'] ?? [], ip: ip ?? '' });
+    } catch {}
+    if (j.success !== true) {
+      // Tanpa ini, "captcha verification failed" tidak bisa dibedakan dari token
+      // kedaluwarsa, token yang sudah dipakai, secret yang salah pairing, atau
+      // domain yang tidak terdaftar. Semuanya menolak dengan pesan yang sama.
+      // Kode error dari Turnstile sendiri yang memberitahu mana.
+      console.warn('[turnstile] rejected:', (j['error-codes'] ?? []).join(',') || 'tanpa kode');
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('[turnstile] siteverify gagal:', e instanceof Error ? e.message : String(e));
     return false;
   }
 }

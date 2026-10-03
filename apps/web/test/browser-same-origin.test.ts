@@ -40,6 +40,22 @@ test('sticky-origin auth sudah dihapus — tidak ada lagi yang perlu dispersal',
   assert.equal((api as any).setAuthOrigin, undefined, 'setAuthOrigin masih ada');
 });
 
+test('link OAuth Google tidak boleh di-prefetch', () => {
+  // Turnstile token single-use: siteverify menolak token yang sudah dipakai
+  // dengan 'timeout-or-duplicate'. Astro memakai prefetchAll + strategy hover,
+  // jadi hover membakar satu GET /api/auth/google yang memakai token itu, lalu
+  // klik aslinya mengirim token yang sama dan login selalu gagal.
+  const text = readFileSync(
+    fileURLToPath(new URL('../src/components/AuthForm.tsx', import.meta.url)), 'utf8');
+  const at = text.indexOf('<a\n            href={googleUrl}');
+  assert.ok(at > -1, 'link Google tidak ditemukan');
+  const tag = text.slice(at, at + 700);
+  assert.ok(
+    /data-astro-prefetch="false"/.test(tag),
+    'link OAuth tidak punya data-astro-prefetch="false" — hover akan membakar token'
+  );
+});
+
 test('tidak ada komponen client yang memanggil getAuthApiUrl/setAuthOrigin', () => {
   const offenders: string[] = [];
   for (const file of listFiles(new URL('../src/components/', import.meta.url))) {
