@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { getOrigins } from '@/lib/api';
-import { buildUpstreamHeaders, isProxyAllowed, relayHeaders } from '@/lib/bff-proxy';
+import { buildUpstreamHeaders, isProxyAllowed, relayHeaders, rotateOrigins } from '@/lib/bff-proxy';
 
 // BFF proxy: satu-satunya pintu masuk ke worker API.
 //
@@ -50,7 +50,18 @@ export const ALL: APIRoute = async ({ request, params }) => {
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
   let lastError = 'no origin';
-  const originList = await getOrigins();
+  // Rotasi wajib, dan ini yang hilang ketika round-robin pindah dari client ke
+  // server. getOrigins() selalu mengurutkan berdasarkan priority, jadi tanpa
+  // rotasi SELURUH traffic proxy mendarat di satu worker — di sini
+  // manga-api (akun1), yang tidak punya GOOGLE_CLIENT_ID sehingga /api/auth/*
+  // balas 'google oauth not configured' dan 3 worker lain menganggur. Load
+  // balancingacross 4 akun bukan hiasan: ini yang membagi beban dan Damit
+  // satu worker jadi titik gagal tunggal.
+  //
+  // Rotasi acak per request, bukan kursor: proxy stateless (satu isolate bisa
+  // melayani banyak request bersamaan), jadi tidak ada tempat storing kursor
+  // tanpa jadi sumber kontensi.
+  const originList = rotateOrigins(await getOrigins());
   for (const origin of originList) {
     try {
       const res = await fetch(`${origin.url}${upstream}`, {

@@ -5,7 +5,35 @@
 //   3. respons non-JSON (302 OAuth, 204, gambar) diteruskan apa adanya
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isProxyAllowed, buildUpstreamHeaders, relayHeaders } from '../src/lib/bff-proxy';
+import { isProxyAllowed, buildUpstreamHeaders, relayHeaders, rotateOrigins } from '../src/lib/bff-proxy';
+
+// ── Rotasi origin ──────────────────────────────────────────────────────────────
+test('rotasi mengubah urutan sehingga traffic tidak terkonsentrasi di worker pertama', () => {
+  // getOrigins() mengurutkan berdasarkan priority. Tanpa rotasi SELURUH traffic
+  // proxy mendarat di worker priority-0 — itu yang membuat /api/auth/* balas
+  // 'google oauth not configured' dari akun1 sementara 3 worker lain menganggur.
+  const origins = [0, 1, 2, 3].map((i) => ({ url: `https://w${i}.test` }));
+  const firsts = new Set<string>();
+  for (let i = 0; i < 400; i++) firsts.add(rotateOrigins(origins)[0]!.url);
+  assert.equal(firsts.size, 4, `hanya ${firsts.size} worker pernah jadi pilihan pertama`);
+});
+
+test('rotasi tidak mengubah himpunan origin', () => {
+  const origins = [0, 1, 2, 3].map((i) => ({ url: `https://w${i}.test` }));
+  const rotated = rotateOrigins(origins);
+  assert.equal(rotated.length, origins.length);
+  assert.deepEqual(
+    [...rotated.map((o) => o.url)].sort(),
+    [...origins.map((o) => o.url)].sort(),
+    'rotasi menambah atau membuang origin'
+  );
+});
+
+test('rotasi aman untuk daftar kosong dan satu elemen', () => {
+  assert.deepEqual(rotateOrigins([]), []);
+  const one = [{ url: 'https://only.test' }];
+  assert.deepEqual(rotateOrigins(one), one);
+});
 
 // ── Allowlist ──────────────────────────────────────────────────────────────────
 test('path data & auth diteruskan', () => {

@@ -64,6 +64,21 @@ export const isProxyAllowed = (path: string): boolean => {
   return ALLOWED_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
 };
 
+// Rotasi origin worker untuk proxy.
+//
+// getOrigins() mengembalikan daftar URUTAN PRIORITY, jadi mengiterasinya apa
+// adanya mengirim 100% traffic ke worker priority-0. Itu bukan load balancing —
+// itu memusatkan seluruh beban (dan seluruh kegagalan) di satu worker, dan
+// membuat 3 worker lain menganggur.
+//
+// Rotasi acak per request, bukan kursor: proxy stateless dan satu isolate bisa
+// melayani banyak request bersamaan, jadi kursor akan jadi sumber kontensi.
+// Unggul-pertama sendirinya sudah cukup baik untuk job ini.
+export const rotateOrigins = <T extends { url: string }>(origins: T[]): T[] => {
+  if (origins.length < 2) return origins;
+  const start = Math.floor(Math.random() * origins.length);
+  return [...origins.slice(start), ...origins.slice(0, start)];
+};
 // Header request yang BOLEH lewat: daftar putih, bukan daftar hitam. Semua yang
 // tidak disebut di sini tidak akan sampai ke worker — termasuk kunci admin dan
 // kunci forward antar-worker, yang sekarang tidak boleh di-forward browser sama
