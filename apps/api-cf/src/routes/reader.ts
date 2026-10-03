@@ -870,11 +870,12 @@ router.get('/:source/chapter/:chapterId', async (c: Context) => {
     const pages = await fetchPageUrlsWithCache(c, source, chapterId);
     const proxyBase = `/api/reader/${source}/page/${encodeURIComponent(chapterId)}`;
     const imgBase = `/img/${source}/${encodeURIComponent(chapterId)}`;
-    // SIGNED_IMG_SECRET ter-set → imgUrl di-mint dengan signature HMAC
-    // short-lived (?exp=&sig=, TTL 25 menit) utk anti-scraping /img. UNSET →
-    // imgUrl unsigned (perilaku hari ini, fail-open dev). Sig melindungi RAW
-    // pathname `/img/...` aja (bagian sebelum `?`) — query retry/exp/sig
-    // tidak ikut di-sign.
+    // imgUrl di-mint dengan signature HMAC short-lived (?exp=&sig=, TTL 25
+    // menit) utk anti-scraping /img. Kalau SIGNED_IMG_SECRET unset, route
+    // /img menolak 403 semua (fail-closed) — jadi tanpa secret, chapter ini
+    // memang tidak punya gambar yang bisa dimuat. UNSET hanya terjadi di mesin
+    // yang salah konfigurasi, bukan dev-friendly. Sig melindungi RAW pathname
+    // `/img/...` aja (bagian sebelum `?`) — query retry/exp/sig tidak ikut.
     const signedSecret = signedImgSecretOf(c.env);
     const nowSec = Math.floor(Date.now() / 1000);
     const signedPages = await Promise.all(pages.map(async (_, i) => {

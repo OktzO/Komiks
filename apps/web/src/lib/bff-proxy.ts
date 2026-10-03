@@ -40,35 +40,52 @@ export const ALLOWED_PREFIXES: readonly string[] = [
 // eksplisit, bukan harus menyimpulkan dari absennya.
 const NEVER_VIA_PROXY: readonly string[] = ['/api/_internal', '/api/scrape'];
 
+// Pola dua lapis. Lapis pertama menangkap '.', '..', '%2e', '%2e%2e' sebagai
+// satu segmen yang dipisahkan slash (ter-encode atau tidak) — termasuk yang
+// diapit %2f, seperti '/api/user/..%2fscrape'. Lapis kedua menangkap bentuk
+// double-encoded ('%252e'), karena proxy tidak men-decode path tapi fetch()
+// men-decode satu kali lagi sebelum berdampak ke URL upstream.
+//
+// Produksi kebetulan aman sekarang karena runtime Workers menormalisasi
+// sebelum worker melihat path, tapi itu perilaku runtime dan bukan jaminan
+// kode: setiap proxy di belakang apa pun yang mempertahankan path mentah akan Ask. Menolak di sini membuat boundary benar-benar boundary.
+const DOT_SEGMENT_RE = /(?:\.|%2e|\.{0,2}%2f)/i;
+const DOUBLE_ENCODED_DOT_RE = /%(?:25)*(?:2e)/i;
+
+const hasDotSegment = (path: string): boolean =>
+  DOT_SEGMENT_RE.test(path) || DOUBLE_ENCODED_DOT_RE.test(path);
+
 export const isProxyAllowed = (path: string): boolean => {
   if (!path.startsWith('/api/')) return false;
+  if (hasDotSegment(path)) return false;
   for (const denied of NEVER_VIA_PROXY) {
     if (path === denied || path.startsWith(denied + '/')) return false;
   }
   return ALLOWED_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
 };
 
-// Header request milik koneksi atau identitas pengirim. Tidak boleh pindah ke
-// worker: worker harus melihat request yang datang dari manga-web, bukan dari
-// browser yang menyamar-nyamar lewat proxy.
-const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
-  'host',
-  'origin',
-  'referer',
-  'cf-connecting-ip',
-  'cf-ipcountry',
-  'cf-ray',
-  'cf-visitor',
-  'x-forwarded-for',
-  'x-forwarded-proto',
-  'x-service-token',
+// Header request yang BOLEH lewat: daftar putih, bukan daftar hitam. Semua yang
+// tidak disebut di sini tidak akan sampai ke worker — termasuk kunci admin dan
+// kunci forward antar-worker, yang sekarang tidak boleh di-forward browser sama
+// sekali. Proxy menjadi satu-satunya holder SERVICE_TOKEN; kalau browser boleh
+// memegang kredensial lain yang dipakai worker, invariants "browser tidak
+// pernah memegang token worker" jadi tidak bernilai.
+const FORWARDED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  'accept',
+  'accept-language',
+  'content-type',
+  'cookie',
+  'if-modified-since',
+  'if-none-match',
+  'range',
+  'user-agent',
 ]);
 
 export const buildUpstreamHeaders = (req: Request, token: string): Headers => {
   const out = new Headers();
   for (const [key, value] of req.headers) {
     const lower = key.toLowerCase();
-    if (STRIPPED_REQUEST_HEADERS.has(lower)) continue;
+    if (!FORWARDED_REQUEST_HEADERS.has(lower)) continue;
     out.set(lower, value);
   }
   // Diset TERAKHIR supaya token worker pasti menang atas apa pun yang dikirim
@@ -80,10 +97,17 @@ export const buildUpstreamHeaders = (req: Request, token: string): Headers => {
 // Header response yang tidak boleh keluar ke browser. x-service-token terutama:
 // gateway kita tidak pernah mengirim token, jadi kalau worker membalikannya
 // berarti ada kebocoran di sisi worker dan browser tidak boleh ikut mengetahuinya.
+//
+// content-encoding / content-length dibuang karena proxy tidak memampatkan: kalau
+// upstream memampatkan dan runtime memberi kita byte yang sudah di-decompress
+// sementara header ini masih ikut, browser gagal decode atau menggantung di
+// panjang yang salah.
 const STRIPPED_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
   'x-service-token',
   'cf-ray',
   'set-cookie',
+  'content-encoding',
+  'content-length',
   'access-control-allow-origin',
   'access-control-allow-credentials',
 ]);

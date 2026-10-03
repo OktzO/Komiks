@@ -90,12 +90,19 @@ export const onRequest: MiddlewareHandler = async (context, next) => {
   }
   // Only a complete, cacheable answer goes in: a 404 or a 5xx is this origin's
   // state right now, not the next five minutes'.
-  if (cache && res.status === 200 && !res.headers.has('set-cookie')) {
-    const stored = new Response(res.body, res);
+  if (cache && res.status === 200 && !res.headers.has('set-cookie') && res.body) {
+    // Dibaca ke buffer, bukan res.body dipakai dua kali. Dua consumer dari satu
+    // ReadableStream (satu untuk cache.put, satu untuk respons) melempar
+    // "Body has already been used" di runtime yang tidak men-tee otomatis —
+    // dan gejalanya muncul sebagai halaman kosong pada halaman yang tidak
+    // ada hubungannya dengan cache.
+    const buffered = await res.arrayBuffer();
+    const stored = new Response(buffered.slice(0), res);
     stored.headers.set('Cache-Control', `public, s-maxage=${EDGE_TTL_S}, stale-while-revalidate=86400`);
     // Kegagalan cache.put tidak boleh menggagalkan render — respons sudah
     // benar, hanya saja tidak akan tersimpan untuk kunjungan berikutnya.
     await cache.put(context.request, stored).catch(() => {});
+    return new Response(buffered, res);
   }
   return res;
 };

@@ -79,13 +79,29 @@ function resolveFrontendOrigin(c: Context): string {
 // cookie-nya hidup di domain worker — dan proxy BFF di oktzz.xyz tidak akan
 // pernah menerimanya, sehingga setiap request terautentikasi jadi 401.
 //
-// Dulu nilai ini diturunkan dari `new URL(c.req.url).origin`, yang menunjuk
-// domain worker karena proxy meneruskan ke sana. Sekarang diambil dari
-// ALLOWED_ORIGINS entry pertama, yang ada di keempat worker.
+// WAJIB diturunkan dari config, BUKAN dari input mana pun yang datang bersama
+// request. Dua call site harus menghasilkan string yang sama persis: Google
+// mencocokkan redirect_uri di authorize DAN di token exchange, dan kalau
+// keduanya berbeda hasilnya redirect_uri_mismatch tanpa petunjuk. Callback
+// datang dari Google tanpa query ?origin, sedangkan /google datang dari browser
+// yang mengirimkannya — kalau keduanya membaca input berbeda, nilainya bisa
+// berbeda diam-diam.
+//
+// resolveFrontendOrigin() masih dipakai untuk tujuan redirect TUJUHAN (ke mana
+// browser dikembalikan setelah login); itu memang boleh mengikuti origin
+// peminta. redirect_uri tidak boleh.
 //
 // WAJIB sama persis dengan yang terdaftar di Google Cloud Console
 // (https://oktzz.xyz/api/auth/google/callback — diverifikasi 2026-10-02).
-const oauthRedirectUri = (c: Context): string => `${resolveFrontendOrigin(c)}/api/auth/google/callback`;
+function oauthRedirectUri(c: Context): string {
+  const configured = c.env.ALLOWED_ORIGINS?.split(',')[0]?.trim() ?? '';
+  if (!/^https:\/\//.test(configured)) {
+    // Tanpa ini, helper diam-diam mengembalikan protocol-relative
+    // '//api/auth/google/callback' yang ditolak Google tanpa penjelasan.
+    throw new Error('ALLOWED_ORIGINS[0] must be an absolute https origin');
+  }
+  return `${configured}/api/auth/google/callback`;
+}
 
 // --- Cloudflare Turnstile ---
 // verifyTurnstile dipindah ke lib/turnstile.ts (dipakai juga serviceGate tier SENSITIVE).

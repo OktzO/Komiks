@@ -62,7 +62,7 @@ test('redirect_uri OAuth berasal dari frontend, bukan dari request URL', () => {
     'redirect_uri masih diturunkan dari base (origin request)'
   );
   assert.ok(
-    /const oauthRedirectUri = \(c: Context\): string/.test(authRoutes),
+    /function oauthRedirectUri\(c: Context\): string/.test(authRoutes),
     'helper oauthRedirectUri belum ada'
   );
   // Dipakai di KEDUA tempat: authorize URL dan token exchange. Google mencocokkan
@@ -76,5 +76,31 @@ test('redirect_uri tidak lagi memakai base dari request URL sama sekali', () => 
   assert.ok(
     !/const base = new URL\(c\.req\.url\)\.origin;/.test(authRoutes),
     'base dari request URL masih ada — itu akar masalahnya'
+  );
+});
+
+test('redirect_uri tidak pernah membaca input dari request', () => {
+  // Dua call site harus menghasilkan string yang sama persis. Callback datang
+  // dari Google TANPA ?origin, sedangkan /google datang dari browser yang
+  // mengirimkannya. Kalau redirect_uri membaca query, keduanya bisa berbeda
+  // diam-diam dan Google membalas redirect_uri_mismatch tanpa petunjuk.
+  const body = authRoutes.slice(authRoutes.indexOf('function oauthRedirectUri'));
+  const end = body.indexOf('\n}');
+  const fn = body.slice(0, end);
+  assert.ok(!/c\.req\.query/.test(fn), 'oauthRedirectUri membaca query param');
+  assert.ok(!/resolveFrontendOrigin/.test(fn), 'oauthRedirectUri delegate ke resolveFrontendOrigin');
+  assert.ok(
+    !/allowedOriginFor/.test(fn),
+    'oauthRedirectUri memakai allowedOriginFor — ia menerima input request'
+  );
+});
+
+test('oauthRedirectUri menolak origin yang bukan https absolut', () => {
+  // Tanpa guard, ALLOWED_ORIGINS unset membuat helper mengembalikan
+  // protocol-relative '//api/auth/google/callback' yang ditolak Google tanpa
+  // penjelasan sama sekali.
+  assert.ok(
+    /\^https:\\\/\\\/\//.test(authRoutes) || /https:\\\/\\\//.test(authRoutes),
+    'tidak ada validasi https pada oauthRedirectUri'
   );
 });

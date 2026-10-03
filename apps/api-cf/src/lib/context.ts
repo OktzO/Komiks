@@ -21,8 +21,12 @@ export interface Env {
   // Signed image URLs (anti-scraping /img/*): HMAC short-lived signature.
   // Satu nama secret utk semua worker — nilai boleh identik lintas akun supaya
   // signed URL dari worker mana pun valid di worker mana pun (hash-routing
-  // worker non-deterministik vs worker yang mint). UNSET → /img fail-open tanpa
-  // signature (dev) + warning sekali, konsisten dgn SERVICE_TOKEN/Turnstile.
+  // worker non-deterministik vs worker yang mint).
+  //
+  // UNSET = /img menutup 403 untuk semua gambar (fail-closed sejak 2026-10-02).
+  // Setelah /api dikunci jadi token-only, fail-open di sini akan membuat /img
+  // jadi pintu belakang scraper. Dev lokal dilindungi oleh nilai di .dev.vars,
+  // bukan oleh kelonggaran produksi.
   SIGNED_IMG_SECRET?: string;
   ADMIN_PASSWORD_HASH?: string;
    ADMIN_PASSWORD?: string;

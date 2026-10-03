@@ -23,7 +23,7 @@ import { constantTimeEqualStr } from './auth';
 //   /api/health       → health-check load balancer, bukan data
 //   /api/origins      → daftar origin publik, bukan data
 //   /api/auth/*       → OAuth: state cookie ECDSA + Turnstile, callback dari Google
-//   HEAD/OPTIONS      → preflight
+//   OPTIONS           → preflight
 //
 // Fail-open saat SERVICE_TOKEN belum di-set: dev lokal tidak boleh rusak. Semua
 // worker produksi sudah terpasang (diverifikasi 2026-10-02).
@@ -32,7 +32,12 @@ export type ServiceTier = 'exempt' | 'deny';
 
 export const classifyServiceTier = (path: string, method: string): ServiceTier => {
   const m = method.toUpperCase();
-  if (m === 'HEAD' || m === 'OPTIONS') return 'exempt';
+  // HEAD tidak dikecualikan. Dulu ia bersama OPTIONS karena corsMw
+  // menyingkat preflight; middleware itu sudah dihapus (2026-10-02) jadi tidak
+  // ada lagi alasan, dan Hono tetap menjalankan handler GET untuk HEAD: body-nya
+  // dibuang tapi status dan efek sampingnya jalan, sehingga ia berubah dari
+  // keputusan gate jadi oracle otorisasi level route.
+  if (m === 'OPTIONS') return 'exempt';
   if (
     path === '/api/health' ||
     path === '/api/origins' ||

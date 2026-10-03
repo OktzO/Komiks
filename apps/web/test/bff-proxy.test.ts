@@ -45,6 +45,33 @@ test('prefix tidak boleh mencerna path di luar namespace', () => {
   for (const p of sneaky) assert.equal(isProxyAllowed(p), false, `${p} jangan lolos`);
 });
 
+test('dot-segment ditolak, baik ter-encode maupun tidak', () => {
+  // Ini yang membuat allowlist benar-benar sebuah boundary. Pengecekan prefix
+  // berjalan pada string mentah, tapi fetch() meneruskan path itu ke WHATWG
+  // URL parser yang menghapus dot-segment. Jadi '/api/user/%2e%2e/scrape'
+  // lolosAllowlist sementara URL upstream-nya menjadi '/api/scrape'.
+  //
+  // Produksi kebetulan aman sekarang karena runtime Workers menormalisasi
+  // sebelum worker melihat path — tapi itu perilaku runtime, bukan jaminan
+  // kode. Setiap proxy yang berdiri di belakang apa pun yang mempertahankan
+  // path mentah (reverse proxy, service binding, dev server) langsung
+  ///Askapas, jadi penolakan dilakukan di sini dan bukan hypocris pada runtime.
+  const dotty = [
+    '/api/user/../scrape',
+    '/api/user/%2e%2e/scrape',
+    '/api/user/%2E%2E/scrape',
+    '/api/user/%2e%2E/scrape',
+    '/api/user/%2E%2e/scrape',
+    '/api/user/./../../scrape',
+    '/api/series/../_internal/db/exec',
+    '/api/series/%2e%2e/_internal/db/exec',
+    '/api/user/..%2fscrape',
+    '/api/user/%2f..%2fscrape',
+    '/api/user/%252e%252e/scrape',
+  ];
+  for (const p of dotty) assert.equal(isProxyAllowed(p), false, `${p} jangan lolos`);
+});
+
 test('path di luar /api selalu ditolak', () => {
   for (const p of ['/', '/login', '/admin', '/img/komiku/x/1', '/api', '/api/', '/x/api/series', '']) {
     assert.equal(isProxyAllowed(p), false, `${p} jangan lolos`);
@@ -61,21 +88,34 @@ test('token milik client dibuang, milik worker yang dikirim', () => {
   assert.notEqual(h.get('x-service-token'), 'ATTACKER-SUPPLIED');
 });
 
-test('header identitas & koneksi tidak diteruskan', () => {
-  const req = new Request('https://oktzz.xyz/api/series', {
+test('header credential lain milik client tidak diteruskan', () => {
+  // Proxy tidak boleh menjadi jalan bagi browser yang entah memakai
+  // admin key atau forward key milik worker. Ban-forward: hanya daftar putih
+  // yang boleh lewat.
+  const req = new Request('https://oktzz.xyz/api/scrape', {
     headers: {
-      host: 'evil.example',
-      origin: 'https://evil.example',
-      referer: 'https://evil.example/page',
-      'cf-connecting-ip': '1.2.3.4',
-      'x-forwarded-for': '5.6.7.8',
+      'x-admin-api-key': 'ADMIN-KEY-ATTEMPT',
+      'x-db-forward-key': 'FORWARD-KEY-ATTEMPT',
+      'x-db-mirror-key': 'MIRROR-KEY-ATTEMPT',
+      authorization: 'Bearer SOMETHING',
     },
   });
   const h = buildUpstreamHeaders(req, 'REAL-TOKEN');
-  for (const k of ['host', 'origin', 'referer', 'cf-connecting-ip', 'x-forwarded-for']) {
+  for (const k of ['x-admin-api-key', 'x-db-forward-key', 'x-db-mirror-key', 'authorization']) {
     assert.equal(h.get(k), null, `${k} diteruskan ke worker`);
   }
   assert.equal(h.get('x-service-token'), 'REAL-TOKEN');
+});
+
+test('header yang legitimate perlu tetap diteruskan', () => {
+  const req = new Request('https://oktzz.xyz/api/user/bookmark', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'if-none-match': 'W/"x"' },
+  });
+  const h = buildUpstreamHeaders(req, 'T');
+  assert.equal(h.get('content-type'), 'application/json');
+  assert.equal(h.get('accept'), 'application/json');
+  assert.equal(h.get('if-none-match'), 'W/"x"');
 });
 
 test('cookie diteruskan — session harus sampai ke worker API', () => {
@@ -83,16 +123,6 @@ test('cookie diteruskan — session harus sampai ke worker API', () => {
     headers: { cookie: '__Host-session=abc.def; other=1' },
   });
   assert.equal(buildUpstreamHeaders(req, 'T').get('cookie'), '__Host-session=abc.def; other=1');
-});
-
-test('header yang legitimately perlu tetap diteruskan', () => {
-  const req = new Request('https://oktzz.xyz/api/user/bookmark', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-  });
-  const h = buildUpstreamHeaders(req, 'T');
-  assert.equal(h.get('content-type'), 'application/json');
-  assert.equal(h.get('accept'), 'application/json');
 });
 
 // ── Relay ──────────────────────────────────────────────────────────────────────
@@ -116,6 +146,22 @@ test('relay meneruskan status-worthy header lain (redirect OAuth butuh Location)
   up.set('location', 'https://oktzz.xyz/bookmark');
   const out = relayHeaders(up);
   assert.equal(out.get('location'), 'https://oktzz.xyz/bookmark');
+});
+
+test('relay membuang header encoding — byte yang di-decompress runtime dan header ini bisa tidak sinkron', () => {
+  // Kalau upstream memampatkan karena proxy meneruskan accept-encoding, dan
+  // runtime memberi proxy byte yang sudah di-decompress sementara header
+  // content-encoding masih ada, browser akan gagal decode atau menggantung di
+  // content-length yang salah. Proxy tidak memampatkan, jadi apa pun yang
+  // sampai ke browser harus dalam bentuk yang runtime benar-benar Prenya.
+  const up = new Headers();
+  up.set('content-encoding', 'gzip');
+  up.set('content-length', '1234');
+  up.set('content-type', 'application/json');
+  const out = relayHeaders(up);
+  assert.equal(out.get('content-encoding'), null, 'content-encoding ikut relayed');
+  assert.equal(out.get('content-length'), null, 'content-length ikut relayed');
+  assert.equal(out.get('content-type'), 'application/json');
 });
 
 test('relay tidak membocorkan token ke browser', () => {

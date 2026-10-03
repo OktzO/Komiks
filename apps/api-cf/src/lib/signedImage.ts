@@ -3,8 +3,7 @@ import { constantTimeEqualStr } from './auth';
 
 // ── HMAC-SHA256 short-lived signed image URLs (anti-scraping) ──────────────
 //
-// SIGNED_IMG_SECRET (fail-open saat belum di-set — konsisten dgn SERVICE_TOKEN
-// dan TURNSTILE_SECRET_KEY): secret hanya hidup server-side. Worker yang
+// SIGNED_IMG_SECRET (fail-CLOSED saat belum di-set: /img menolak semua): secret hanya hidup server-side. Worker yang
 // menjawab chapter-detail mem-mint imgUrl `/img/...?exp=..&sig=..` (TTL ~25
 // menit) dan route `/img/*` mem-verify sebelum menyerve. Browser tidak pernah
 // memegang secret — URL yang bocor otomatis mati setelah exp.

@@ -59,15 +59,11 @@ test('verifyImgSig tetap benar saat secret ada', async () => {
   assert.equal(await verifyImgSig(SECRET, '/img/komiku/x/1', exp, sig, exp + 30, 60), true);
 });
 
-test('.dev.vars punya escape hatch supaya dev lokal tidak kehilangan semua gambar', () => {
-  const devVars = readFileSync(new URL('../.dev.vars', import.meta.url), 'utf8');
-  assert.ok(/^SERVICE_TOKEN=.+/m.test(devVars), '.dev.vars tidak punya SERVICE_TOKEN terisi');
-  assert.ok(
-    /^SIGNED_IMG_SECRET=.+/m.test(devVars),
-    '.dev.vars tidak punya SIGNED_IMG_SECRET terisi — /img akan 403 semua di dev'
-  );
-});
-
+// .dev.vars.example mendokumentasikan kedua secret. File .dev.vars-nya sendiri
+// gitignored dan tidak ada di checkout CI, jadi Existence-nya TIDAK diassert
+// dari suite repo — hanya didokumentasikan. Kalau fail-closed|/img bikin dev
+// lokal kehilangan semua gambar, itu lubang konfigurasi lokal yang hanya
+// Penalty Developer's mesin, bukan bug yang bisa ditangkap test.
 test('.dev.vars.example mendokumentasikan kedua secret itu', () => {
   const example = readFileSync(new URL('../.dev.vars.example', import.meta.url), 'utf8');
   assert.ok(/^SERVICE_TOKEN=/m.test(example), '.dev.vars.example tidak menyebut SERVICE_TOKEN');

@@ -36,9 +36,10 @@ test('classifyServiceTier: hanya yang punya credential sendiri yang exempt', () 
   // OAuth: state cookie ECDSA + Turnstile, callback dari Google.
   assert.equal(classifyServiceTier('/api/auth/google', 'GET'), 'exempt');
   assert.equal(classifyServiceTier('/api/auth/google/callback', 'GET'), 'exempt');
-  // Preflight.
+  // Preflight. HEAD sengaja TIDAK exempt — Hono menjalankan handler GET untuk
+  // HEAD, jadi membiarkannya lewat menjadikan keputusan gate sia-sia.
   assert.equal(classifyServiceTier('/anything', 'OPTIONS'), 'exempt');
-  assert.equal(classifyServiceTier('/anything', 'HEAD'), 'exempt');
+  assert.equal(classifyServiceTier('/api/series', 'HEAD'), 'deny');
 });
 
 test('classifyServiceTier: semua data pengguna butuh token', () => {
