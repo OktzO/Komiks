@@ -1,4 +1,5 @@
 import { murmur3_32 } from '@manga-platform/shared/r2-routing';
+import { drainResponse } from '@manga-platform/shared/http';
 
 // Client-side: import.meta.env.PUBLIC_* (inline saat build, tidak bisa
 // diganti runtime). Server-side (SSR di Pages Function): process.env —
@@ -490,6 +491,11 @@ export async function apiWithFailover<T>(path: string): Promise<T> {
         const f = failures.get(origin.url);
         const count = (f?.count ?? 0) + 1;
         failures.set(origin.url, { count, until: count >= 2 ? now + 60000 : now + 5000 });
+        // Body harus dikuras sebelum response ditinggalkan. Workers runtime
+        // menandai stream yang belum dikonsumsi saat isolate berikutnya jalan
+        // ("Body has already been used") dan itu memunculkan sebagai 500 di
+        // request yang tidakhlebknya. Lihat drainResponse di @manga-platform/shared.
+        await drainResponse(res).catch(() => {});
         continue;
       }
       failures.set(origin.url, { count: 0, until: 0 });

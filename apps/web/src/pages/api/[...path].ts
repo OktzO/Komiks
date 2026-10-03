@@ -1,4 +1,5 @@
 import type { APIRoute } from 'astro';
+import { env } from 'cloudflare:workers';
 import { getOrigins } from '@/lib/api';
 import { buildUpstreamHeaders, isProxyAllowed, relayHeaders } from '@/lib/bff-proxy';
 
@@ -20,12 +21,13 @@ const json = (body: unknown, status: number): Response =>
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
 
-// Diisi middleware.ts (src/middleware.ts) dari binding SERVICE_TOKEN worker,
-// dibaca lewat cloudflare:workers karena Astro>=6 tidak menyediakan
-// locals.runtime.env.
+// Dibaca langsung dari binding worker, bukan lewat globalThis yang diisi
+// middleware: middleware tidak dijamin jalan sebelum endpoint dievaluasi pada
+// modul yang sama, dan globalThis di isolate Workers tidak bisa jadi kontrak
+// antar-modul.
 const serviceTokenOf = (): string => {
-  const g = globalThis as { __SERVICE_TOKEN__?: string };
-  return (g.__SERVICE_TOKEN__ ?? '').trim();
+  const rt = env as { SERVICE_TOKEN?: string };
+  return (rt.SERVICE_TOKEN ?? '').trim();
 };
 
 export const ALL: APIRoute = async ({ request, params }) => {
@@ -48,7 +50,8 @@ export const ALL: APIRoute = async ({ request, params }) => {
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
   let lastError = 'no origin';
-  for (const origin of await getOrigins()) {
+  const originList = await getOrigins();
+  for (const origin of originList) {
     try {
       const res = await fetch(`${origin.url}${upstream}`, {
         method: request.method,
