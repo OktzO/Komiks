@@ -117,7 +117,7 @@ const clientIpOf = (c: Context): string | undefined =>
 // DIAGNOSTIK SEMENTARA — hapus setelah gate proven benar.
 // Kode error dikembalikan ke klien supaya "captcha verification failed" bisa
 // dibedakan dari token kedaluwarsa vs remoteip tidak cocok vs secret salah pairing.
-export const __turnstileDiag = new Map<string, { codes: string[]; ip: string }>();
+export const __turnstileDiag = new Map<string, { codes: string[]; ip: string; fp?: string }>();
 
 // --- Google OAuth ---
 
@@ -137,8 +137,9 @@ router.get('/google', async (c: Context) => {
   );
   if (!turnstileOk) {
     const ip = clientIpOf(c) ?? '(none)';
-    const codes = Array.from(__turnstileDiag.values()).slice(-1)[0]?.codes ?? [];
-    return c.json({ error: 'captcha verification failed', diag: { codes, ip, hasToken: !!c.req.query('turnstile_token') } }, 403);
+    const d = Array.from(__turnstileDiag.values()).slice(-1)[0];
+    const codes = d?.codes ?? [];
+    return c.json({ error: 'captcha verification failed', diag: { codes, ip, fp: d?.fp, hasToken: !!c.req.query('turnstile_token') } }, 403);
   }
 
   const state = crypto.randomUUID();

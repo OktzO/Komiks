@@ -49,10 +49,28 @@ test('link OAuth Google tidak boleh di-prefetch', () => {
     fileURLToPath(new URL('../src/components/AuthForm.tsx', import.meta.url)), 'utf8');
   const at = text.indexOf('<a\n            href={googleUrl}');
   assert.ok(at > -1, 'link Google tidak ditemukan');
-  const tag = text.slice(at, at + 700);
+  const tag = text.slice(at, at + 900);
   assert.ok(
     /data-astro-prefetch="false"/.test(tag),
-    'link OAuth tidak punya data-astro-prefetch="false" — hover akan membakar token'
+    'link OAuth tidak punya data-astro-prefetch="false" — hover akan membakar Turnstile token'
+  );
+});
+
+test('link OAuth Google harus opt-out dari ClientRouter', () => {
+  // /api/auth/google membalas 302 ke accounts.google.com. ClientRouter
+  // mengintercept klik same-origin sebagai fetch(); begitu responsnya redirect
+  // lintas origin, router jatuh ke full-page navigation dan link yang sama
+  // dikirim dua kali. Token single-use => request kedua dapat
+  // 'timeout-or-duplicate', jadi user melihat JSON error padahal OAuth-nya
+  // sudah berjalan. data-astro-reload membuat router mengabaikan link ini.
+  const text = readFileSync(
+    fileURLToPath(new URL('../src/components/AuthForm.tsx', import.meta.url)), 'utf8');
+  const at = text.indexOf('<a\n            href={googleUrl}');
+  assert.ok(at > -1, 'link Google tidak ditemukan');
+  const tag = text.slice(at, at + 900);
+  assert.ok(
+    /data-astro-reload/.test(tag),
+    'link OAuth tidak punya data-astro-reload — router bisa mengirim request kedua dan menghabiskan token'
   );
 });
 

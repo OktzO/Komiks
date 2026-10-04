@@ -116,10 +116,17 @@ export function AuthForm() {
 
           <a
             href={googleUrl}
-            // Prefetch harus mati di link ini: Astro memakai prefetchAll + hover,
-            // jadi hover membakar satu GET /api/auth/google. Turnstile token
-            // single-use — request itu memakai token, lalu klik aslinya mengirim
-            // token yang sama dan siteverify menolak 'timeout-or-duplicate'.
+            // Router Astro harus mengabaikan link ini sepenuhnya.
+            //
+            // /api/auth/google menjawab 302 ke accounts.google.com, dan token
+            // Turnstile single-use. ClientRouter mengintercept klik same-origin
+            // lalu fetch(); begitu responsnya ternyata redirect lintas origin,
+            // router jatuh ke full-page navigation — jadi link yang sama/request
+            // yang sama dikirim dua kali. Request pertama memakai token, kedua
+            // dapat 'timeout-or-duplicate' dan user melihat JSON error padahal
+            // login-nya sebenarnya sudah berjalan. Prefetch hover (prefetchAll)
+            // membakar token dengan cara yang sama.
+            data-astro-reload
             data-astro-prefetch="false"
             onClick={(e) => { if (gateLocked) e.preventDefault(); }}
             aria-disabled={gateLocked}
