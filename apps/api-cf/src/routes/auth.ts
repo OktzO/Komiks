@@ -108,7 +108,7 @@ function oauthRedirectUri(c: Context): string {
 
 // Turnstile mengikat token ke IP yang membuatnya. Request login datang lewat
 // proxy BFF, jadi cf-connecting-ip di worker API adalah IP proxy — kalau itu
-// yang dikirim sebagai remoteip, setiap token user ditolak хотя widget-nya sukses
+// yang dikirim sebagai remoteip, setiap token user ditolak padahal widget-nya sukses
 // Solve. Proxy meneruskan IP asli sebagai x-client-ip; ini membacanya, dengan
 // fallback ke cf-connecting-ip untuk request yang tidak lewat proxy (kron, uji).
 const clientIpOf = (c: Context): string | undefined =>
