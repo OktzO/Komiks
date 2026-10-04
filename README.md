@@ -88,13 +88,13 @@ termasuk migrate ada di [`docs/DEPLOY.md`](docs/DEPLOY.md).
 ## Arsitektur
 
 ```
- 4 Cloudflare Worker (round-robin, 4 akun berbeda)   Cloudflare Worker (Astro SSR + assets)
+  4 Cloudflare Worker (rotasi per request, 4 akun berbeda)   Cloudflare Worker (Astro SSR + assets)
 ┌──────────────────────────────────────────┐      ┌──────────────────────────────────┐
 │ akun-1  manga-api     web + fallback     │      │ apps/web  manga-web  (Astro 7)  │
-│ akun-2  manga-api-2   API + storage      │◄────►│ src/pages, src/components,      │
-│ akun-3  manga-api-3   API + storage      │      │ src/lib/api.ts (origin picker)  │
-│ akun-4  manga-api-4   API + storage      │      └──────────────────────────────────┘
-└──────────────────────────────────────────┘
+│ akun-2  manga-api-2   API + storage      │◄────►│ src/pages/api/[...path].ts      │
+│ akun-3  manga-api-3   API + storage      │      │ = proxy BFF (satu-satunya        │
+│ akun-4  manga-api-4   API + storage      │      │ jalur browser → API)             │
+└──────────────────────────────────────────┘      └──────────────────────────────────┘
         │                    │                    │
         ▼                    ▼                    ▼
    D1 × 4 database      CACHE_KV            Backblaze B2 × N akun
@@ -114,34 +114,79 @@ Bedakan dua hal yang mudah tertukar:
 - **akun** = akun Cloudflare. Tiap akun punya D1, KV, dan quota-nya sendiri. Ini yang
   bikin request dari empat tempat berbeda dan tidak bisa semuanya tumbang serumai.
 - **worker** = kode yang jalan di satu akun. Empatnya kode-nya sama persis; yang beda
-  cuma `[vars]`-nya (`PEER_URLS`, `PEER_INDEX`, `EVICTION_OWNER`).
+  cuma `[vars]`-nya (`PEER_URLS`, `PEER_INDEX`, `EVICTION_OWNER`) **dan** kadar secret,
+  yang tidak selalu sama antar worker — lihat [Paritas secret](#paritas-secret-empat-worker).
+
+### Proxy BFF — satu-satunya jalur browser ke API
+
+Browser **tidak pernah** menyentuh `*.workers.dev` untuk data. Semua panggilan
+`/api/*` dari browser adalah request same-origin ke `oktzz.xyz`, yang dilayani
+`apps/web/src/pages/api/[...path].ts` lalu diteruskan ke salah satu worker API.
+
+Alasannya token: `serviceGateMw` hanya meloloskan request yang punya
+`x-service-token`, dan secret itu hanya ada di worker `manga-web`. Browser tidak
+pernah memegang token itu, jadi request langsung ke worker API akan mendapat 403. Yang
+tetap boleh langsung ke worker adalah `/img/*`, karena `<img>` tidak bisa membawa
+header — image proxy itu dijaga signature HMAC, bukan token.
+
+Konsekuensi yang harus diingat:
+
+- **Workers Route `oktzz.xyz/api/*` sudah dihapus** (2026-10-02). Route yang tersisa
+  hanya `/img/* → manga-api`. Jangan dibuat ulang.
+- Proxy memakai **rotasi acak per request**, bukan kursor. `manga-web` stateless
+  (satu isolate melayani banyak request bersamaan), jadi tidak ada tempat menyimpan
+  kursor tanpa jadi sumber kontensi. Load spreading tetap terjadi.
+- Rotasi **wajib** ada di proxy. Kalau dimatikan, seluruh traffic proxy mendarat di
+  satu worker, dan itu sempat terjadi: `getOrigins()` selalu mengurutkan berdasarkan
+  priority, jadi tanpa rotasi eksplisit tidak ada yang mengacak. Sumber rotasi ada di
+  `apps/web/src/lib/api.ts` dan dipakai juga oleh proxy.
+- Header yang diteruskan ke worker API memakai **allowlist**, bukan blacklist:
+  `accept`, `accept-language`, `content-type`, `cookie`, `if-modified-since`,
+  `if-none-match`, `range`, `user-agent`, plus `x-client-ip`. Credential client
+  seperti `authorization`, `x-admin-api-key`, `x-db-forward-key` tidak pernah
+  ikut. Path dicek allowlist juga, dengan penolakan dot-segment (termasuk
+  double-encoded).
+- Semua `Set-Cookie` dari worker API relayed apa adanya, sehingga cookie session
+  milik `oktzz.xyz`. `redirect: 'manual'` wajib — OAuth callback mengembalikan
+  302 + `Set-Cookie` dalam satu respons, dan mengikuti redirect-nya membuat
+  cookie hilang.
 
 ### Urutan middleware di Worker API
 
- Dari `apps/api-cf/src/index.ts`:
+Dari `apps/api-cf/src/index.ts`:
 
 ```
 securityHeadersMw   → nosniff, DENY, no-referrer, COOP
-corsMw              → fail-closed; ALLOWED_ORIGINS kosong = tidak ada origin yang lolos
 noStoreMw           → no-store untuk /api/_internal, /api/auth, /api/user, /api/admin, /api/scrape
 rateLimitAdmin      → 600/menit, prefix /api/admin/*
 rateLimitInternal   → 300/menit, prefix /api/_internal/*
-  ↳ /api/_internal/* dan /img/* sudah punya guard sendiri, jadi TIDAK lewat gate di bawah
+  ↳ /api/_internal/* sudah punya guard sendiri, jadi TIDAK lewat gate di bawah
+  ↳ router di-mount di sini, sebelum gate
 rateLimitImg        → 300/menit, prefix /img/*
+  ↳ router /img juga di-mount di sini
 serviceGateMw       → token BFF; hanya /api/* normal yang kena
 rateLimit           → 60/menit, global (self-skip untuk /api/admin dan /api/_internal)
-  ↳ baru di sini semua router di-mount
+  ↳ baru di sini semua router /api lain di-mount
 ```
 
-Dua akibat yang tidak intuitif dan sudah jadi perangkap beberapa kali:
+Tiga akibat yang tidak intuitif dan sudah jadi perangkap beberapa kali:
 
 - `/api/_internal/*` dan `/img/*` **tidak pernah** sampai ke `serviceGateMw` maupun
   `rateLimit` global, karena router-nya di-mount lebih dulu. Itu disengaja — keduanya
   high-volume dan punya guard sendiri.
+- **CORS sudah dihapus** (2026-10-02). Dulu ada `corsMw` yang jadi bypass alami
+  `/api/*` karena browser lintas origin harus preflight. Sekarang browser tidak
+  pernah bicara lintas origin ke API, jadi middleware itu hanya permukaan
+  serangan. `Origin` header **diabaikan sepenuhnya** oleh `serviceGateMw` —
+ estiaya yang lolos ditentukan token, bukan asal request.
 - `rateLimit` global **self-skip** untuk prefix `/api/admin`, jadi `rateLimitAdmin` adalah
   satu-satunya pembatas di sana. Karena itu mount-nya harus `/api/admin/*`: Hono mencocokkan
   `use('/api/admin')` hanya pada path persis, dan `/api/admin/overview` tidak akan
   kena. Ada test yang mengunci bentuk mount ini — `apps/api-cf/test/rate-limit-mount.test.mjs`.
+- `HEAD` **tidak** dikecualikan oleh `serviceGateMw`. Ia dulu ikut exempt bersama
+  OPTIONS karena `corsMw` menyingkat preflight; setelah middleware itu dihapus tidak
+  ada lagi alasan, dan Hono tetap menjalankan handler GET untuk HEAD — body dibuang
+  tapi status dan efek sampingnya jalan.
 
 ---
 
@@ -191,10 +236,18 @@ Empat worker, satu kode, empat akun. Yang membedakannya cuma variabel.
 | `wrangler.origin3.toml` | akun-3 | 2 | API + storage |
 | `wrangler.origin4.toml` | akun-4 | 3 | API + storage |
 
-**Round-robin terjadi di client**, bukan di worker. `apps/web/src/lib/api.ts` menyimpan
-pool origin di module cache + `sessionStorage`, mengambil satu per request, dan membuka
-circuit breaker per origin yang gagal 2× berturut-turut (60 detik). Semua worker berjalan
-dengan kode identik, jadi tidak ada yang perlu tahu worker mana yang "utama".
+**Rotasi terjadi di proxy BFF**, bukan di browser dan bukan di worker API. Browser
+mengebut `/api/*` di origin sendiri, `manga-web` yang memilih worker mana yang melayani
+(rotasi acak per request, bukan kursor), lalu `apps/web/src/lib/api.ts` di server memakai
+circuit breaker per origin yang gagal 2× berturut-turut (60 detik). Tidak ada lagi
+penyimpanan asal-usul di `sessionStorage` — jadi tidak ada satu tab yang terkunci ke
+worker tertentu, dan tidak ada satu worker yang jadi titik gagal tunggal. Semua worker
+berjalan dengan kode identik, jadi tidak ada yang perlu tahu worker mana yang "utama".
+
+**Sticky auth origin sudah dihapus** (2026-10-02). Dulu cookie session berada di domain
+worker API, jadi browser harus tahu worker mana yang memegang cookie itu — dan itu
+disimpan di `sessionStorage` per tab. Sekarang cookie hidup di `oktzz.xyz`, jadi setiap
+request otomatis masuk ke proxy yang benar.
 
 **D1 dipecah per key, bukan per tabel.** Yang dipecah:
 
@@ -214,6 +267,12 @@ dan itu belum diotomasi.
 (secret `AUTH_SIGNING_KEY`); public key keempat worker di-share lewat `[vars]`
 `AUTH_PUBLIC_KEYS` yang sudah di-commit. Cookie membawa `kid`, jadi worker mana pun bisa
 verify cookie buatan worker mana pun. Nol secret yang perlu di-sync lintas akun.
+
+Semua keypair dibuat sekali oleh `scripts/gen-auth-keys.mjs` (private-nya lokal di
+`apps/api-cf/.auth-keys.json`, gitignored), dan `AUTH_PUBLIC_KEYS` di keempat toml
+**wajib** memuat seluruh `kid` — kalau satu worker tidak punya `kid` milik worker lain,
+cookie worker itu ditolak diam-diam dan terbaca sebagai logout acak. Dijaga oleh
+`apps/api-cf/test/worker-parity.test.mjs`.
 
 ---
 
@@ -422,7 +481,7 @@ GET /api/auth/google?turnstile_token=...
                  └─ verifikasi id_token: aud, iss, exp
                  └─ upsert user, cek status (banned/suspended → 403)
                  └─ baris session di shard pemilik user_id
-                 └─ set __Host-session (SameSite=None; Secure; HttpOnly)
+                 └─ set __Host-session (SameSite=Lax; Secure; HttpOnly; Path=/)
 ```
 
 Cookie `__Host-session` isinya payload b64url yang dipisah titik:
@@ -430,21 +489,101 @@ Cookie `__Host-session` isinya payload b64url yang dipisah titik:
 dipakai untuk verify — itulah yang membuat empat worker bisa saling verify tanpa shared
 secret.
 
-`getSessionUser` = verify signature → cek expiry → **satu** baca session di shard owner.
-Fail-closed: row hilang = revoked. Tidak ada cache, tidak ada fallback.
+Prefiks `__Host-` mengikat cookie ke host yang mengirim respons, jadi hanya `oktzz.xyz`.
+Atributnya wajib `Secure`, `Path=/`, dan **tanpa** `Domain`; kalau ada `Domain`, browser
+membuang cookie itu diam-diam. `SameSite=Lax` (bukan `None`) karena frontend dan API kini
+satu origin lewat proxy BFF — `None` tidak lagi diperlukan dan hanya melemahkan proteksi.
 
-**Turnstile gate.** Widget di `AuthForm.tsx` memakai **explicit render** — script URL wajib
+### Pembacaan session: revoked, absent, unreachable
+
+`getSessionUser` = verify signature → cek expiry → **satu** baca session di shard owner.
+Bacaan itu diklasifikasikan empat-way, dan hanya satu yang berarti logout:
+
+| State | Arti | Akibat |
+|---|---|---|
+| `active` | baris terbaca, belum di-revoke | login |
+| `revoked` | baris terbaca, `revoked_at` terisi | **logout** |
+| `absent` | shard terjangkau, tapi tidak ada baris | login, lalu di-heal |
+| `unreachable` | shard tidak terbaca (D1 / jaringan) | login, + log peringatan |
+
+Revocation **tidak pernah** diekspresikan dengan baris hilang: `revokeSessionSharded`
+selalu `UPDATE sessions SET revoked_at`, tidak pernah `DELETE`. Jadi `absent` dan
+`unreachable` tidak membawa informasi apa pun soal perrevocation, dan membaca keduanya
+sebagai "revoked" membuat setiap gangguan D1 menjadi logout acak — terutama karena proxy
+merotasi `/api/user/*` ke empat worker di empat akun, sehingga satu user bisa dilayani
+worker yang bukan pemilik shard-nya. Cookie yang sudah ditandatangani ECDSA dan exp-nya
+dicek adalah otoritas atas "apakah ini sesi asli"; baris D1 hanya otoritas atas "sudah
+di-revoke atau belum". Test: `apps/api-cf/test/session-read-state.test.mjs`.
+
+### Turnstile gate
+
+Widget di `AuthForm.tsx` memakai **explicit render** — script URL wajib
 `?render=explicit&onload=onTurnstileLoad`. Tanpa `&onload=` itu, widget tidak pernah muncul
 dan halaman login diam saja. Kalau `PUBLIC_TURNSTILE_SITE_KEY` kosong, widget disembunyikan
 dan gate mati (fail-open, supaya dev lokal tidak tersangkut). Kalau
 `TURNSTILE_SECRET_KEY` ter-set tapi tidak di-set di keempat worker, verifikasi dilewati —
 ini yang membuat bug paling sulit terdeteksi, jadi secret-nya di-set di keempat worker.
+Verifikasi tinggal di `apps/api-cf/src/lib/turnstile.ts`.
+
+Tiga hal yang hampir selalu jadi penyebab login gagal, dan tidak terlihat dari pesan
+error karena ketiganya mengembalikan `"captcha verification failed"`:
+
+1. **Prefetch / router membelanjakan token lebih dari sekali.** Turnstile token
+   single-use, dan Astro memakai `<ClientRouter>` + `prefetchAll` dengan strategi
+   `hover`. Link OAuth Google **wajib** punya `data-astro-prefetch="false"` (hover
+   membakar token sebelum diklik) **dan** `data-astro-reload` (router meng-intercept
+   klik same-origin jadi `fetch`; begitu responsnya ternyata 302 lintas origin, router
+   jatuh ke full-page navigation sehingga link yang sama terkirim dua kali — yang
+   kedua dapat `timeout-or-duplicate` padahal OAuth-nya sudah berjalan).
+   Dihitung dengan test: `apps/web/test/browser-same-origin.test.ts`.
+2. **`remoteip` tidak cocok.** Cloudflare **tidak** mempertahankan IP asli pada subrequest
+   lintas akun: `CF-Connecting-IP` diisi IP placeholder `2a06:98c0:3600::103`. Jadi
+   `c.req.header('cf-connecting-ip')` di worker API adalah IP proxy, dan Turnstile
+   menolak token yang remoteip-nya berbeda. Proxy meneruskan IP asli sebagai
+   `x-client-ip` (`apps/web/src/lib/bff-proxy.ts`), dan `clientIpOf()` membacanya dengan
+   fallback ke `cf-connecting-ip` untuk request yang tidak lewat proxy.
+3. **Secret tidak ter-pairing.** Kalau sitekey/secret tidak pasangan, siteverify
+   menjawab `invalid-input-secret`, bukan `invalid-input-response`.
+
+Untuk diagnosis, respons 403 sementara membawa `diag.codes` (kode error dari
+Turnstile) plus `diag.fp` — sidik jari SHA-256 token. `timeout-or-duplicate` dipakai
+Turnstile untuk **kedua** kasus "sudah dipakai" dan "kedaluwarsa", jadi `fp` yang
+membedakan: `fp` sama di dua percobaan berarti tokennya benar-benar terkirim dua kali;
+`fp` berbeda berarti tidak pernah dobel-kirim, jadi tokennya memang sudah basi. Field
+ini harus **dihapus** setelah login terkonfirmasi.
+
+### Paritas secret empat worker
+
+Secret bersifat write-only, jadi tidak ada yang bisa diverifikasi dari dalam repo —
+`wrangler deploy` juga tidak gagal kalau satu secret hilang. Ini bukan teoritis:
+`manga-api` pernah berjalan **tanpa** `AUTH_SIGNING_KEY`, jadi tidak bisa menandatangani
+sesi, dan karena proxy merotasi request, sekitar seperempat login mendarat di worker yang
+melempar exception. Aturannya:
+
+```bash
+node scripts/check-worker-secrets.mjs   # cek set secret live di keempat worker
+```
+
+Test yang mengunci bagian yang ada di version control (public key, `PEER_URLS`/`PEER_INDEX`):
+`apps/api-cf/test/worker-parity.test.mjs`.
 
 ---
 
 ## API
 
-81 route. Base URL salah satu worker; client memilih sendiri lewat round-robin.
+81 route di worker API. **Base URL bukan untuk browser** — browser hanya mengenal
+`oktzz.xyz/api/*` (proxy BFF), dan worker-rotasi dikerjakan proxy. Dari sisi server
+(`apps/web/src/lib/api.ts`) rotasi tetap ada untuk path publik; SSR menembak worker
+API langsung memakai `x-service-token`.
+
+Route yang tercantum di bawah adalah **worker API**. Di browser, setiap path `/api/*`
+pada tabel ini dipanggil tanpa host — jadi relatif ke `oktzz.xyz` dan lewat proxy.
+
+### Proxy BFF (bukan worker API)
+
+| Method | Path | Keterangan |
+|---|---|---|
+| ANY | `/api/*` | `apps/web/src/pages/api/[...path].ts` — satu-satunya jalur browser ke API. Injeksi `x-service-token`, allowlist path + header, relay `Set-Cookie`, teruskan IP asli sebagai `x-client-ip`. Cookie session menjadi milik `oktzz.xyz`. |
 
 ### Publik — komik
 
@@ -671,13 +810,13 @@ diketahui.
 
 ## Testing
 
-65 file test. Semuanya unit / parser test tanpa jaringan.
+74 file test. Semuanya unit / parser test tanpa jaringan.
 
 ```bash
-# Worker API — 31 file
+# Worker API — 37 file
 npm --prefix apps/api-cf test
 
-# Web — 9 file, runner bun
+# Web — 12 file, runner bun
 npm --prefix apps/web test
 
 # Packages
@@ -741,6 +880,8 @@ sambil memindai tidak ada. Tidak ada build, tidak ada deploy, tidak menyentuh Cl
 ```bash
 # Worker API — 4 akun. wrangler 3.114 dari root WAJIB:
 # wrangler 4 + compatibility_date lama membuat worker 500 (error 1042).
+# CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID per akun ada di root .env
+# (gitignored), di-prefix CF_TOKEN_AKUN{1..4} / CF_ACCOUNT_ID_AKUN{1..4}.
 node scripts/build-worker-bundle.mjs
 npx wrangler deploy --config apps/api-cf/wrangler.toml          # akun-1
 npx wrangler deploy --config apps/api-cf/wrangler.origin.toml   # akun-2
@@ -752,12 +893,23 @@ cd apps/web && npm run deploy    # astro build && wrangler deploy
 
 # Migration ke keempat D1
 ./scripts/migrate-all-4.sh       # CF_TOKEN_AKUN1..4 ada di env
+
+# SETELAH deploy: pastikan keempat worker punya secret yang sama
+node scripts/check-worker-secrets.mjs
 ```
 
 ⚠️ `apps/web` **tidak punya** `wrangler.toml`. Setelah `astro build`, config-nya ada di
 `dist/server/wrangler.json` — `wrangler secret put` harus diarahkan ke sana. Ini tercatat di
 `docs/DEPLOY.md`. Menjalankan `wrangler deploy` di `apps/web` tanpa configsinya berarti yang
 terpakai adalah default wrangler, bukan punyamu.
+
+⚠️ **Selalu sebut `--config` dan `CLOUDFLARE_ACCOUNT_ID` eksplisit.** Tanpa itu wrangler
+bisa membaca config akun yang salah — dan itu bukan errors yang jelas, melainkan diam-diam
+menyasar akun lain.
+
+⚠️ `scripts/check-worker-secrets.mjs` **wajib** dijalankan setelah provisioning akun baru
+atau setelah secret diubah. Secret write-only, jadi tidak ada yang gagal otomatis: worker
+tetap ter-deploy dan melayani traffic, lalu gagal hanya di jalur yang membaca secret itu.
 
 Detail operasional ada di [`docs/DEPLOY.md`](docs/DEPLOY.md) dan
 [`docs/ADDING-ACCOUNT.md`](docs/ADDING-ACCOUNT.md).
@@ -773,23 +925,24 @@ Komiks/
 │   │   ├── src/index.ts      # pipeline middleware + mount router
 │   │   ├── src/routes/        # 14 router + routes/admin/ (9 router)
 │   │   ├── src/lib/           # cache, B2, shard, rate limit, cron
-│   │   ├── test/              # 31 file
+│   │   ├── test/              # 37 file
 │   │   └── wrangler*.toml     # 4 config, satu per akun
 │   └── web/                   # Astro 7
-│       ├── src/pages/         # 24 halaman + 2 endpoint (.ts)
-│       ├── src/components/    # 31 entri, island React + komponen view
-│       ├── src/lib/api.ts     # client: origin picker, typed URL, signature
+│       ├── src/pages/         # 24 halaman + 3 endpoint (.ts) + api/[...path].ts (proxy BFF)
+│       ├── src/components/    # 51 entri, island React + komponen view
+│       ├── src/lib/api.ts     # SSR: origin picker + circuit breaker, typed URL, signature
+│       ├── src/lib/bff-proxy.ts # header/path allowlist, relay Set-Cookie, x-client-ip
 │       ├── src/middleware.ts  # CSP + no-store per halaman privat
-│       └── test/              # 9 file
+│       └── test/              # 12 file
 ├── packages/
 │   ├── db/                    # D1 client, schema.sql, 22 migration
 │   ├── shared/                # Zod types, murmur3, r2-routing, status
 │   ├── sources/               # 6 adapter komik + 3 adapter novel + registry
 │   ├── lb/                    # enkripsi token + provisioning worker
 │   └── vision/                # pHash + hamming
-├── scripts/                   # 15 file: build, migrate, smoke, CI gate, scan secrets
+├── scripts/                   # 16 file: build, migrate, smoke, CI gate, key auth, cek paritas secret
 ├── docs/                      # DEPLOY, ADDING-ACCOUNT, TOS-REVIEW, audit
-│   └── superpowers/           # specs/ (25) · plans/ (23) · backlog/ (1)
+│   └── superpowers/           # specs/ (26) · plans/ (24) · backlog/ (1)
 └── .github/workflows/         # tests.yml · secrets.yml
 ```
 
@@ -820,7 +973,18 @@ Hal-hal yang sengaja tidak diselesaikan, dan sebaiknya diketahui sebelum menguba
   ditulis cron.
 - **Tidak ada metrik bandwidth.** Data egress tidak pernah dicatat; grafik admin memakai
   request count.
-- **`specs/` (25) dan `plans/` (23) lebih banyak dari yang dijalankan.** Beberapa
+- **Secret antar worker masih bisa berbeda, dan tidak ada yang menahan itu.** Tidak ada
+  shared store lintas akun: Service Binding itu account-scoped, dan tidak ada mechanism
+  Cloudflare untuk berbagi KV/D1 antar akun. Empat worker karena itu **wajib** dicek
+  secara manual (`scripts/check-worker-secrets.mjs`). Saat ini masih ada drift:
+  `manga-api` belum punya `DB_MIRROR_KEY`, `LB_ENCRYPTION_KEY`, `SCRAPE_API_KEY`,
+  `CF_ANALYTICS_TOKEN` — tidak impact auth, tapi tidak bisa disejajarkan tanpa
+  me-rotate nilai itu di semua worker sekaligus (nilai lama write-only di worker lain).
+- **Session read sekarang fail-open saat shard tak terjangkau.** Konsekuensinya
+  disengaja dan trade-off sadar: sesi yang benar-benar di-revoke masih bisa
+  terbaca selama shard pemiliknya tidak terjangkau. `revoked_at` yang jadi otoritas, dan
+  kegagalan infrastruktur bukan keputusan soal sesi.
+- **`specs/` (26) dan `plans/` (24) lebih banyak dari yang dijalankan.** Beberapa
   menjelaskan keputusan yang sudah berubah; `README.md` ini dan
   `.opencode/skills/manga/SKILL.md` yang menggambarkan kode seperti adanya.
 

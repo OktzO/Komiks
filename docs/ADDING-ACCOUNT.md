@@ -22,33 +22,73 @@
 6. Verifikasi: upload via `/api/reader/*` → `b2:usage:{idx}` bertambah di KV;
     `curl -I https://s3.<region>.backblazeb2.com/<bucket>/<key>` → 200
 
-## Akun Worker API (origin round-robin)
+## Akun Worker API (origin rotasi per request)
 
 - Provision via panel admin LB (auto-provision) atau manual
 - ⚠️ Untuk menambah worker API: **`docs/DEPLOY.md` §11a** (maintenance window, deploy
   semua worker dengan `PEER_URLS` identik, verifikasi `?refresh=1`, baru enable origin)
 - `CF_ACCOUNT_ID` / `CF_WORKER_NAME` / `CF_D1_ID` / `CF_KV_ID` di `wrangler.<baru>.toml`
   wajib diisi dari resource file itu sendiri — jangan copy-paste id akun lain
-- **CORS checklist per akun baru:**
-  - [ ] `ALLOWED_ORIGINS` memuat origin web yang benar-benar ter-deploy
-        (`https://<manga-web-origin>`, plus `http://localhost:3000` untuk dev) —
-        cek nama sebenarnya di dashboard / `apps/web/DEPLOY.md`
-  - [ ] OPTIONS preflight → 204 + echo `Access-Control-Allow-Origin`
-  - [ ] Header `x-admin-*` TIDAK boleh di-allow dari browser
-  - [ ] `curl -H "Origin: https://<manga-web-origin>" -I <origin>/api/health`
-        → header CORS ada
-  - [ ] `curl -I <origin>/api/health` tanpa Origin → TIDAK ada header CORS
-        (fail-closed)
-- Endpoint yang boleh dipanggil lintas origin — allowlist persis di
-  `apps/web/src/lib/api.ts` (`ORIGIN_PATH_ALLOWLIST`, dicocokkan dengan
-  `path.startsWith`, jadi itu **prefix**, bukan path persis):
-  `/api/reader/`, `/api/series`, `/api/search`, `/api/homepage`, `/api/health`,
-  `/api/resolve`. Jadi `/api/series/:slug` ikut ter-cover oleh prefix
-  `/api/series`. Yang **tidak** ada di allowlist (sengaja, hanya ke main API):
-  `/api/source-status` — `source_health` dicatat per-akun jadi harus konsisten
-  dari akun-1 — serta semua `/api/admin/*` dan `/api/scrape`, yang tidak pernah
-  dipanggil dari klien. Tambah path baru? Tambah di `ORIGIN_PATH_ALLOWLIST`
-  dulu, jangan di doc ini saja.
+
+### Checklist secret (WAJIB — ini yang paling sering luput)
+
+Secret bersifat write-only dan `wrangler deploy` **tidak gagal** kalau ada yang hilang.
+Worker tetap ter-deploy dan melayani traffic, lalu gagal hanya di jalur yang membaca
+secret itu — dan gejalanya kelihatan acak, karena proxy merotasi request ke semua worker.
+Ini bukan teoritis: `manga-api` pernah berjalan tanpa `AUTH_SIGNING_KEY`, dan
+tidak ada mekanisme di repo yang bisa mendeteksinya.
+
+- [ ] `node scripts/gen-auth-keys.mjs` → dapat private key untuk worker baru di
+      `apps/api-cf/.auth-keys.json` (gitignored)
+- [ ] Public key worker baru **ditambahkan** ke `AUTH_PUBLIC_KEYS` di **keempat** toml.
+      Kalau satu worker tidak punya `kid` milik worker lain, cookie worker itu ditolak
+      diam-diam dan terbaca sebagai logout acak. Dijaga oleh
+      `apps/api-cf/test/worker-parity.test.mjs`.
+- [ ] Private key di-set sebagai secret `AUTH_SIGNING_KEY` **via `wrangler secret put`**
+- [ ] `AUTH_SIGNING_KEY`, `DB_FORWARD_KEY`, `SERVICE_TOKEN`, `SIGNED_IMG_SECRET`,
+      `ALLOWED_ORIGINS`, `ADMIN_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+      `TURNSTILE_SECRET_KEY` ada di worker baru
+- [ ] `DB_FORWARD_KEY` **nilai sama** dengan worker lain. Auth bergantung pada ini:
+      bacaan session milik user yang shard-nya di worker lain butuh forward, dan
+      forward 403 (key beda) bikin hasilnya fail-closed → logout.
+- [ ] `PEER_URLS` identik di keempat toml, dan `PEER_INDEX` worker baru = posisinya
+      di list itu
+- [ ] Terakhir: `node scripts/check-worker-secrets.mjs` — keluarannya harus `ok` untuk
+      semua worker
+
+### Yang TIDAK ada lagi: CORS
+
+Dulu ada checklist CORS per akun (`ALLOWED_ORIGINS`, preflight `OPTIONS`, echo
+`Access-Control-Allow-Origin`). **Semuanya dihapus** — `corsMw` tidak lagi di
+`apps/api-cf/src/index.ts` dan `serviceGateMw` mengabaikan `Origin` sepenuhnya.
+Browser tidak pernah bicara lintas origin ke API karena semuanya lewat proxy BFF
+same-origin di `oktzz.xyz`. `ALLOWED_ORIGINS` masih dipakai, tapi hanya untuk
+`oauthRedirectUri()` (nilai pertamanya jadi callback URL OAuth).
+
+Verifikasi yang benar sekarang:
+
+```bash
+# harus 403 — request tanpa token
+curl -s -o /dev/null -w '%{http_code}\n' https://<origin>/api/user/me
+
+# lewat proxy, harus 200
+curl -s -o /dev/null -w '%{http_code}\n' https://oktzz.xyz/api/user/me
+```
+
+### Endpoint yang boleh dipanggil lintas origin
+
+Allowlist persis di `apps/web/src/lib/api.ts` (`ORIGIN_PATH_ALLOWLIST`, dicocokkan dengan
+`path.startsWith`, jadi itu **prefix**, bukan path persis):
+`/api/reader/`, `/api/series`, `/api/search`, `/api/homepage`, `/api/health`,
+`/api/resolve`, `/api/novel/`. Jadi `/api/series/:slug` ikut ter-cover oleh prefix
+`/api/series`. Yang **tidak** ada di allowlist (sengaja, hanya ke main API):
+`/api/source-status` — `source_health` dicatat per-akun jadi harus konsisten
+dari akun-1 — serta semua `/api/admin/*` dan `/api/scrape`, yang tidak pernah
+dipanggil dari klien. Tambah path baru? Tambah di `ORIGIN_PATH_ALLOWLIST`
+dulu, jangan di doc ini saja.
+
+Allowlist ini hanya mengatur **rotasi worker dari sisi server** (SSR). Di browser,
+seluruh `/api/*` lewat proxy dan rotasi dilakukan proxy.
 
 ## Hash konsisten
 

@@ -115,16 +115,93 @@ Node >=22.12 hanya diperlukan untuk perintah web (`astro dev`/`build`) — `wran
   `curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data '{"name":"SECRET","text":"...","type":"secret_text"}' .../workers/scripts/<name>/secrets`
 - Deploy mapping: `wrangler.toml`=akun1, `wrangler.origin.toml`=akun2, `wrangler.origin3.toml`=akun3, `wrangler.origin4.toml`=akun4. Web deploy butuh Node 22 (wrangler 4).
 
-## 9. Hardening API: BFF service-token (2026-09-22)
-- Worker API punya **BFF gate** (`apps/api-cf/src/lib/serviceGate.ts`, di-mount `apps/api-cf/src/index.ts` sebelum global rate limit): request `/api/*` tanpa jalur sah ditolak 403.
-  Jalur sah per tier:
-  - **EXEMPT** — `/api/health`, `/api/origins`, `/api/auth/*`, `/api/_internal/*` (guard PK forward-key sendiri), `/api/scrape` (requireAdminKey), `/img/*` (hotlink guard sendiri), legacy `/api/reader/:source/page/:chapterId/:pageNo` (gambar proxy).
-  - **PUBLIC-READ** — `/api/search*`, `/api/series*`, `/api/homepage`, `/api/reader*`, `/api/manga`, `/api/source-status`, GET `/api/user/*`: service token **ATAU** Origin allowlisted (`ALLOWED_ORIGINS`) **ATAU** cookie session. `/api/search` sengaja di tier ini supaya pencarian tetap jalan buat tamu (web UI client-island mem-anggilnya langsung); bot tanpa Origin/UA tetap 403.
-  - **SENSITIVE** — `/api/resolve`, `/api/identify`, `/api/admin/*`, mutasi `/api/user/*`: service token **ATAU** cookie session **ATAU** Turnstile valid (`?turnstile_token=` / header `x-turnstile-token`). `/api/resolve` dipakai SSR-only di reader (`getResolve`) sehingga aman di tier ini (SSR kirim token).
-  - `/api/*` lain → 403. `/api/admin/*` diproteksi cookie session + role admin.
-- **`SERVICE_TOKEN`** secret binding: nilai SAMA di worker web `manga-web` (untuk SSR: `serviceHeaders()` di `apps/web/src/lib/api.ts` + `sitemap.xml.ts`) dan semua worker API. Set via die-encrypt vars (`wrangler secret put SERVICE_TOKEN`); web tidak punya wrangler.jsonc → setelah `astro build`, pakai `dist/server/wrangler.json` untuk `wrangler secret put`. Client island tidak mengirim token (Origin/cookie/Turnstile dari sisi API).
-- `verifyTurnstile` dipindah ke `apps/api-cf/src/lib/turnstile.ts` dan dipakai gate tier SENSITIVE (selain login `/api/auth/google`). Tanpa `TURNSTILE_SECRET_KEY` gate tetap aman (turnstileOk=false tanpa token; token ada + secret unset → dev-mode true, konsisten dgn login).
-- **`SIGNED_IMG_SECRET`** (opsional, anti-scraping gambar, 2026-09-23): HMAC-SHA256 short-lived signature pada `/img/*` (`apps/api-cf/src/lib/signedImage.ts`). Chapter-detail mint `imgUrl=/img/...?exp=..&sig=..` (TTL 25 menit); route `/img/*` verify sebelum serve (403 no-store kalau gagal). **UNSET = perilaku lama** (tanpa signature, fail-open + warning sekali per isolate) — set nilainya SAMA di semua worker API via `wrangler secret put SIGNED_IMG_SECRET` kalau mau aktif; cukup untuk semua akun (satu nama secret), nilai boleh identik.
+## 9. Hardening API: BFF service-token (2026-09-22, diperbarui 2026-10-02)
+
+### 9a. Gate: token-only
+
+Worker API punya **BFF gate** (`apps/api-cf/src/lib/serviceGate.ts`, di-mount di
+`apps/api-cf/src/index.ts` sebelum global rate limit). Request `/api/*` tanpa jalur sah
+ditolak 403.
+
+**Gate ini token-only.** `Origin` **diabaikan sepenuhnya** — dulu ada `corsMw` dan gate
+bertingkat (`PUBLIC-READ` / `SENSITIVE`) yang menerima Origin allowlist sebagai alternatif,
+tapi setelah browser dipindah ke proxy BFF same-origin tidak ada lagi kebutuhan lintas
+origin, dan `corsMw` **sudah dihapus**. Yang tersisa hanya dua hasil:
+`classifyServiceTier()` mengembalikan `'exempt'` atau `'deny'`.
+
+Jalur sah:
+
+- **EXEMPT** (path ini sudah punya credential sendiri, jadi tidak butuh token web):
+  `/api/health`, `/api/origins`, `/api/auth/*`, `/api/_internal/*`
+  (guard `x-db-forward-key`/`x-db-mirror-key` sendiri), `/api/scrape*`
+  (`requireAdminKey`), `/img/*` (signature HMAC — `<img>` tidak bisa membawa header),
+  dan `OPTIONS`.
+- **SELAINNYA** — semua `/api/*` lain: hanya `x-service-token`.
+
+`HEAD` **tidak** dikecualikan. Ia dulu exempt bersama `OPTIONS` karena `corsMw`
+menyingkat preflight; setelah middleware itu dihapus tidak ada lagi alasannya. Hono tetap
+menjalankan handler GET untuk HEAD — body dibuang tapi status dan efek sampingnya jalan —
+sehingga ia berubah dari keputusan gate jadi oracle otorisasi.
+
+### 9b. Proxy BFF — kenapa ini sekarang
+
+`apps/web/src/pages/api/[...path].ts` di worker `manga-web` adalah **satu-satunya** jalur
+browser ke worker API. Setiap panggilan `/api/*` dari browser relatif ke `oktzz.xyz`,
+proxy menyisipkan `x-service-token`, lalu meneruskan ke salah satu worker API.
+
+Karena itu:
+
+- **Workers Route `oktzz.xyz/api/* → manga-api` sudah DIHAPUS.** Route yang tersisa hanya
+  `/img/* → manga-api`. Kalau route `/api/*` dibuat ulang, iaatz bypass seluruh gate.
+- Rotasi worker terjadi **di proxy** (acak per request, bukan kursor — `manga-web`
+  stateless). Tanpa rotasi, seluruh traffic mendarat di satu worker.
+- Header memakai allowlist; credential client (`authorization`, `x-admin-api-key`,
+  `x-db-forward-key`) tidak pernah ikut. Path juga di-allowlist, dengan penolakan
+  dot-segment termasuk double-encoded.
+- `redirect: 'manual'` wajib. OAuth callback mengembalikan 302 + `Set-Cookie` dalam satu
+  respons; mengikuti redirect-nya membuat cookie hilang.
+- IP asli diteruskan sebagai `x-client-ip`, bukan `cf-connecting-ip` — Cloudflare mengisi
+  yang kedua dengan IP placeholder `2a06:98c0:3600::103` pada subrequest lintas akun, dan
+  Turnstile menolak token yang remoteip-nya berbeda.
+
+### 9c. Secret
+
+- **`SERVICE_TOKEN`**: nilai SAMA di worker web `manga-web` dan keempat worker API.
+  Browser tidak pernah memegang token ini. Web tidak punya `wrangler.jsonc` → setelah
+  `astro build`, pakai `dist/server/wrangler.json` untuk `wrangler secret put`.
+- **`SIGNED_IMG_SECRET`**: HMAC-SHA256 pada `/img/*`. Chapter-detail mint
+  `imgUrl=/img/...?exp=..&sig=..` (TTL 25 menit). Set nilainya SAMA di keempat worker API.
+- **`AUTH_SIGNING_KEY`**: ECDSA P-256 JWK private per worker. Wajib ada di **keempat**
+  worker — worker tanpa ini tidak bisa menandatangani sesi, dan karena proxy merotasi,
+  login yang mendarat di sana gagal dengan exception yang opaque. Public key semua
+  worker ada di `[vars] AUTH_PUBLIC_KEYS` (sudah di-commit) dan **wajib** memuat seluruh
+  `kid`. Generator: `node scripts/gen-auth-keys.mjs`.
+- **`DB_FORWARD_KEY`**: harus **nilai sama** di keempat worker. Auth bergantung pada ini —
+  bacaan session milik user yang shard-nya di worker lain butuh forward, dan kalau
+  forward 403 (key beda) hasilnya fail-closed jadi logout.
+
+> ⚠️ **Setelah provisioning atau mengubah secret, selalu jalankan:**
+> ```bash
+> node scripts/check-worker-secrets.mjs
+> ```
+> Secret bersifat write-only, jadi `wrangler deploy` **tidak gagal** kalau satu secret
+> hilang — worker tetap ter-deploy dan melayani traffic, lalu gagal hanya di jalur yang
+> membaca secret itu. Ini bukan teoritis: `manga-api` pernah berjalan tanpa
+> `AUTH_SIGNING_KEY`.
+
+### 9d. Catatan auth lain
+
+- `verifyTurnstile` ada di `apps/api-cf/src/lib/turnstile.ts`, dipakai login
+  `/api/auth/google`. Tanpa `TURNSTILE_SECRET_KEY` verifikasi dilewati (fail-open dev).
+- Cookie session lives di `oktzz.xyz` (`__Host-session`, `SameSite=Lax; Secure; HttpOnly;
+  Path=/`, tanpa `Domain`), bukan di domain worker API. `SameSite=None` sudah tidak
+  relevan dan hanya melemahkan proteksi.
+- Pembacaan session tidak lagi fail-closed: hanya state `revoked` yang berarti logout.
+  `absent` dan `unreachable` logged-in, dan `absent` di-heal. Alasannya di README §Autentikasi.
+- Link OAuth Google di `AuthForm.tsx` wajib punya `data-astro-prefetch="false"` **dan**
+  `data-astro-reload`. Tanpa itu token Turnstile single-use Ter Spending dua kali
+  (hover-prefetch, lalu router jatuh ke full-page navigation setelah 302) dan login
+  gagal dengan `timeout-or-duplicate` padahal OAuth-nya sudah berjalan.
 
 ## 10. Dynamic-N multi-account config (2026-09-23)
 Semua sharding/LB **tidak lagi menganggap jumlah account tetap**. N dibaca murni dari config (env `[vars]`); N=1 = no-op, N≥1 sah, dan deskripsi ini berlaku untuk N berapa pun.

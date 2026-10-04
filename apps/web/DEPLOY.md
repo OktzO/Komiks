@@ -37,7 +37,7 @@ SUDAH DIHAPUS (2026-09-15) — satu-satunya web worker: `manga-web`.
 |---|---|---|
 | `PUBLIC_API_URL` | `https://manga-api.oktz.workers.dev` | worker API utama (akun-1) |
 | `PUBLIC_SITE_URL` | `https://oktzz.xyz` | fallback image proxy base |
-| `PUBLIC_AUTH_API_URL` | `https://manga-api-2.tzok5555.workers.dev` | auth origin (akun-2) |
+| `PUBLIC_AUTH_API_URL` | `https://manga-api-2.tzok5555.workers.dev` | kandidat fallback saja — **sticky auth origin sudah dihapus** (2026-10-02). Cookie session sekarang milik `oktzz.xyz`, jadi tidak ada worker yang perlu "diingat" browser. Nilai ini masuk sebagai kandidat di `getOrigins()` dan sebagai fallback `imgOriginFor()`; tidak ada pinning ke worker tertentu. |
 | `PUBLIC_TURNSTILE_SITE_KEY` | (site key Turnstile) | unset → widget login disembunyikan |
 | `SERVICE_TOKEN` | `openssl rand -hex 24` | **secret**, bukan var: BFF gate api.ts `serviceHeaders()` (SSR-only) |
 
@@ -52,11 +52,14 @@ di dashboard. Di GitHub Actions: secrets → env pada step build.
 
 ## Service-token BFF gate (API hardening)
 
-API worker (api-cf) kini punya `serviceGateMw` (lib/serviceGate.ts): request
-`/api/*` tanpa jalur sah (service token / Origin allowlist / session cookie /
-Turnstile untuk tier SENSITIVE) ditolak 403. Panggilan **SSR** web → API wajib
-membawa header `x-service-token` (di-attach otomatis oleh `serviceHeaders()`
-di `src/lib/api.ts` + `sitemap.xml.ts`); **client island TIDAK** mengirim token.
+API worker (api-cf) punya `serviceGateMw` (`apps/api-cf/src/lib/serviceGate.ts`):
+request `/api/*` tanpa jalur sah ditolak 403. **Gate ini token-only** — `Origin`
+diabaikan sepenuhnya, dan `corsMw` yang dulu ada sudah dihapus (2026-10-02).
+
+Panggilan **SSR** web → API wajib membawa header `x-service-token` (di-attach
+otomatis oleh `serviceHeaders()` di `src/lib/api.ts` + `sitemap.xml.ts`).
+**Client island TIDAK** mengirim token; semua panggilan browser lewat proxy BFF
+`src/pages/api/[...path].ts`, yang menyisipkan token sebelum meneruskan.
 
 Cara set — dua command **terpisah**, masing-masing dari repo root (jangan
 menyalin dalam satu shell berurutan: `cd` pertama membuat `cd` berikutnya
@@ -71,21 +74,36 @@ cd apps/web && npx wrangler --config dist/server/wrangler.json secret put SERVIC
 ```
 > Tidak ada `apps/web/wrangler.jsonc` — wrangler config di-generate otomatis
 > (`dist/server/wrangler.json`) saat `astro build`. Token jadi secret binding
-> `process.env.SERVICE_TOKEN` di SSR runtime. Jika tidak di-set, SSR web hanya
-> bisa menjangkau tier PUBLIC-READ (via server → tapi tanpa Origin/cookie juga
-> 403), jadi **set dulu sebelum deploy gate**.
+> `process.env.SERVICE_TOKEN` di SSR runtime. **Set sebelum deploy gate** —
+> kalau tidak, SSR hanya bisa menjangkau path EXEMPT.
 
 Tier gate (ringkas):
-- **EXEMPT**: `/api/health`, `/api/origins`, `/api/auth/*`, `/api/_internal/*`,
-  `/api/scrape`, `/img/*`, legacy `/api/reader/:source/page/:chapterId/:pageNo`.
-- **PUBLIC-READ**: `/api/search*`, `/api/series*`, `/api/homepage`, `/api/reader*`
-  (non-page), `/api/manga`, `/api/source-status`, GET `/api/user/*`
-  → token / Origin / cookie. `/api/search` sengaja di tier ini supaya pencarian
-  tetap jalan buat tamu (client-island memanggilnya langsung).
-- **SENSITIVE**: `/api/resolve`, `/api/identify`, `/api/admin/*`,
-  mutasi `/api/user/*` → token / cookie / Turnstile (`?turnstile_token=` atau
-  header `x-turnstile-token`).
-- lain-lain `/api/*` → 403.
+- **EXEMPT** (punya credential sendiri, tidak butuh token web): `/api/health`,
+  `/api/origins`, `/api/auth/*`, `/api/_internal/*` (forward-key sendiri),
+  `/api/scrape*` (`requireAdminKey`), `/img/*` (signature HMAC), `OPTIONS`.
+- **selainnya** → hanya `x-service-token`. Tidak ada tier PUBLIC-READ/SENSITIVE
+  lagi, dan tidak ada jalur alternatif lewat Origin atau cookie.
+- `HEAD` tidak dikecualikan (dulu exempt bersama `OPTIONS` karena `corsMw`).
+
+### Proxy BFF — route Workers yang wajib diperiksa
+
+`src/pages/api/[...path].ts` adalah satu-satunya jalur browser ke worker API.
+Karena itu **Workers Route `oktzz.xyz/api/* → manga-api` harus tetap dihapus**;
+route yang boleh ada hanya `/img/* → manga-api`. Kalau `/api/*` dibikin ulang,
+seluruh gate dilewati karena request browser tidak lagi menyertakan
+`x-service-token`.
+
+Detail aturan proxy (allowlist header/path, relay `Set-Cookie`, `redirect: 'manual'`,
+`x-client-ip`) ada di README §Proxy BFF.
+
+### Setelah deploy
+
+```bash
+node scripts/check-worker-secrets.mjs   # dari repo root
+```
+
+Secret write-only dan `wrangler deploy` tidak gagal saat secret hilang — worker
+tetap melayani traffic lalu gagal hanya di jalur yang membaca secret itu.
 
 ## Custom domain (kondisi saat ini)
 
