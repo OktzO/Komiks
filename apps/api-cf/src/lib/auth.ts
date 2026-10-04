@@ -162,10 +162,35 @@ const insertSessionSharded = async (
   return true;
 };
 
-const getSessionSharded = async (env: Env, userId: number, sid: string) => {
+type SessionRow = { sid: string; user_id: number; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null; ip: string | null };
+
+/**
+ * Apa yang sebenarnya diketahui tentang sebuah session setelah membaca shard.
+ *
+ * 'revoked'      — baris terbaca dan revoked_at terisi. Satu-satunya jawaban
+ *                  yang berarti "logout", dan itu otoritatif.
+ * 'active'       — baris terbaca dan belum di-revoke.
+ * 'absent'       — shard terjangkau, tapi tidak ada baris. Tidak mungkin berarti
+ *                  revoked: revoke selalu `UPDATE sessions SET revoked_at`, tidak
+ *                  pernah DELETE. Berarti insert saat login tidak mendarat atau
+ *                  barinya dibuat sebelum sharding ada.
+ * 'unreachable'  — shard tidak bisa dibaca (D1/fault jaringan). Fasilitas, bukan
+ *                  keputusan soal sesi.
+ *
+ * Absent dan unreachable sengaja dipisahkan dari revoked: keduanya tidak
+ * membawa informasi apa pun soal perrevocation, sedangkan cookie-nya sudah
+ * ditandatangani ECDSA dan exp-nya dicek sebelum lookup ini.
+ */
+type SessionLookup =
+  | { state: 'active'; row: SessionRow }
+  | { state: 'revoked'; row: SessionRow }
+  | { state: 'absent'; row: null }
+  | { state: 'unreachable'; row: null };
+
+const lookupSessionSharded = async (env: Env, userId: number, sid: string): Promise<SessionLookup> => {
   const owner = sessionOwner(env, userId);
   const backup = backupOwnerFor(env, String(userId));
-  type Row = { sid: string; user_id: number; created_at: number; expires_at: number; revoked_at: number | null; ua: string | null; ip: string | null };
+  type Row = SessionRow;
   const sql = 'SELECT sid, user_id, created_at, expires_at, revoked_at, ua, ip FROM sessions WHERE sid = ?1 AND user_id = ?2 LIMIT 1';
   const readFrom = async (peer: typeof owner): Promise<{ ok: boolean; row: Row | null }> => {
     if (peer.self) {
@@ -176,12 +201,19 @@ const getSessionSharded = async (env: Env, userId: number, sid: string) => {
     if (!r.ok) return { ok: false, row: null };
     return { ok: true, row: r.rows[0] ?? null };
   };
+  const classify = (row: Row | null): SessionLookup =>
+    !row ? { state: 'absent', row: null } : { state: row.revoked_at !== null ? 'revoked' : 'active', row };
+
   const primary = await readFrom(owner).catch(() => ({ ok: false, row: null }));
-  if (primary.ok) return primary.row;
-  if (backup.index === owner.index || !backup.url) return null;
+  if (primary.ok) return classify(primary.row);
+  if (backup.index === owner.index || !backup.url) return { state: 'unreachable', row: null };
   const second = await readFrom(backup).catch(() => ({ ok: false, row: null }));
-  return second.row;
+  if (!second.ok) return { state: 'unreachable', row: null };
+  return classify(second.row);
 };
+
+const getSessionSharded = async (env: Env, userId: number, sid: string): Promise<SessionRow | null> =>
+  (await lookupSessionSharded(env, userId, sid)).row;
 
 const revokeSessionSharded = async (env: Env, userId: number, sid: string): Promise<{ success: boolean }> => {
   const owner = sessionOwner(env, userId);
@@ -287,10 +319,29 @@ export async function getSessionUser(c: Context): Promise<{ id: number; email: s
   const payload = await verifyToken<SessionPayload>(c.env, token);
   if (!payload) return null;
   if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
-  // Revocation check on the session's owner shard. Fail-closed: if the shard
-  // row is missing/unreachable, the session is treated as revoked.
-  const row = await getSessionSharded(c.env, payload.uid, payload.sid);
-  if (!row || row.revoked_at !== null) return null;
+
+  // Revocation check on the session's owner shard. Only an authoritative
+  // "revoked" logs the user out — see SessionLookup. Signature + exp above are
+  // what make the cookie genuine; a row that is absent or unreachable says
+  // nothing about revocation and must not be read as one, or every D1 hiccup
+  // and every misfiled row becomes a logout.
+  const { state } = await lookupSessionSharded(c.env, payload.uid, payload.sid);
+  if (state === 'revoked') return null;
+
+  if (state === 'unreachable') {
+    console.warn('[session] owning shard unreachable — honouring signed cookie', { uid: payload.uid });
+  } else {
+    // Self-heal: the row belongs at the owner shard but is not there, so put it
+    // back. Absent cannot mean revoked, so this cannot resurrect a logout.
+    const owner = sessionOwner(c.env, payload.uid);
+    if (!owner.self) {
+      await insertSessionSharded(c.env, {
+        sid: payload.sid, userId: payload.uid, createdAt: payload.iat,
+        expiresAt: payload.exp, ua: null, ip: null,
+      }).catch(() => {});
+    }
+  }
+
   return { id: payload.uid, email: payload.email, role: payload.role };
 }
 
